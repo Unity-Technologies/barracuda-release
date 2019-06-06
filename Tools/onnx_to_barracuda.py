@@ -521,6 +521,9 @@ def convert(source_file, target_file, trim_unused_by_output="", verbose=False, c
     else:
         args = verbose
 
+    if args.print_supported_ops:
+        barracuda.print_known_operations(known_classes, known_activations)
+
     # Load ONNX model
     print("Converting %s to %s" % (source_file, target_file))
     i_model = onnx.load(source_file)
