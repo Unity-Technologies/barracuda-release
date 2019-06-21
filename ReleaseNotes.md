@@ -1,5 +1,9 @@
 # Release notes
 
+## 0.2.3
+- Rewritten Dense, Conv and some other ops on GPU. Speedup of 33% in most models with batch=1 and over 100% for batch=16.
+- Optimizations: reimplemented InstanceNormalization using pyramid approach for calculating mean and variance.
+
 ## 0.2.2
 - Added support for --print-supported-ops flag for model converters, now it will print approximate list of supported operations. List of supported ops depends on converter.
 - Added Keras converter as part of distribution.
