@@ -963,7 +963,6 @@ def process_layer(layer, context, args):
     auto_pad    = get_attr(layer, 'padding') # layer.attr['padding'].s.decode("utf-8")
     pads        = get_attr(layer, 'pads')
     strides     = get_attr(layer, 'strides') # layer.attr['strides'].list.i
-    dilations   = get_attr(layer, 'dilations') # layer.attr['dilations'].list.i
     pool_size   = get_attr(layer, 'ksize') # layer.attr['ksize'].list.i
     shape       = get_attr(layer, 'shape')
     starts      = get_attr(layer, 'starts')
@@ -1333,7 +1332,6 @@ def convert(source_file, target_file, trim_unused_by_output="", verbose=False, c
     o_model.layers = cleanup_layers(o_model.layers)
 
     all_inputs = {i for l in o_model.layers for i in l.inputs}
-    embedded_tensors = {t.name for l in o_model.layers for t in l.tensors}
 
     # Trim
     if trim_unused_by_output:

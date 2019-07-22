@@ -92,7 +92,7 @@ float ffma(float a, float b, float c) { return dot(float2(a,c), float2(b,1)); } 
 #define BUF_OFFSET 0
 #define DOUBLE_BUFFER_LDS_READS 0
 #define CACHE_DEPTH 16
-groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, X)[CACHE_DEPTH*16*BLOCK_SIZE+SHIFTED_X*CACHE_DEPTH/2];
+groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, X)[CACHE_DEPTH*16*BLOCK_SIZE+SHIFTED_X*CACHE_DEPTH];
 groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, W)[CACHE_DEPTH*16*BLOCK_SIZE];
 [numthreads(16,16,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
@@ -661,7 +661,7 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 #define HARDCODED_DIMS 0
 #define BUF_OFFSET 0
 #define CACHE_DEPTH 8
-groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, X)[CACHE_DEPTH*8*BLOCK_SIZE+(1-TRANSPOSED_X)*CACHE_DEPTH/2];
+groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, X)[CACHE_DEPTH*8*BLOCK_SIZE+(1-TRANSPOSED_X)*CACHE_DEPTH];
 groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, W)[CACHE_DEPTH*8*BLOCK_SIZE];
 [numthreads(8,8,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
@@ -799,7 +799,8 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
         }
     #endif
 
-        //GroupMemoryBarrierWithGroupSync();
+        GroupMemoryBarrierWithGroupSync();
+
 #if UNROLL_INNER_LOOP
         int4 idX0 = int4(0,1,2,3);      int4 idX1 = int4(4,5,6,7);
         int4 idW0 = int4(0,8,16,24);    int4 idW1 = int4(32,40,48,56);
@@ -958,7 +959,7 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 #endif
         }
 
-        //GroupMemoryBarrierWithGroupSync();
+        GroupMemoryBarrierWithGroupSync();
     }
 #if UNROLL_INNER_LOOP
     O.data[strideO * (y+0) + x+0 + offsetO] = dstA_0.x;
@@ -1106,7 +1107,7 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 #define TRANSPOSED_X 0
 #define SHIFTED_X 0
 #define CACHE_DEPTH 4
-groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, X)[CACHE_DEPTH*8*BLOCK_SIZE+SHIFTED_X*CACHE_DEPTH/2];
+groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, X)[CACHE_DEPTH*8*BLOCK_SIZE+SHIFTED_X*CACHE_DEPTH];
 groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, W)[CACHE_DEPTH*8*BLOCK_SIZE];
 [numthreads(8,8,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
@@ -1267,6 +1268,8 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
         }
     #endif
 
+        GroupMemoryBarrierWithGroupSync();
+
         for (int di = 0; di < CACHE_DEPTH; di++)
         {
             int _32 = 32 + SHIFTED_X;
@@ -1275,25 +1278,11 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
                 X_[di*_32 + ty*4 + 1],
                 X_[di*_32 + ty*4 + 2],
                 X_[di*_32 + ty*4 + 3]);
-                //X.Get(y+0, i+di),
-                //X.Get(y+1, i+di),
-                //X.Get(y+2, i+di),
-                //X.Get(y+3, i+di));
             float4 srcW = float4(
                 W_[di*32 + tx*4 + 0],
                 W_[di*32 + tx*4 + 1],
                 W_[di*32 + tx*4 + 2],
                 W_[di*32 + tx*4 + 3]);
-                //W.Get(i+di, x+0),
-                //W.Get(i+di, x+1),
-                //W.Get(i+di, x+2),
-                //W.Get(i+di, x+3));
-
-            /*
-                for (dy = 0; dy < BLOCK_SIZE; ++dy)
-                    for (dx = 0; dx < BLOCK_SIZE; ++dx)
-                        dstA[dy][dx] += X.Get(y+dy, i) * W.Get(i, x+dx);
-                    */
 
             dstA_0.x = ffma(srcX.x, srcW.x, dstA_0.x);
             dstA_0.y = ffma(srcX.x, srcW.y, dstA_0.y);
@@ -1315,6 +1304,8 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
             dstA_3.z = ffma(srcX.w, srcW.z, dstA_3.z);
             dstA_3.w = ffma(srcX.w, srcW.w, dstA_3.w);
         }
+
+        GroupMemoryBarrierWithGroupSync();
     }
 
     O.Set(y+0, x+0, dstA_0.x);

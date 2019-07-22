@@ -39,7 +39,7 @@ float ffma(float a, float b, float c) { return dot(float2(a,c), float2(b,1)); }
 #define TRANSPOSED_X 0
 #define BUF_OFFSET 0
 #define CACHE_DEPTH 16
-groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, X)[CACHE_DEPTH*16*BLOCK_SIZE+(1-TRANSPOSED_X)*CACHE_DEPTH/2];
+groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, X)[CACHE_DEPTH*16*BLOCK_SIZE+(1-TRANSPOSED_X)*CACHE_DEPTH];
 groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, W)[CACHE_DEPTH*16*BLOCK_SIZE];
 [numthreads(16,16,1)]
 void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
