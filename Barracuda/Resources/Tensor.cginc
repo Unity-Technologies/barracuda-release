@@ -123,28 +123,28 @@ struct ReadonlyTensor : Tensor
         return Get(b % GetFlatHeight(), i % GetFlatWidth());
     }
 
-    float SafeGet(uint b, uint2 pos, uint ch, uint2 pad)
+    float SafeGet(uint b, uint2 pos, uint ch, uint2 pad, float def = 0)
     {
-        if (b >= batch || ch >= channels) return 0;
+        if (b >= batch || ch >= channels) return def;
 
-        if (any(pos < pad)) return 0;
-        if (any(pos >= uint2(width, height) + pad)) return 0;
+        if (any(pos < pad)) return def;
+        if (any(pos >= uint2(width, height) + pad)) return def;
         pos -= pad;
 
         return data[Index(b, pos.y, pos.x, ch)];
     }
-    float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad)
+    float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad, float def = 0)
     {
-        return SafeGet(b, uint2(w, h), ch, pad);
+        return SafeGet(b, uint2(w, h), ch, pad, def);
     }
-    float SafeGet(uint b, uint i)
+    float SafeGet(uint b, uint i, float def = 0)
     {
-        if (b >= batch || i >= height * width * channels) return 0;
+        if (b >= batch || i >= height * width * channels) return def;
         return Get(b,i);
     }
-    float SafeGet(uint i)
+    float SafeGet(uint i, float def = 0)
     {
-        if (i >= batch * height * width * channels) return 0;
+        if (i >= batch * height * width * channels) return def;
         return Get(i);
     }
 };

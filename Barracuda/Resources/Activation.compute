@@ -18,6 +18,8 @@
 #pragma kernel Log_Loop
 #pragma kernel Pow_Flat
 #pragma kernel Pow_Loop
+#pragma kernel LogicalNot_Flat
+#pragma kernel LogicalNot_Loop
 
 /*
 Relu_Flat (NEW) vs Relu_Nyxc+Relu_CNyx+Relu 
@@ -165,6 +167,11 @@ float signed_pow(float f)
     return v * s;
 }
 
+float logical_not(float v)
+{
+    return (v == 0.0f) ? 1.0f : 0.0f;
+}
+
 ACTIVATION(Relu, relu)
 ACTIVATION(Relu6, relu6)
 ACTIVATION(Tanh, tanh)
@@ -175,6 +182,7 @@ ACTIVATION(LeakyRelu, lrelu)
 ACTIVATION(Exp, exp)
 ACTIVATION(Log, log)
 ACTIVATION(Pow, signed_pow)
+ACTIVATION(LogicalNot, logical_not)
 
 // -------------------
 

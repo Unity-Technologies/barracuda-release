@@ -146,6 +146,16 @@ known_classes = {
     'ReduceSum':        128, # TODO: args(axes)
     'ReduceSumSquare':  129, # TODO: args(axes)
 
+    'Greater':          140, # TODO: args(axes)
+    'GreaterEqual':     141, # TODO: args(axes)
+    'Less':             142, # TODO: args(axes)
+    'LessEqual':        143, # TODO: args(axes)
+    'Equal':            144, # TODO: args(axes)
+    'Or':               145, # TODO: args(axes)
+    'And':              146, # TODO: args(axes)
+    'Not':              147, # TODO: args(axes)
+    'Xor':              148, # TODO: args(axes)
+
     'Flatten':          200,
     'Reshape':          201,
     'Transpose':        202,

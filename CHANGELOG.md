@@ -1,5 +1,19 @@
 # Release notes
 
+## [0.2.7] - 2019-09-27
+- Barracuda finally ships as Unity Package Manager package.
+- Adjusted release notes format.
+
+## 0.2.6
+- Small changes to adhere UPM package structure.
+
+## 0.2.5
+- Fixed MaxPool2D to not take padding value into calculations on GPU backends. Now matches TF and C# impl.
+- Fixed dense layers that have scalar input.
+- Added support for LSTM blocks that have concat as the output. 
+- Added support for LSTM nodes in non-root scope.
+- Added support for comparison and logical operator in tensorflow and onnx importers.
+
 ## 0.2.4
 - Switched to 2018.4.3f1 as primary Unity version for testing.
 - Fixed ScaleBias scheduling issue with large amounts of data (reproduced with MobileNet @ 16 batch)

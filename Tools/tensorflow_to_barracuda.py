@@ -47,7 +47,7 @@ known_classes = {
                     id = 1,
                     rank = 2,
                     out_shapes = lambda shapes: [
-                        [shapes[0][0], 1, 1, shapes[0][1]],  # W
+                        [shapes[0][0], 1, 1, shapes[0][1]] if len(shapes[0]) > 1 else [1,1,1,1],  # W
                         [1, 1, 1, shapes[-1][-1]]            # B
                     ],
                     patch_data = lambda data: [
@@ -191,6 +191,19 @@ known_classes = {
     'Minimum':Struct(id=110, rank = lambda inputs: np.max(inputs)),
     'Maximum':Struct(id=111, rank = lambda inputs: np.max(inputs)),
 
+    # Comparison ops with broadcast
+    'Greater':      Struct(id=140, rank = lambda inputs: np.max(inputs)),
+    'GreaterEqual': Struct(id=141, rank = lambda inputs: np.max(inputs)),
+    'Less':         Struct(id=142, rank = lambda inputs: np.max(inputs)),
+    'LessEqual':    Struct(id=143, rank = lambda inputs: np.max(inputs)),
+    'Equal':        Struct(id=144, rank = lambda inputs: np.max(inputs)),
+
+    # Logical ops with broadcast
+    'LogicalOr':    Struct(id=145, rank = lambda inputs: np.max(inputs)),
+    'LogicalAnd':   Struct(id=146, rank = lambda inputs: np.max(inputs)),
+    'LogicalNot':   Struct(id=147, rank = lambda inputs: np.max(inputs)),
+    'LogicalXor':   Struct(id=148, rank = lambda inputs: np.max(inputs)),
+
     # Reduce ops
     'Max':    Struct(id=124, rank = lambda inputs: inputs[0] - 1),
     'Mean':   Struct(id=125, rank = lambda inputs: inputs[0] - 1),
@@ -291,13 +304,14 @@ known_patterns = {
     repr(['Pack', 'Reshape'])                                   : 'Flatten$',    # for now we assume that this combination is trivial Flatten
                                                                                  # for exmaple it is used in ML-agents LSTM nets with sequence_length==1
     repr(['StridedSlice', 'Reshape',
-        re.compile('^lstm/'),
-        'Reshape', 'ConcatV2', 'Identity'])                     : 'BasicLSTM',
+        re.compile('^[a-zA-Z/]*lstm/'),
+        'Reshape', 'ConcatV2', 'Identity'])                     : 'BasicLSTMReshapeOut',
 
-    repr([re.compile('^lstm/'),
-        'Reshape', 'ConcatV2', 'Identity'])                     : 'BasicLSTM',
+    repr([re.compile('^[a-zA-Z/]*lstm/'),
+        'Reshape', 'ConcatV2', 'Identity'])                     : 'BasicLSTMReshapeOut',
 
-    repr(['Reshape', re.compile('^lstm_[a-z]*/'),'Reshape', 'ConcatV2'])   : 'BasicLSTM',
+    repr(['Reshape', re.compile('^[a-zA-Z/]*lstm_[a-z]*/'),'Reshape', 'ConcatV2'])   : 'BasicLSTMReshapeOut',
+    repr(['Reshape', re.compile('^[a-zA-Z/]*lstm_[a-z]*/'),'ConcatV2'])   : 'BasicLSTMConcatOut',
 
     repr(['Sigmoid', 'Mul'])                                    : "Swish",
     repr(['Mul', 'Abs', 'Mul', 'Add'])                          : "LeakyRelu",
@@ -497,8 +511,11 @@ transform_patterns = {
     'SquaredDifference' : lambda nodes, inputs, tensors, _:
         sqr_diff(nodes[-1].name, inputs[0], inputs[1]),
 
-    'BasicLSTM' : lambda nodes, inputs, tensors, context:
+    'BasicLSTMReshapeOut' : lambda nodes, inputs, tensors, context:
         basic_lstm(nodes, inputs, tensors, context, find_type='Reshape'),
+
+    'BasicLSTMConcatOut' : lambda nodes, inputs, tensors, context:
+        basic_lstm(nodes, inputs, tensors, context, find_type='ConcatV2'),
 
     'Swish' : lambda nodes, inputs, tensors, _:
         Struct(
@@ -873,7 +890,7 @@ def basic_lstm(nodes, inputs, tensors, context, find_type='Reshape'):
     context.layer_ranks[state_h] = 2
 
     # lstm_value/strided_slice/stack => lstm_value
-    lstm_name = next(i.name for i in nodes if i.name.startswith('lstm')).split('/')[0]
+    lstm_name = re.match('^([a-zA-Z/]*lstm[_a-z]*)/.*', next(i.name for i in nodes if re.match('^[a-zA-Z/]*lstm[_a-z]*/.*', i.name))).group(1)
 
     new_layers = barracuda.lstm(lstm_name, input, state_c, state_h,
         'kernel_i', 'kernel_j', 'kernel_f', 'kernel_o',

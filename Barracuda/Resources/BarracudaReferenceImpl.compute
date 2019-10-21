@@ -1,4 +1,4 @@
-﻿#pragma kernel Dense
+#pragma kernel Dense
 #pragma kernel Conv2D
 #pragma kernel DepthwiseConv2D
 #pragma kernel Conv2DTrans
@@ -30,6 +30,15 @@
 #pragma kernel BroadcastPow
 #pragma kernel BroadcastMin
 #pragma kernel BroadcastMax
+#pragma kernel BroadcastGreater
+#pragma kernel BroadcastGreaterEqual
+#pragma kernel BroadcastLess
+#pragma kernel BroadcastLessEqual
+#pragma kernel BroadcastEqual
+#pragma kernel BroadcastLogicalOr
+#pragma kernel BroadcastLogicalAnd
+#pragma kernel BroadcastLogicalXor
+#pragma kernel LogicalNot
 #pragma kernel ReduceMin
 #pragma kernel ReduceMax
 #pragma kernel ReduceSum
@@ -391,6 +400,230 @@ void BroadcastMax(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+[numthreads(4, 4, 4)]
+void BroadcastGreater(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = X.BroadcastGet(n, y, x, c);
+        float b = B.BroadcastGet(n, y, x, c);
+        float v = (a > b) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastGreaterEqual(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = X.BroadcastGet(n, y, x, c);
+        float b = B.BroadcastGet(n, y, x, c);
+        float v = (a >= b) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastLess(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = X.BroadcastGet(n, y, x, c);
+        float b = B.BroadcastGet(n, y, x, c);
+        float v = (a < b) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastLessEqual(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = X.BroadcastGet(n, y, x, c);
+        float b = B.BroadcastGet(n, y, x, c);
+        float v = (a <= b) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastEqual(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = X.BroadcastGet(n, y, x, c);
+        float b = B.BroadcastGet(n, y, x, c);
+        float v = (a == b) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastLogicalOr(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = (X.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f: 1.0f;
+        float b = (B.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f: 1.0f;
+        float v = ((a + b) >= 1.0f) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastLogicalAnd(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = (X.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
+        float b = (B.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
+        float v = ((a + b) > 1.5f) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void BroadcastLogicalXor(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, B, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float a = (X.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
+        float b = (B.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
+        float v = ((a + b) == 1.0f) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void LogicalNot(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = (X.Get(n, y, x, c) == 0.0f) ? 1.0f : 0.0f;
+        O.Set(n, y, x, c, v);
+    }
+}
+
 [numthreads(4,4,1)]
 void ReduceMin(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -633,7 +866,7 @@ void MaxPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
             for (uint dx = 0; dx < _Pool.x; ++dx)
             {
                 uint2 pos = uint2(x, y) * _Stride.xy + uint2(dx, dy);
-                float v = X.SafeGet(n, pos, c, _Pad.xy);
+                float v = X.SafeGet(n, pos, c, _Pad.xy, -FLT_MAX );
                 maxV = max(v, maxV);
             }
         
