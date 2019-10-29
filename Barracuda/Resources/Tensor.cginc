@@ -147,6 +147,13 @@ struct ReadonlyTensor : Tensor
         if (i >= batch * height * width * channels) return def;
         return Get(i);
     }
+    float MaskedGet(bool cond, uint i, float def=0)
+    {
+        if (cond)
+            return Get(i);
+        else
+            return def;
+    }
 };
 
 struct ReadWriteTensor : Tensor
@@ -212,6 +219,13 @@ struct ReadWriteTensor : Tensor
     {
         if (i >= batch * height * width * channels) return 0;
         return Get(i);
+    }
+    float MaskedGet(bool cond, uint i, float def=0)
+    {
+        if (cond)
+            return Get(i);
+        else
+            return def;
     }
 
 
@@ -294,6 +308,13 @@ struct SharedTensor : Tensor
     {
         if (i >= batch * height * width * channels) return 0;
         return Get(i);
+    }
+    float MaskedGet(bool cond, uint i, float def=0)
+    {
+        if (cond)
+            return Get(i);
+        else
+            return def;
     }
 };
 

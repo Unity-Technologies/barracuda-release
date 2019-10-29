@@ -36,6 +36,7 @@ uint4 _Pool;
 uint4 _Stride;
 uint4 _Pad;
 float _Alpha;
+float _Epsilon;
 uint _LoopStride;
 
 NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
@@ -382,7 +383,7 @@ void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
         float var = acc / (O.width * O.height);
 
         // normalization factor
-        float invNormFactor = 1 / sqrt(var + FLT_EPSILON);
+        float invNormFactor = 1 / sqrt(var + _Epsilon);
 
         float scale = gamma * invNormFactor;
         float bias = beta - gamma * mean * invNormFactor;
@@ -412,7 +413,7 @@ void InstanceNormTail_Flat(uint3 dispatchThreadID : SV_DispatchThreadID)
     float variance = W.Get(c);
     float mean = B.Get(c);
     // normalization factor
-    float invNormFactor = 1 / sqrt(variance + FLT_EPSILON);
+    float invNormFactor = 1 / sqrt(variance + _Epsilon);
 
     float v = X.Get(i);
     //v = gamma * (v * invNormFactor - mean * invNormFactor) + beta
@@ -436,7 +437,7 @@ void InstanceNormTail_CNyx2(uint3 dispatchThreadID : SV_DispatchThreadID)
     float variance = W.Get(c);
     float mean = B.Get(c);
     // normalization factor
-    float invNormFactor = 1 / sqrt(variance + FLT_EPSILON);
+    float invNormFactor = 1 / sqrt(variance + _Epsilon);
 
     float v = X.Get(i);
     //v = gamma * (v * invNormFactor - mean * invNormFactor) + beta

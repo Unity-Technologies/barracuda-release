@@ -1,3 +1,5 @@
+#pragma kernel Neg_Flat
+#pragma kernel Neg_Loop
 #pragma kernel Relu_Flat
 #pragma kernel Relu_Loop
 #pragma kernel Relu6_Flat
@@ -22,7 +24,7 @@
 #pragma kernel LogicalNot_Loop
 
 /*
-Relu_Flat (NEW) vs Relu_Nyxc+Relu_CNyx+Relu 
+Relu_Flat (NEW) vs Relu_Nyxc+Relu_CNyx+Relu
 Compute Precompiled
 
 VGG@1
@@ -152,13 +154,13 @@ float elu(float v)
 
 float lrelu(float v)
 {
-    return max(v, _Alpha * v);    
+    return max(v, _Alpha * v);
 }
 
 float signed_pow(float f)
 {
     float e = _Alpha;
-    
+
     // handle negative f
     float v = pow(abs(f), e);
     float s = (e % 2 == 1) ?
@@ -172,9 +174,20 @@ float logical_not(float v)
     return (v == 0.0f) ? 1.0f : 0.0f;
 }
 
+float neg(float v)
+{
+    return -v;
+}
+
+float tanh_safe(float x)
+{
+    return tanh(clamp(x,-16.0f,16.0f));//clamp to avoid NaNs for large values.
+}
+
+ACTIVATION(Neg, neg)
 ACTIVATION(Relu, relu)
 ACTIVATION(Relu6, relu6)
-ACTIVATION(Tanh, tanh)
+ACTIVATION(Tanh, tanh_safe)
 ACTIVATION(Sigmoid, sigmoid)
 ACTIVATION(Swish, swish)
 ACTIVATION(Elu, elu)
@@ -242,7 +255,7 @@ void Tanh(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < X.batch; ++n)
     {
         float v = X.Get(n, y, x, c);
-        v = tanh(v);
+        v = tanh_safe(v);
         O.Set(n, y, x, c, v);
     }
 }
@@ -252,15 +265,15 @@ NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
  {
      DISPATCH_ARGS(O.channels, O.width, O.height);
      TENSOR_ARGS2(X, O);
- 
+
      uint c = dispatchThreadID.x;
      uint x = dispatchThreadID.y;
      uint y = dispatchThreadID.z;
- 
+
      if (c >= O.channels) return;
      if (x >= O.width) return;
      if (y >= O.height) return;
- 
+
      for (uint n = 0; n < X.batch; ++n)
      {
          float v = X.Get(n, y, x, c);
@@ -268,7 +281,7 @@ NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
          O.Set(n, y, x, c, v);
      }
  }
- 
+
  NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
 void Swish(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -483,7 +496,7 @@ void Tanh_CNyx(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (n >= X.batch) return;
 
     float v = X.Get(n, y, x, c);
-    v = tanh(v);
+    v = tanh_safe(v);
     O.Set(n, y, x, c, v);
 }
 
@@ -505,7 +518,7 @@ void Tanh_Nyxc(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (n >= X.batch) return;
 
     float v = X.Get(n, y, x, c);
-    v = tanh(v);
+    v = tanh_safe(v);
     O.Set(n, y, x, c, v);
 }
 

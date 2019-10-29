@@ -1,8 +1,31 @@
 # Release notes
 
+## [0.3.0] - 2019-10-29
+- ONNX: Implemented .onnx asset importer as Editor Plugin. Now .onnx files can be added directly to the project as regular assets.
+Python script is not needed to import ONNX models anymore. When loading from script reference ONNX asset as `NNModel`. 
+- ONNX: Barracuda ONNX importer supports model versions up to `opset-8`.
+- Added `Reflect`, `Edge` and `Symmetric` padding implementations.
+- TF/ONNX: Improved padding import for TF and ONNX models.
+- TF/ONNX: Improved StridedSlice support.
+- TF/ONNX: Implemented logic operation support.
+- Added `ModelBuilder` utility to make it easier to build `Model` from code.
+- UI: Clicking on `*.nn` and `*.onnx` files now will display layers that model contains, right in Unity Editor Inspector.
+- Small clean up of public APIs.
+- Refactored `Model` fields from array to list.
+- Performance: improved heuristics of chosing Convolutional kernels - expect better performance with thin layers (channels < 16).
+- Fixed several bugs regarding padding and odd kernel dimensions (3x3) in Conv2dTranspose op.
+- Fixed out of bounds reads in `Conv2DKernelKxK_T16x16_R4x4` kernel when tensor `batch*width*heigh` is not modulo of 64 in Compute backend.
+- Fixed occasional NaNs in Tanh op by clamping large activation values in Compute & Reference Compute backends.
+- Fixed bug in conversion of single channel Texture to Tensor. Bug would cause output 3 times lower than expected.
+- Fixed discrepancy in InstanceNormalization op output by using epsilon specified in the model instead of hardcoded one.
+- Fixed support for older iOS and Android devices that do not support total group size of 256 or higher. Added work around to skip this kernel.
+- Docs: first pass of Barracuda API documentation.
+
+
+
 ## [0.2.7] - 2019-09-27
-- Barracuda finally ships as Unity Package Manager package.
-- Adjusted release notes format.
+- Barracuda is now available in Unity Package Manager
+- Adjusted release notes format
 
 ## 0.2.6
 - Small changes to adhere UPM package structure.
@@ -164,3 +187,5 @@
 - Kuba Cupisz
 - Povilas Kanapickas
 - Paulius Puodžiūnas
+- Florent Guinier
+- Alexandre Ribard

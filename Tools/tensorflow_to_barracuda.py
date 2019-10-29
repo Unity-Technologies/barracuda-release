@@ -112,7 +112,9 @@ known_classes = {
                         np.transpose(data[0], (0,1,3,2)),
                         data[1]
                     ]),
-    'Pad':              29,
+    'Border2D':         29,
+    'Pad2DReflect':     160,
+    'Pad2DSymmetric':   161,
 
     # TODO: 3D
 
@@ -184,6 +186,7 @@ known_classes = {
 
     # Broadcast ops
     'Add':    Struct(id=100, rank = lambda inputs: np.max(inputs)),
+    'AddV2':    Struct(id=100, rank = lambda inputs: np.max(inputs)),
     'Sub':    Struct(id=101, rank = lambda inputs: np.max(inputs)),
     'Mul':    Struct(id=102, rank = lambda inputs: np.max(inputs)),
     'RealDiv':Struct(id=103, rank = lambda inputs: np.max(inputs)),
@@ -321,6 +324,8 @@ known_patterns = {
     repr(['ConcatV2'])                                          : 'ConcatV2',
     repr(['Mean'])                                              : 'Mean',
     repr(['Pad'])                                               : 'Pad',
+    repr(['PadV2'])                                             : 'Pad',
+    repr(['MirrorPad'])                                         : 'Pad',
     repr(['Multinomial'])                                       : 'Multinomial',
     repr(['OneHot'])                                            : 'OneHot',
     repr(['Square'])                                            : 'Square',
@@ -385,19 +390,22 @@ transform_patterns = {
         ),
     'Pad' : lambda nodes, inputs, tensors, _:
         Struct(
-            op    = 'Pad' if (len(tensors) > 0 and np.shape(tensors[0]) == [4,2] and get_attr(nodes[-1], 'mode', default='constant').lower() == 'constant')
-                    else 'BarracudaUnsupportedPad',
+            op    = 'BarracudaUnsupportedPad' if (len(tensors) == 0 or np.shape(tensors[0]) != [4,2]) else
+                    'Pad2DReflect' if (get_attr(nodes[-1], 'mode', default='constant').lower() == 'reflect') else
+                    'Pad2DSymmetric' if (get_attr(nodes[-1], 'mode', default='constant').lower() == 'symmetric') else
+                    'Border2D' if (get_attr(nodes[-1], 'mode', default='constant').lower() == 'constant') else
+                    'BarracudaUnsupportedPad',
             input = inputs,
-            pads  = [tensors[0].data[1,0], tensors[0].data[1,1], tensors[0].data[2,0], tensors[0].data[2,1]] if len(tensors) > 0 and np.shape(tensors[0]) == [4,2]
+            pads  = [tensors[0].data[2,0], tensors[0].data[1,0], tensors[0].data[2,1], tensors[0].data[1,1]] if (len(tensors) > 0 and np.shape(tensors[0]) == [4,2])
                     else [0,0,0,0],
-            beta  = get_attr(nodes[-1], 'constant_values') or 0,
+            beta  = tensors[1].data[0] if len(tensors) > 1 and np.shape(tensors[1]) == (1,) else get_attr(nodes[-1], 'constant_values') or 0,
         ),
     'Squeeze' : lambda nodes, inputs, tensors, context:
         Struct(
             op    = 'Nop', # Squeeze is no-operation in Barracuda
             input = inputs,
             rank  = context.layer_ranks[inputs[0]] - len(get_attr(nodes[-1], 'squeeze_dims'))       if len(get_attr(nodes[-1], 'squeeze_dims')) > 0
-                    else -1 # if list of squeeze axis is not specified, it is unknown what would be the rank of result 
+                    else -1 # if list of squeeze axis is not specified, it is unknown what would be the rank of result
         ),
     'ExpandDims' : lambda nodes, inputs, tensors, context:
         Struct(
@@ -553,7 +561,7 @@ def get_attr(node, attr_name, default=None):
     val = node.attr[attr_name]
 
     if val.HasField("list"):
-        return val.list.i 
+        return val.list.i
         # NOTE: can't find way to identify type of list BUT it is almost always list(int)
         # except list(float) in FractionalAvg/MaxPool
     if val.HasField("b"):
@@ -581,7 +589,7 @@ def get_layer_rank(layer):
         return 1
     shape = [dim.size for dim in shape.dim]
     return len(shape)
-    
+
 def get_layer_shape(layer):
     shape = get_attr(layer, 'shape')
     if not shape:
@@ -1158,7 +1166,7 @@ def process_model(model, args):
                         src = const_nodes_by_name[i].attr["value"].tensor
                         tensors += [Struct(name = i, obj = src, shape = get_tensor_dims(src), data = get_tensor_data(src))]
                 tensor_names = [n.name for n in tensors]
- 
+
                 # filter only inputs that are coming from nodes that are outside this pattern
                 # preserve the order
                 pattern_nodes = [n.name for n in pattern_nodes] + tensor_names

@@ -12,6 +12,7 @@
 #pragma kernel InstanceNorm
 #pragma kernel Dropout
 #pragma kernel Relu
+#pragma kernel Neg
 #pragma kernel Swish
 #pragma kernel Softmax
 #pragma kernel Tanh
@@ -46,6 +47,10 @@
 #pragma kernel ReduceProd
 #pragma kernel TextureToTensor
 #pragma kernel TensorToTexture
+#pragma kernel Border2D
+#pragma kernel Pad2DEdge
+#pragma kernel Pad2DReflect
+#pragma kernel Pad2DSymmetric
 
 #include "Tensor.cginc"
 #include "Random.cginc"
@@ -61,6 +66,7 @@ uint4 _Pool;
 uint4 _Stride;
 float _Alpha;
 float _Beta;
+float _Epsilon;
 float _Seed;
 
 [numthreads(8,8,1)]
@@ -106,6 +112,28 @@ void Relu(uint3 dispatchThreadID : SV_DispatchThreadID)
 }
 
 [numthreads(4,4,4)]
+void Neg(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = -v;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4,4,4)]
 void Swish(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     DISPATCH_ARGS(O.channels, O.width, O.height);
@@ -139,7 +167,8 @@ void Tanh(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < X.batch; ++n)
     {
         float v = X.Get(n, y, x, c);
-        v = tanh(v);
+        v = tanh(clamp(v,-16.0f,16.0f));//clamp to avoid NaNs for large values.
+
         O.Set(n, y, x, c, v);
     }
 }
@@ -869,7 +898,7 @@ void MaxPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
                 float v = X.SafeGet(n, pos, c, _Pad.xy, -FLT_MAX );
                 maxV = max(v, maxV);
             }
-        
+
         O.Set(n, y, x, c, maxV);
     }
 }
@@ -903,7 +932,7 @@ void AvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
                 acc += (mask)? X.Get(n, pos.y - leftCorner.y, pos.x - leftCorner.x, c): 0;
                 counter += (mask)? 1: 0;
             }
-        
+
         acc /= counter;
         O.Set(n, y, x, c, acc);
     }
@@ -928,7 +957,7 @@ void GlobalMaxPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
                 float v = X.Get(n, y, x, c);
                 maxV = max(v, maxV);
             }
-        
+
         O.Set(n, 0, 0, c, maxV);
     }
 }
@@ -949,7 +978,7 @@ void GlobalAvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
         for (uint y = 0; y < X.height; ++y)
             for (uint x = 0; x < X.width; ++x)
                 v += X.Get(n, y, x, c);
-        
+
         v /= (X.height * X.width);
         O.Set(n, 0, 0, c, v);
     }
@@ -989,7 +1018,7 @@ void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
         float var = acc / (O.width * O.height);
 
         // normalization factor
-        float invNormFactor = 1 / sqrt(var + FLT_EPSILON);
+        float invNormFactor = 1 / sqrt(var + _Epsilon);
 
         float scale = gamma * invNormFactor;
         float bias = beta - gamma * mean * invNormFactor;
@@ -1120,9 +1149,9 @@ void Conv2DTrans(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < O.batch; ++n)
     {
         float acc = B.Get(k);
-        for (uint dy = y & strideMask.y; dy < K.GetKernelHeight(); dy += _Stride.y)
+        for (uint dy = (y + _Pad.y) & strideMask.y; dy < K.GetKernelHeight(); dy += _Stride.y)
         {
-            for (uint dx = x & strideMask.x; dx < K.GetKernelWidth(); dx += _Stride.x)
+            for (uint dx = (x + _Pad.x) & strideMask.x; dx < K.GetKernelWidth(); dx += _Stride.x)
             {
                 for (uint c = 0; c < X.channels; ++c)
                 {
@@ -1132,10 +1161,15 @@ void Conv2DTrans(uint3 dispatchThreadID : SV_DispatchThreadID)
                     uint oy = (yy - _Pad.y) / _Stride.y;
                     uint ox = (xx - _Pad.x) / _Stride.x;
 
-                    bool mask = xx >= _Pad.x && yy >= _Pad.y && ox < X.width && oy < X.height;
+                    // early out if read input index fall upon leftmost outer zero padding
+                    if ((xx - _Pad.x) < 0) continue;
+                    if ((yy - _Pad.y) < 0) continue;
 
-                    float v = (mask)? X.Get(n, oy, ox, c): 0;
-                    acc += v * K.Get(K.GetKernelHeight() - 1 - dy, K.GetKernelWidth() - 1 - dx, c, k);
+                    // early out if read input index fall upon rightmost outer zero padding
+                    if (ox >= X.width) continue;
+                    if (oy >= X.height) continue;
+
+                    acc += X.Get(n, oy, ox, c) * K.Get(K.GetKernelHeight() - 1 - dy, K.GetKernelWidth() - 1 - dx, c, k);
                 }
             }
         }
@@ -1168,7 +1202,7 @@ void TextureToTensor(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint x = dispatchThreadID.x + _Pad.y;
     uint y = dispatchThreadID.y + _Pad.z;
     uint c = dispatchThreadID.z + _Pad.w;
-    
+
     if (y >= O.height || x >= O.width)
         return;
 
@@ -1183,23 +1217,22 @@ void TextureToTensor(uint3 dispatchThreadID : SV_DispatchThreadID)
     float4 v = Xtex2D.SampleLevel(samplerXtex2D, uvw.xy, 0);
     //texArray.SampleLevel(smpArray, loc, 0);
 
-    if (_Stride.w == 1)
+    uint4 channelWriteMask = _Stride;
+    bool specialCaseWhenChannelMaskIsEmptyStoresAverage = true;
+    for (int i = 0; i < 4; ++i)
     {
-        // TODO: interpret color as
-        O.Set(b, y, x, c+0, (v.r + v.g + v.b) / 3.0f);
+        if (channelWriteMask[i] == 1)
+        {
+            O.Set(b, y, x, c, v[i]);
+            c += 1;
+            specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+        }
     }
-    else if (_Stride.w == 3)
+
+    if (specialCaseWhenChannelMaskIsEmptyStoresAverage)
     {
-        O.Set(b, y, x, c+0, v.r);
-        O.Set(b, y, x, c+1, v.g);
-        O.Set(b, y, x, c+2, v.b);
-    }
-    else if (_Stride.w == 4)
-    {
-        O.Set(b, y, x, c+0, v.r);
-        O.Set(b, y, x, c+1, v.g);
-        O.Set(b, y, x, c+2, v.b);
-        O.Set(b, y, x, c+3, v.a);
+        float avg = (v.r + v.g + v.b) / 3.0f;
+        O.Set(b, y, x, c, avg);
     }
 }
 
@@ -1212,7 +1245,7 @@ void TensorToTexture(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint x = dispatchThreadID.x + _Pad.y;
     uint y = dispatchThreadID.y + _Pad.z;
     uint c = dispatchThreadID.z + _Pad.w;
-    
+
     if (y >= X.height || x >= X.width)
         return;
 
@@ -1242,4 +1275,162 @@ void TensorToTexture(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 
     Otex2D[dispatchThreadID.xy] = v;
+}
+
+[numthreads(4, 4, 4)]
+void Border2D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    // NOTE: negative "pad" variable crop X tensor
+    int croppedWidth = _Pool.x;
+    int croppedHeight = _Pool.y;
+    int readX = x - _Pad.x;
+    int readY = y - _Pad.y;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float v;
+        if (readX < 0 || readX >= croppedWidth ||
+            readY < 0 || readY >= croppedHeight)
+        {
+            v = _Beta;
+        }
+        else
+        {
+            v = X.Get(n, readY, readX, c);
+        }
+        O.Set(n, y, x, c, v);
+    }
+}
+
+void ClampHWToTensorShape(uint4 Xshape, inout int height, inout int width)
+{
+    width = max(width, 0);
+    height = max(height, 0);
+    width = min(width, (int)Xshape.z - 1);
+    height = min(height, (int)Xshape.y - 1);
+}
+
+[numthreads(4, 4, 4)]
+void Pad2DEdge(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    int readX = x - _Pad.x;
+    int readY = y - _Pad.y;
+    uint4 Xshape = _Stride;
+
+    //clamp read indices to source
+    ClampHWToTensorShape(Xshape, readY, readX);
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float v = X.Get(n, readY, readX, c);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void Pad2DReflect(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    int readX = x - _Pad.x;
+    int readY = y - _Pad.y;
+    uint4 Xshape = _Stride;
+
+    int lastXIndex = Xshape.z - 1;
+    int lastYIndex = Xshape.y - 1;
+
+    //x reflect indexing
+    if (readX < 0)
+        readX = -readX;
+    else if (readX > lastXIndex)
+        readX = lastXIndex - (readX - lastXIndex);
+
+    //y reflect indexing
+    if (readY < 0)
+        readY = -readY;
+    else if (readY > lastYIndex)
+        readY = lastYIndex - (readY - lastYIndex);
+
+    //clamp read indices to source
+    ClampHWToTensorShape(Xshape, readY, readX);
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float v = X.Get(n, readY, readX, c);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
+void Pad2DSymmetric(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    int readX = x - _Pad.x;
+    int readY = y - _Pad.y;
+    uint4 Xshape = _Stride;
+
+    int lastXIndex = Xshape.z - 1;
+    int lastYIndex = Xshape.y - 1;
+
+    //x symmetric indexing
+    if (readX < 0)
+        readX = -readX - 1;
+    else if (readX > lastXIndex)
+        readX = lastXIndex - (readX - lastXIndex) + 1;
+
+    //y symmetric indexing
+    if (readY < 0)
+        readY = -readY - 1;
+    else if (readY > lastYIndex)
+        readY = lastYIndex - (readY - lastYIndex) + 1;
+
+    //clamp read indices to source
+    ClampHWToTensorShape(Xshape, readY, readX);
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float v = X.Get(n, readY, readX, c);
+        O.Set(n, y, x, c, v);
+    }
 }
