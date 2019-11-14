@@ -13,6 +13,7 @@
 #pragma kernel InstanceNorm
 #pragma kernel InstanceNormTail_CNyx2
 #pragma kernel InstanceNormTail_Flat
+#pragma kernel InstanceNormTail_Loop
 #pragma kernel Copy
 
 /*
@@ -116,7 +117,7 @@ void ScaleBias_Loop(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint i = dispatchThreadID.x;
     uint len = O.GetLength();
 
-    while (i < len) 
+    while (i < len)
     {
         uint c = i % X.channels;
         float bias = B.Get(c);
@@ -420,6 +421,36 @@ void InstanceNormTail_Flat(uint3 dispatchThreadID : SV_DispatchThreadID)
     v = v * invNormFactor - mean * invNormFactor;
 
     O.Set(i, v);
+}
+
+NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
+void InstanceNormTail_Loop(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.length, 1, 1);
+    TENSOR_ARGS4(X, W, B, O);
+
+    uint i = dispatchThreadID.x;
+    uint len = O.GetLength();
+
+    while (i < len)
+    {
+        uint c = i % X.channels;
+        float bias = B.Get(c);
+        float scale = W.Get(c);
+
+        float variance = W.Get(c);
+        float mean = B.Get(c);
+        // normalization factor
+        float invNormFactor = 1 / sqrt(variance + _Epsilon);
+
+        float v = X.Get(i);
+        //v = gamma * (v * invNormFactor - mean * invNormFactor) + beta
+        v = v * invNormFactor - mean * invNormFactor;
+
+        O.Set(i, v);
+
+        i += _LoopStride;
+    }
 }
 
 NUMTHREADS((32,4,1), (32,2,1), (16,2,1))

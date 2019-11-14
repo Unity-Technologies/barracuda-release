@@ -148,9 +148,34 @@ var worker = BarracudaWorkerFactory.CreateWorker(BarracudaWorkerFactory.Type.Com
 ```
 
 ## Converting TensorFlow models to Barracuda format
-Barracuda comes with dedicated python scripts to convert pre-trained TensorFlow models to Barracuda format.
+Barracuda comes with dedicated python scripts to convert pre-trained constant `.pb` TensorFlow graph.
 
-Convert from TensorFlow:
+To produce a constant graph from a trained model:
+
+- In TF1.x use [freeze_graph](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/tools/freeze_graph.py). Example from a `SavedModel` (more [examples](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/tools/freeze_graph_test.py)).
+
+```python
+from tensorflow.python.tools import freeze_graph
+freeze_graph.freeze_graph(None, None, <input_is_binary>, None, None
+                          <output_name>, None, None, <output_path>, False,
+                          clear_devices, None, None, None, False, False, 
+                          <saved_model_dir>, tag_constants.SERVING)
+```
+
+- In TF2.x use [convert_to_constants](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/framework/convert_to_constants.py). Example from a Keras `Model` (more [examples](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/framework/convert_to_constants_test.py)):
+
+```python
+from tensorflow.python.framework import convert_to_constants
+@tf.function(input_signature=[tf.TensorSpec(shape=[<input_shape>], dtype=tf.float32)])
+def to_save(x):
+    return model(x)
+f = to_save.get_concrete_function()
+constantGraph = convert_to_constants.convert_variables_to_constants_v2(f)
+tf.io.write_graph(constantGraph.graph.as_graph_def(), <output_dir>, <output_file>) 
+```
+
+Convert constant graph to Barracuda:
+
 ```bash
 python tensorflow_to_barracuda.py Models/3DBall-tf-model.pb Destination/3DBall-bc.nn
 ```

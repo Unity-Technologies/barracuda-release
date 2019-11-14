@@ -844,7 +844,8 @@ void Softmax(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (y >= O.GetFlatHeight()) return;
 
     float maxV = -FLT_MAX;
-    for (uint i = 0; i < X.GetFlatWidth(); ++i)
+    uint i;
+    for (i = 0; i < X.GetFlatWidth(); ++i)
     {
         float v = X.Get(y, i);
         if (v > maxV)

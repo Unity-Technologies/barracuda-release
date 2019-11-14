@@ -1,5 +1,15 @@
 # Release notes
 
+## [0.3.1] - 2019-11-13
+- Compute: fixed RenderTexture to Tensor conversion.
+- Compute: implemented Loop type of InstanceNormTail kernel, fixes Pix2Pix inputs that are larger than 256x256.
+- Compute: fixed dummy texture cache to properly survive domain reload.
+- Compute: added support for 2 channels in TensorToTexture.
+- Compute: fixed kernel compilation on consoles.
+- Compute: disabled compute buffer clearing when data is coming from texture, saves a lot of GC allocations.
+- Compute: various small optimizations for Kernel selection and data preparation, saves some GC allocations.
+- Docs: added instructions how to export model from TF2.x.
+
 ## [0.3.0] - 2019-10-29
 - ONNX: Implemented .onnx asset importer as Editor Plugin. Now .onnx files can be added directly to the project as regular assets.
 Python script is not needed to import ONNX models anymore. When loading from script reference ONNX asset as `NNModel`. 

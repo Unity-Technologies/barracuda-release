@@ -345,8 +345,9 @@ void Conv2D_RegisterBlock4x2(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < O.batch; ++n)
     {
         float acc[SIZE_H*SIZE_W];
+        uint q;
         [unroll]
-        for (uint q = 0; q < SIZE_H*SIZE_W; ++q)
+        for (q = 0; q < SIZE_H*SIZE_W; ++q)
             acc[q] = B.Get(k);
         for (uint dy = 0; dy < K.GetKernelHeight(); ++dy)
         {
@@ -354,7 +355,7 @@ void Conv2D_RegisterBlock4x2(uint3 dispatchThreadID : SV_DispatchThreadID)
             {
                 uint2 pos[SIZE_H*SIZE_W];
                 [unroll]
-                for (uint q = 0; q < SIZE_H*SIZE_W; ++q)
+                for (q = 0; q < SIZE_H*SIZE_W; ++q)
                     pos[q] = uint2(x*SIZE_W+(q%SIZE_W), y*SIZE_H+(q/SIZE_W)) * _Stride.xy + uint2(dx, dy);
 
                 for (uint c = 0; c < X.channels; ++c)
@@ -391,8 +392,9 @@ void Conv2D_L1Cached##L1CACHESIZE##_RegisterBlock##SIZE##x##SIZE(uint3 groupID :
     for (uint n = 0; n < O.batch; ++n)\
     {\
         float acc[SIZE*SIZE];\
+        uint q;\
         [unroll]\
-        for (uint q = 0; q < SIZE*SIZE; ++q)\
+        for (q = 0; q < SIZE*SIZE; ++q)\
             acc[q] = B.SafeGet(k);\
 \
         for (uint dy = 0; dy < K.GetKernelHeight(); ++dy)\
@@ -401,7 +403,7 @@ void Conv2D_L1Cached##L1CACHESIZE##_RegisterBlock##SIZE##x##SIZE(uint3 groupID :
             {\
                 uint2 pos[SIZE*SIZE];\
                 [unroll]\
-                for (uint q = 0; q < SIZE*SIZE; ++q)\
+                for (q = 0; q < SIZE*SIZE; ++q)\
                     pos[q] = uint2(x*SIZE+(q%SIZE), y*SIZE+(q/SIZE)) * _Stride.xy + uint2(dx, dy);\
 \
                 for (uint c = 0; c < X.channels; c += L1CACHESIZE)\
