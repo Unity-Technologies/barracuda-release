@@ -81,6 +81,15 @@ struct Tensor
             i;
         return index;
     }
+
+    uint Index(uint b, uint i, uint ch)
+    {
+        uint index =
+            b * height * width * channels +
+            i * channels +
+            ch;
+        return index;
+    }
 };
 
 struct ReadonlyTensor : Tensor
@@ -100,6 +109,10 @@ struct ReadonlyTensor : Tensor
     float Get(uint b, uint2 pos, uint ch)
     {
         return data[Index(b, pos.y, pos.x, ch)];
+    }
+    float Get(uint b, uint i, uint ch)
+    {
+        return data[Index(b, i, ch)];
     }
     float Get(uint b, uint i)
     {
@@ -233,6 +246,10 @@ struct ReadWriteTensor : Tensor
     {
         data[Index(b,h,w,ch)] = v;
     }
+    void Set(uint b, uint i, uint ch, float v)
+    {
+        data[Index(b, i, ch)] = v;
+    }
     void Set(uint y, uint x, float v)
     {
         data[Index(y,x)] = v;
@@ -283,6 +300,10 @@ struct SharedTensor : Tensor
     float BroadcastGet(uint b, uint i)
     {
         return Get(b % GetFlatHeight(), i % GetFlatWidth());
+    }
+    float BroadcastGet(uint i)
+    {
+        return data[i % GetFlatWidth()];
     }
 
     float SafeGet(uint b, uint2 pos, uint ch, uint2 pad)

@@ -1,5 +1,6 @@
 #pragma kernel Dense
 #pragma kernel Conv2D
+#pragma kernel Conv2DWinograd_2x2_3x3
 #pragma kernel DepthwiseConv2D
 #pragma kernel Conv2DTrans
 #pragma kernel Upsample2D
@@ -8,21 +9,28 @@
 #pragma kernel AvgPool2D
 #pragma kernel GlobalMaxPool2D
 #pragma kernel GlobalAvgPool2D
+#pragma kernal GlobalAvgVariancePool2D
 #pragma kernel ScaleBias
 #pragma kernel InstanceNorm
 #pragma kernel Dropout
 #pragma kernel Relu
 #pragma kernel Neg
+#pragma kernel Reciprocal
 #pragma kernel Swish
 #pragma kernel Softmax
+#pragma kernel LogSoftmax
 #pragma kernel Tanh
 #pragma kernel Sigmoid
 #pragma kernel Relu6
 #pragma kernel Elu
 #pragma kernel LeakyRelu
+#pragma kernel PRelu
+#pragma kernel Selu
 #pragma kernel Exp
 #pragma kernel Log
+#pragma kernel Sqrt
 #pragma kernel Pow
+#pragma kernel Clip
 #pragma kernel Copy
 #pragma kernel BroadcastAdd
 #pragma kernel BroadcastSub
@@ -111,6 +119,53 @@ void Relu(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+[numthreads(4, 4, 4)]
+void PRelu(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	DISPATCH_ARGS(O.channels, O.width, O.height);
+	TENSOR_ARGS3(X, W, O);
+
+	uint c = dispatchThreadID.x;
+	uint x = dispatchThreadID.y;
+	uint y = dispatchThreadID.z;
+
+	if (c >= O.channels) return;
+	if (x >= O.width) return;
+	if (y >= O.height) return;
+
+	for (uint n = 0; n < X.batch; ++n)
+	{
+		float v = X.Get(n, y, x, c);
+		float slope = W.BroadcastGet(n, y, x, c);
+
+		v = max(0.0f,v) + slope * min(0.0f,v);
+		O.Set(n, y, x, c, v);
+	}
+}
+
+[numthreads(4, 4, 4)]
+void Selu(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	DISPATCH_ARGS(O.channels, O.width, O.height);
+	TENSOR_ARGS2(X, O);
+
+	uint c = dispatchThreadID.x;
+	uint x = dispatchThreadID.y;
+	uint y = dispatchThreadID.z;
+
+	if (c >= O.channels) return;
+	if (x >= O.width) return;
+	if (y >= O.height) return;
+
+	for (uint n = 0; n < X.batch; ++n)
+	{
+		float v = X.Get(n, y, x, c);
+		v = _Beta * (max(v, 0.0f) + min(_Alpha * (exp(v) - 1.0f), 0.0f));
+
+		O.Set(n, y, x, c, v);
+	}
+}
+
 [numthreads(4,4,4)]
 void Neg(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -131,6 +186,28 @@ void Neg(uint3 dispatchThreadID : SV_DispatchThreadID)
         v = -v;
         O.Set(n, y, x, c, v);
     }
+}
+
+[numthreads(4, 4, 4)]
+void Reciprocal(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	DISPATCH_ARGS(O.channels, O.width, O.height);
+	TENSOR_ARGS2(X, O);
+
+	uint c = dispatchThreadID.x;
+	uint x = dispatchThreadID.y;
+	uint y = dispatchThreadID.z;
+
+	if (c >= O.channels) return;
+	if (x >= O.width) return;
+	if (y >= O.height) return;
+
+	for (uint n = 0; n < X.batch; ++n)
+	{
+		float v = X.Get(n, y, x, c);
+		v = 1.0f / v;
+		O.Set(n, y, x, c, v);
+	}
 }
 
 [numthreads(4,4,4)]
@@ -276,6 +353,23 @@ void Log(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+[numthreads(4, 4, 4)]
+void Sqrt(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	DISPATCH_ARGS(O.channels, O.width, O.height);
+	TENSOR_ARGS2(X, O);
+
+	uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
+	if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+
+	for (uint n = 0; n < X.batch; ++n)
+	{
+		float v = X.Get(n, y, x, c);
+		v = sqrt(v);
+		O.Set(n, y, x, c, v);
+	}
+}
+
 float signed_pow(float f, float e)
 {
     // handle negative f
@@ -301,6 +395,23 @@ void Pow(uint3 dispatchThreadID : SV_DispatchThreadID)
         v = signed_pow(v, _Alpha);
         O.Set(n, y, x, c, v);
     }
+}
+
+[numthreads(4, 4, 4)]
+void Clip(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	DISPATCH_ARGS(O.channels, O.width, O.height);
+	TENSOR_ARGS2(X, O);
+
+	uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
+	if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+
+	for (uint n = 0; n < X.batch; ++n)
+	{
+		float v = X.Get(n, y, x, c);
+		v = clamp(v, _Alpha, _Beta);
+		O.Set(n, y, x, c, v);
+	}
 }
 
 [numthreads(4,4,4)]
@@ -846,6 +957,39 @@ void Softmax(uint3 dispatchThreadID : SV_DispatchThreadID)
     O.Set(y, x, v);
 }
 
+[numthreads(16, 4, 1)]
+void LogSoftmax(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+	TENSOR_ARGS2(X, O);
+
+	uint x = dispatchThreadID.x;
+	uint y = dispatchThreadID.y;
+
+	if (x >= O.GetFlatWidth()) return;
+	if (y >= O.GetFlatHeight()) return;
+
+	float maxV = -FLT_MAX;
+	for (uint i = 0; i < X.GetFlatWidth(); ++i)
+	{
+		float v = X.Get(y, i);
+		if (v > maxV)
+			maxV = v;
+	}
+
+	float acc = 0.0f;
+	for (i = 0; i < X.GetFlatWidth(); ++i)
+	{
+		float v = X.Get(y, i);
+		acc += exp(v - maxV);
+	}
+
+	float v = X.Get(y, x);
+	v = log(exp(v - maxV) / acc);
+	O.Set(y, x, v);
+}
+
+
 [numthreads(4,4,4)]
 void Upsample2D(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -985,6 +1129,38 @@ void GlobalAvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+
+[numthreads(32, 1, 1)]
+void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    if (c >= O.channels) return;
+    //ASSERT(X.batch == O.batch)
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+	    float mean = 0;
+	    float mean2 = 0;
+	    for (uint y = 0; y < X.height; ++y)
+	    {
+		    for (uint x = 0; x < X.width; ++x)
+		    {
+			    float v = X.Get(n, y, x, c);
+			    mean += v;
+			    mean2 += v * v;
+		    }
+	    }
+
+	    mean /= (X.height * X.width);
+	    mean2 /= (X.height * X.width);
+
+	    O.Set(n, 0, 0, c, mean);
+	    O.Set(n, 1, 0, c, mean2 - mean * mean);
+    }
+}
 [numthreads(32,1,1)]
 void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -1033,6 +1209,81 @@ void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
                 O.Set(n, y, x, c, v);
             }
     }
+}
+
+// https://github.com/andravin/wincnn
+// https://arxiv.org/pdf/1509.09308.pdf
+// Winograd: 4x4 image, 3x3 kernel, 2x2 output
+static const float4x4 Winograd_BT = float4x4(float4(1, 0, -1, 0), float4(0, 1, 1, 0), float4(0, -1, 1, 0), float4(0, -1, 0, 1));
+static const float4x4 Winograd_B = transpose(Winograd_BT);
+
+static const float4x3 Winograd_G = float4x3(float3(1, 0, 0), float3(0.5, 0.5, 0.5), float3(0.5, -0.5, 0.5), float3(0, 0, 1));
+static const float3x4 Winograd_GT = transpose(Winograd_G);
+
+static const float2x4 Winograd_AT = float2x4(float4(1, 1, 1, 0), float4(0, 1, -1, 1));
+static const float4x2 Winograd_A = transpose(Winograd_AT);
+
+[numthreads(64, 1, 1)]
+void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID: SV_GroupThreadID, uint3 groupID: SV_GroupID)
+{
+	DISPATCH_ARGS(K.kernelCount, O.width, O.height);
+	TENSOR_ARGS4(X, K, B, O);
+
+	uint k = dispatchThreadID.x;
+	uint x = dispatchThreadID.y;
+	uint y = dispatchThreadID.z;
+
+	if (k >= K.channels) return;
+	if (x >= O.width) return;
+	if (y >= O.height) return;
+
+
+	for (uint n = 0; n < O.batch; ++n)
+	{
+		float2x2 acc = B.Get(k);
+
+		for (uint c = 0; c < X.channels; ++c)
+		{
+			float4x4 d = 0;
+
+			// 16 loads per thread
+			for (int ix = 0; ix < 4; ix++)
+			{
+				for (int iy = 0; iy < 4; iy++)
+				{
+					uint2 index = ((4 * groupID.yz + int2(ix, iy)) * 1 + groupThreadID.yz);
+					d[ix][iy] = X.Get(n, index.yx, c);
+				}
+			}
+
+			// transform kernel -- N.B: do this offline offline
+			float3x3 g;
+			for (int ix = 0; ix < 3; ix++)
+			{
+				for (int iy = 0; iy < 3; iy++)
+				{
+					g[ix][iy] = K.Get(ix, iy, c, k);
+				}
+			}
+			// NB, matrix * can be written as +/-, no need for *
+			float4x4 v = mul(Winograd_G,  mul(g, Winograd_GT));
+			float4x4 u = mul(Winograd_BT, mul(d, Winograd_B));
+			float2x2 y = mul(Winograd_AT, mul(v*u, Winograd_A));
+
+			acc += y;
+		}
+		acc = transpose(acc);
+
+		// 4 writes per thread
+		for (int ix = 0; ix < 2; ix++)
+		{
+			for (int iy = 0; iy < 2; iy++)
+			{
+				uint2 index = (2 * groupID.yz + int2(ix, iy)) * 1 + groupThreadID.yz;
+				O.Set(n, index.y, index.x, k, acc[ix][iy]);
+			}
+		}
+	}
 }
 
 [numthreads(4,4,4)]

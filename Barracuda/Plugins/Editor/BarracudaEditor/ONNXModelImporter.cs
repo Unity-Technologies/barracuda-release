@@ -17,7 +17,7 @@ namespace Barracuda
     /// <summary>
     /// Asset Importer of ONNX models, this will convert to barracuda NN model.
     /// </summary>
-    [ScriptedImporter(1, new[] { "onnx" })]
+    [ScriptedImporter(2, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter {
         // Configuration
         public bool patchReshapeToSupportBatchSize = true;
@@ -61,9 +61,9 @@ namespace Barracuda
             });
             Add("Reshape", (net, node)  => {
                 long[] onnxShape;
-                if (node.InputCount > 1)
+                if (node.InputCount > 1) // Reshape-5
                     onnxShape = node.Input1Constant(onnxLayout:"C").readonlyArray.Select(v => (long)v).ToArray();
-                else
+                else // Reshape-1
                     onnxShape = node.Shape;
 
                 if (node.IsInput0Const)
@@ -197,17 +197,23 @@ namespace Barracuda
             Add("Relu", (net, node)     => { net.Relu(node.Name, node.Input0); });
             Add("Softmax", (net, node)  => { net.Softmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
             Add("Tanh", (net, node)     => { net.Tanh(node.Name, node.Input0); });
+            Add("Sqrt", (net, node)     => { net.Sqrt(node.Name, node.Input0); });
             Add("Sigmoid", (net, node)  => { net.Sigmoid(node.Name, node.Input0); });
             Add("Elu", (net, node)      => { net.Elu(node.Name, node.Input0, node.AlphaOptional(1f)); });
             Add("LeakyRelu",(net, node) => { net.LeakyRelu(node.Name, node.Input0, node.AlphaOptional(0.01f)); });
             Add("Selu", (net, node)     => { net.Selu(node.Name, node.Input0, node.AlphaOptional(1.67326f), node.GammaOptional(1.0507f)); });
             Add("Swish", (net, node)    => { net.Swish(node.Name, node.Input0); });
-
-            // TODO: Add("LogSoftmax", (net, node)   => { net.LogSoftmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
+            Add("PRelu", (net, node)    => { net.PRelu(node.Name, node.Input0, node.Input1); });
+            Add("LogSoftmax", (net, node)   => { net.LogSoftmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
+            Add("Exp", (net, node)    => { net.Exp(node.Name, node.Input0); });
+            Add("Log", (net, node)    => { net.Log(node.Name, node.Input0); });
+            Add("Neg", (net, node)    => { net.Neg(node.Name, node.Input0); });
+            Add("Reciprocal", (net, node)    => { net.Reciprocal(node.Name, node.Input0); });
             // TODO: Add("Hardmax", (net, node)      => { net.Hardmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
             // TODO: Add("Softplus", (net, node)     => { net.Softplus(node.Name, node.Input0); });
             // TODO: Add("Softsign", (net, node)     => { net.Softsign(node.Name, node.Input0); });
             // TODO: Add("HardSigmoid", (net, node)  => { net.HardSigmoid(node.Name, node.Input0, node.AlphaOptional(0.2f), node.BetaOptional(0.5f)); });
+            Add("Clip", (net, node)    => { net.Clip(node.Name, node.Input0, node.MinOptional(float.MinValue),  node.MaxOptional(float.MaxValue)); });
 
             // Broadcast ops
             Add("Add", (net, node)     => { net.Add(node.Name, node.Inputs); });
@@ -257,10 +263,29 @@ namespace Barracuda
             Add("GlobalMaxPool",     (net, node) => { net.GlobalMaxPool2D(node.Name, node.Input0); });
             Add("Upsample", (net, node) => {
                 node.UnsupportedAttribute("mode", "nearest");
-                // TODO: if (node.InputCount > 1) net.Upsample2D(node.Name, node.Input0, node.Input1Constant); // Reshape-9 else // Upsample-7
                 // TODO: if (node.Scales < 1) pool
-                // TODO: if (round(node.Scales) != node.Scales)
-                net.Upsample2D(node.Name, node.Input0, node.Scales.Select(x => (int)x).ToArray());
+
+                float[] scales;
+                if (node.InputCount > 1)
+                {
+                    scales = node.Input1Constant(onnxLayout:"C").readonlyArray;
+                    if (scales.Length < 2 || scales.Length > 5)
+                        throw new OnnxLayerImportException(
+                            $"Input scales of unsupported length {scales.Length} in {node.Name} ot fype {node.OperatorType}.");
+
+                    if ((scales[0] != 1) || (scales[1] != 1))
+                        Warn(net, node, $"Unsupported scaling, only H and W scaling are supported. Value will be ignored and defaulted to 1.");
+
+                    // skip NC from onnx NCHW layout
+                    scales = scales.Skip(2).ToArray();
+                }
+                else
+                    scales = node.Scales;
+
+                if (!scales.All(x => Mathf.Approximately(x, Mathf.Round(x))))
+                    Warn(net, node, $"Only integer scale values are currently supported. Scale value will be rounded to closest integer value.");
+
+                net.Upsample2D(node.Name, node.Input0, scales.Select(x => (int)Mathf.Round(x)).ToArray());
             });
 
             // Tensor ops
@@ -318,6 +343,33 @@ namespace Barracuda
                 var scale     = node.Input1Constant(onnxLayout:"C");
                 var bias      = node.Input2ConstantOptional(scale.shape, 0.0f, onnxLayout:"C");
                 net.Normalization(node.Name, node.Input0, scale, bias, node.EpsilonOptional());
+            });
+            // random opps
+            Add("RandomNormal", (net, node) => {
+                float mean     = node.GetOptionalFloat("mean",  1.0f);
+                float scale    = node.GetOptionalFloat("scale",   0.0f);
+                float seed     = node.GetOptionalFloat("seed",  0.0f);
+                int[] shape    = node.GetRequiredIntArray("shape");
+                net.RandomNormal(node.Name, mean, scale, seed, shape);
+            });
+            Add("RandomNormalLike", (net, node) => {
+                float mean     = node.GetOptionalFloat("mean",  1.0f);
+                float scale    = node.GetOptionalFloat("scale",   0.0f);
+                float seed     = node.GetOptionalFloat("seed",  0.0f);
+                net.RandomNormal(node.Name, mean, scale, seed, node.Input0);
+            });
+            Add("RandomUniform", (net, node) => {
+                float high     = node.GetOptionalFloat("high",  1.0f);
+                float low      = node.GetOptionalFloat("low",   0.0f);
+                float seed     = node.GetOptionalFloat("seed",  0.0f);
+                int[] shape    = node.GetRequiredIntArray("shape");
+                net.RandomUniform(node.Name, low, high, seed, shape);
+            });
+            Add("RandomUniformLike", (net, node) => {
+                float high     = node.GetOptionalFloat("high",  1.0f);
+                float low      = node.GetOptionalFloat("low",   0.0f);
+                float seed     = node.GetOptionalFloat("seed",  0.0f);
+                net.RandomUniform(node.Name, low, high, seed, node.Input0);
             });
 
             // Ignore, noop during inference
@@ -897,6 +949,11 @@ x::12
         }
 
         // Logging helpers
+        private static void Warn(ModelBuilder builder, ONNXNodeWrapper node, string message)
+        {
+            Warn(builder.model, node.Name, message);
+        }
+
         private static void Warn(Model model, string layerName, string message)
         {
             model.Warnings.Add(new Model.ImporterWarning(layerName,message));
@@ -1269,6 +1326,8 @@ x::12
             public int GroupOptional(int defaultValue=1) { return GetOptionalInt("group", defaultValue); }
             public int[] KernelShapeOptional(int[] defaultValue) { return GetOptionalIntArray("kernel_shape", defaultValue); }
             public int[] AxesOptional(int[] defaultValue) { return GetOptionalIntArray("axes", defaultValue); }
+            public float MinOptional(float defaultValue) { return GetOptionalFloat("min", defaultValue); }
+            public float MaxOptional(float defaultValue) { return GetOptionalFloat("max", defaultValue); }
         }
     }
 }

@@ -140,10 +140,10 @@ public class NNModelEditor : Editor
                 var menu = new GenericMenu();
                 // need to copy current value to be used in delegate
                 // (C# closures close over variables, not their values)
-                menu.AddItem(EditorGUIUtility.TrTextContent($"Copy current line"), false, delegate {
+                menu.AddItem(new GUIContent($"Copy current line"), false, delegate {
                     EditorGUIUtility.systemCopyBuffer = $"{name} {description}";
                 });
-                menu.AddItem(EditorGUIUtility.TrTextContent($"Copy section"), false, delegate {
+                menu.AddItem(new GUIContent($"Copy section"), false, delegate {
                     EditorGUIUtility.systemCopyBuffer = fullText.ToString();
                 });
                 menu.ShowAsContext();
@@ -160,7 +160,7 @@ public class NNModelEditor : Editor
             // layer name on the right side
             Rect locRect = r;
             locRect.xMax = locRect.xMin;
-            GUIContent gc = EditorGUIUtility.TrTextContent(name.ToString(CultureInfo.InvariantCulture));
+            GUIContent gc = new GUIContent(name.ToString(CultureInfo.InvariantCulture));
 
             // calculate size so we can left-align it
             Vector2 size = EditorStyles.miniBoldLabel.CalcSize(gc);
@@ -171,7 +171,7 @@ public class NNModelEditor : Editor
             // message
             Rect msgRect = r;
             msgRect.xMin = locRect.xMax;
-            GUI.Label(msgRect, EditorGUIUtility.TrTextContent(description.ToString(CultureInfo.InvariantCulture)), EditorStyles.miniLabel);
+            GUI.Label(msgRect, new GUIContent(description.ToString(CultureInfo.InvariantCulture)), EditorStyles.miniLabel);
         }
         GUILayout.EndScrollView();
     }

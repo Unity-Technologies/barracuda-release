@@ -195,6 +195,34 @@ def trim(model, criteria_regexp_string, verbose):
         print("WARNING: Trim couldn't find any layers to match:", criteria_regexp_string)
     return model
 
+# Setup load ops for constants
+def setup_constants(model, get_tensor_shape_lambda, get_tensor_data_lambda):
+    all_inputs = {i for l in model.layers for i in l.inputs}
+    const_tensor_names = [i for i in all_inputs if i in model.tensors]
+    const_tensor_names += model.globals
+    for name in const_tensor_names:
+        tensor = model.tensors[name]
+        shape = get_tensor_shape_lambda(tensor)
+        o_l = Struct(
+            type        = 255,  # Load
+            class_name  = "Const",
+            name        = name,
+            pads        = [0,0,0,0],
+            strides     = [],
+            pool_size   = [],
+            axis        = -1,
+            alpha       = 1,
+            beta        = 0,
+            activation  = 0,
+            inputs      = [],
+            tensors     = [Struct(
+                name = name,
+                shape = shape,
+                data = np.reshape(get_tensor_data_lambda(tensor), shape).astype(np.float32))]
+        )
+        model.layers.insert(0, o_l)
+    return model
+
 # Fuse
 def fuse(model, verbose):
     i = 0
@@ -217,6 +245,31 @@ def compress(model):
                 x.data = np.float16(x.data)
     return model
 
+
+def simplify_names(model):
+    def strip_tensforlow_postfix(name):
+        #return re.sub(r":\d+", '',  name) # completely remove Tensorflow complex tensor indexing
+        return name.replace(':0', '')
+
+    for l in model.layers:
+        l.name = strip_tensforlow_postfix(l.name)
+        l.inputs = [strip_tensforlow_postfix(i) for i in l.inputs]
+        for x in l.tensors:
+            x.name = strip_tensforlow_postfix(x.name)
+
+    model.tensors = [strip_tensforlow_postfix(x) for x in model.tensors]
+
+    if isinstance(model.inputs, dict):
+        model.inputs = {strip_tensforlow_postfix(name):shape for name, shape in model.inputs.items()}
+    else:
+        model.inputs = [strip_tensforlow_postfix(i) for i in model.inputs]
+
+    model.outputs = [strip_tensforlow_postfix(o) for o in model.outputs]
+    model.globals = [strip_tensforlow_postfix(g) for g in model.globals]
+    model.memories = [strip_tensforlow_postfix(m) if isinstance(str) else m for m in model.memories]
+
+    return model
+
 # Verbose
 def to_json(model):
     class StructEncoder(json.JSONEncoder):
@@ -232,7 +285,16 @@ def to_json(model):
     s = s.replace(']}, {', ']},\n{')
     s = s.replace(':[{', ':[\n\t{')
     s = s.replace('}, {', '},\n\t{')
+    s = s.replace('}], ', '}],\n\t')
     s = s.replace('"', "'")
+    # skip defaults
+    s = s.replace("'activation':0, ", '')
+    s = s.replace("'strides':[], ", '')
+    s = s.replace("'pads':[0, 0, 0, 0], ", '')
+    s = s.replace("'axis':-1, ", '')
+    s = s.replace("'alpha':1, ", '')
+    s = s.replace("'beta':0, ", '')
+    s = s.replace("'tensors':[], ", '')
     return s
 
 def summary(model, print_layer_links, print_barracuda_json, print_tensors):

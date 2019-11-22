@@ -1356,7 +1356,6 @@ def convert(source_file, target_file, trim_unused_by_output="", verbose=False, c
         return [l for l in layers if not is_unconnected_identity(l)]
     o_model.layers = cleanup_layers(o_model.layers)
 
-    all_inputs = {i for l in o_model.layers for i in l.inputs}
 
     # Trim
     if trim_unused_by_output:
@@ -1369,31 +1368,15 @@ def convert(source_file, target_file, trim_unused_by_output="", verbose=False, c
             shape = [1] + shape
         return shape
 
-    const_tensors = [i for i in all_inputs if i in o_model.tensors]
-    const_tensors += o_model.globals
-    for x in const_tensors:
-        shape = dims_to_barracuda_shape(get_tensor_dims(o_model.tensors[x]))
-        o_l = Struct(
-            type        = 255,  # Load
-            class_name  = "Const",
-            name        = x,
-            pads        = [0,0,0,0],
-            strides     = [],
-            pool_size   = [],
-            axis        = -1,
-            alpha       = 1,
-            beta        = 0,
-            activation  = 0,
-            inputs      = [],
-            tensors     = [Struct(
-                name = x,
-                shape = shape,
-                data = np.reshape(get_tensor_data(o_model.tensors[x]), shape).astype(np.float32))]
-        )
-        o_model.layers.insert(0, o_l)
+    barracuda.setup_constants(o_model,
+        lambda tensor: dims_to_barracuda_shape(get_tensor_dims(tensor)),
+        lambda tensor: get_tensor_data(tensor))
+
 
     # Find model inputs & outputs
+    all_inputs = {i for l in o_model.layers for i in l.inputs}
     all_layers = {l.name for l in o_model.layers}
+
     # global inputs => are inputs that are NOT connected to any layer in the network
     # global outputs => are outputs that are NOT feeding any layer in the network OR are coming from Identity layers
     o_model.inputs = {i:o_input_shapes[i] for l in o_model.layers for i in l.inputs if i not in all_layers and i not in o_model.memories}

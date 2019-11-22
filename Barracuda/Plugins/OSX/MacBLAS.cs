@@ -1,4 +1,4 @@
-#if UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX
+#if UNITY_2018_1_OR_NEWER && (UNITY_STANDALONE_OSX || UNITY_EDITOR_OSX)
 using System.Runtime.InteropServices;
 using Barracuda;
 using UnityEngine;

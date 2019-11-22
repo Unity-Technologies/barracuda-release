@@ -1,5 +1,19 @@
 # Release notes
 
+## [0.3.2] - 2019-11-22
+- Implemented PRelu activation
+- Performance: improved InstanceNormalization performance on GPU, 40% faster.
+- Performance: implemented batch support for InstanceNormalization.
+- ONNX: implemented opset9 support for Upsample op. In opset9 `scales` parameter became specified as input tensor instead of attribute.
+- ONNX: enabled LogSoftmax, Sqrt, Clip, Reciprocal and Neg ops.
+- ONNX: enabled RandomNormal, RandomNormalLike, RandomUniform, RandomUniformLike ops
+- Fix: added workaround for buggy Adreno + Android 8 Vulkan drivers.
+- Fix: moved Protobuf to the runtime plugins so it can be shared with ML-Agents.
+- Fix: compatibility with Unity 2017.4.x.
+- ONNX.Py: added globals (meta info) detection.
+- ONNX.Py: opset=10 introduced Resize op and deprecated Upsample.
+- TF, ONNX.Py: skip default values when printing verbose JSON.
+
 ## [0.3.1] - 2019-11-13
 - Compute: fixed RenderTexture to Tensor conversion.
 - Compute: implemented Loop type of InstanceNormTail kernel, fixes Pix2Pix inputs that are larger than 256x256.

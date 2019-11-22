@@ -70,7 +70,7 @@ known_classes = {
                         data_to_HWKC(data[0]),
                         data[1]
                     ]), # TODO: args(output_padding, output_shape)
-    'Upsample':         23, 'ResizeNearest':    23,
+    'Upsample':         23, 'ResizeNearest':    23, 'Resize':    23,
 
     'MaxPool':          25,
     'AveragePool':      26, # TODO: args(count_include_pad)
@@ -376,7 +376,15 @@ def process_model(model, args):
     for layer in model.graph.node:
         process_layer(layer, o_context, args)
    
-    return o_context.layers, o_context.input_shapes, o_context.model_tensors, o_context.model_memories
+    def find_unconnected_model_tensors(layers, const_tensors):
+        const_tensors = const_tensors.copy()
+        for l in layers:
+            for i in l.input:
+                const_tensors.pop(i, None)
+        return list(const_tensors.keys())
+
+    return o_context.layers, o_context.input_shapes, o_context.model_tensors, o_context.model_memories, \
+        find_unconnected_model_tensors(model.graph.node, o_context.model_tensors)
 
 def process_layer(layer, context, args):
     model_tensors = context.model_tensors
@@ -544,52 +552,46 @@ def convert(source_file, target_file, trim_unused_by_output="", verbose=False, c
 
     # Convert
     o_model = barracuda.Model()
-    o_model.layers, o_input_shapes, o_model.tensors, o_model.memories = \
+    o_model.layers, o_input_shapes, o_model.tensors, o_model.memories, o_model.globals = \
         process_model(i_model, args)
 
     # Trim
     if trim_unused_by_output:
         o_model.layers = barracuda.trim(o_model.layers, trim_unused_by_output, args.verbose)
 
+    # Create load layers for constants
+    def dims_to_barracuda_shape(tensor):
+        if hasattr(tensor, 'dims') and len(tensor.dims) > 0:
+            return adapt_input_shape(tensor.dims)
+        return [1,1,1,1]
+
+    barracuda.setup_constants(o_model,
+        lambda tensor: dims_to_barracuda_shape(tensor),
+        lambda tensor: get_tensor_data(tensor))
 
     # Find model inputs & outputs
     all_inputs = {i for l in o_model.layers for i in l.inputs}
-
-    # Create load layers for constants
-    const_tensors = [i for i in all_inputs if i in o_model.tensors]
-    const_tensors += o_model.globals
-    for x in const_tensors:
-        shape = adapt_input_shape(o_model.tensors[x].dims) if hasattr(o_model.tensors[x], 'dims') and len(o_model.tensors[x].dims) > 0 else [1, 1, 1, 1]
-
-        o_l = Struct(
-            type=255,  # Load
-            class_name="Const",
-            name=x,
-            pads=[0, 0, 0, 0],
-            strides=[],
-            pool_size=[],
-            axis=-1,
-            alpha=1,
-            beta=0,
-            activation=0,
-            inputs=[],
-            tensors=[Struct(
-                name=x,
-                shape=shape,
-                data=np.reshape(get_tensor_data(o_model.tensors[x]), shape).astype(np.float32))]
-        )
-        o_model.layers.insert(0, o_l)
-
     all_layers = {l.name for l in o_model.layers}
 
     # global inputs - are inputs that are NOT connected to any layer in the network
     # global outputs - are outputs that are NOT feeding any layer in the network
     o_model.inputs = {i:o_input_shapes[i] for l in o_model.layers for i in l.inputs if i not in all_layers}
-    o_model.outputs = [l.name for l in o_model.layers if l.name not in all_inputs]
+
+    def is_output_layer(layer):
+        if layer.name in all_inputs:  # Only layers that do not input to other layers can count as global output
+            return False
+        if layer.name in o_model.globals:
+            return False
+        return True
+    o_model.outputs = [l.name for l in o_model.layers if is_output_layer(l)]
 
     # Compress
     if compress_f16:
         o_model = barracuda.compress(o_model)
+
+    # Sort model so that layer inputs are always ready upfront
+    o_model.layers = barracuda.sort(o_model.layers, o_model.inputs, o_model.memories, args.verbose)
+    o_model.layers = barracuda.fuse(o_model.layers, args.verbose)
 
     # Summary
     barracuda.summary(o_model,

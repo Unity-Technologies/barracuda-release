@@ -10,6 +10,7 @@
 #pragma kernel MaxPool2D_NoPads
 //#pragma kernel MaxPool2D_Pool2x2_NoPads
 #pragma kernel GlobalAvgPool2D
+#pragma kernel GlobalAvgVariancePool2D
 #pragma kernel InstanceNorm
 #pragma kernel InstanceNormTail_CNyx2
 #pragma kernel InstanceNormTail_Flat
@@ -350,6 +351,78 @@ void GlobalAvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+
+
+#undef GROUP_SIZE
+#define GROUP_SIZE BARRACUDA_MAX_THREAD_COUNT
+
+groupshared float AvgVariancePool2D_SharedMean[1][GROUP_SIZE];
+groupshared float AvgVariancePool2D_SharedVariance[1][GROUP_SIZE];
+
+[numthreads(1, GROUP_SIZE, 1)]
+void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID)
+{
+    DISPATCH_ARGS(O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        uint tid = groupThreadID.y;
+        uint q = (X.height * X.width) / GROUP_SIZE;
+        uint r = (X.height * X.width) % GROUP_SIZE;
+
+        float mean = 0;
+        float mean2 = 0;
+
+        for (int j = 0; j < q; j++)
+        {
+            float v = X.Get(n, tid + GROUP_SIZE * j, c);
+
+            // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+            // Squential addressing with none divergent branching
+            AvgVariancePool2D_SharedMean[groupThreadID.x][tid] = v;
+            AvgVariancePool2D_SharedVariance[groupThreadID.x][tid] = v * v;
+
+            GroupMemoryBarrierWithGroupSync();
+
+            for (int s = GROUP_SIZE / 2; s > 0; s >>= 1)
+            {
+                if (tid < s)
+                {
+                    AvgVariancePool2D_SharedMean[groupThreadID.x][tid] += AvgVariancePool2D_SharedMean[groupThreadID.x][tid + s];
+                    AvgVariancePool2D_SharedVariance[groupThreadID.x][tid] += AvgVariancePool2D_SharedVariance[groupThreadID.x][tid + s];
+                }
+                GroupMemoryBarrierWithGroupSync();
+            }
+
+            mean = mean + AvgVariancePool2D_SharedMean[groupThreadID.x][0];
+            mean2 = mean2 + AvgVariancePool2D_SharedVariance[groupThreadID.x][0];
+        }
+
+
+        // N.B: you can reduce this part, but the extra logic wasn't worth it perf wise
+        if (tid == 0)
+        {
+            for (int j = 0; j < r; j++)
+            {
+                float v = X.Get(n, q * GROUP_SIZE + j, c);
+                mean += v;
+                mean2 += v * v;
+            }
+            mean /= (X.height * X.width);
+            mean2 /= (X.height * X.width);
+
+            O.Set(n, 0, 0, c, mean);
+            O.Set(n, 1, 0, c, mean2 - mean * mean);
+        }
+
+    }
+}
+
+
+
 [numthreads(64,1,1)]
 void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -366,22 +439,21 @@ void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < O.batch; ++n)
     {
         uint x, y;
-        // calc mean
-        float acc = 0;
+        // calc mean/variance
+        float mean = 0.0, mean2 = 0.0;
         for (y = 0; y < O.height; ++y)
-            for (x = 0; x < O.width; ++x)
-                acc += X.Get(n, y, x, c);
-        float mean = acc / (O.width * O.height);
-
-        // calc variance
-        acc = 0;
-        for (y = 0; y < O.height; ++y)
+        {
             for (x = 0; x < O.width; ++x)
             {
-                float delta = X.Get(n, y, x, c) - mean;
-                acc += delta * delta;
+                float v = X.Get(n, y, x, c);
+                mean += v;
+                mean2 += v * v;
             }
-        float var = acc / (O.width * O.height);
+        }
+        mean /= (O.width * O.height);
+        mean2 /= (O.width * O.height);
+
+        float var = mean2 - mean * mean;
 
         // normalization factor
         float invNormFactor = 1 / sqrt(var + _Epsilon);
@@ -391,12 +463,14 @@ void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
 
         // apply normalization
         for (y = 0; y < O.height; ++y)
+        {
             for (x = 0; x < O.width; ++x)
             {
                 float v = X.Get(n, y, x, c);
                 v = v * scale + bias;
                 O.Set(n, y, x, c, v);
             }
+        }
     }
 }
 
@@ -404,15 +478,17 @@ NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
 void InstanceNormTail_Flat(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     DISPATCH_ARGS(O.length, 1, 1);
-    TENSOR_ARGS4(X, W, B, O);
+    TENSOR_ARGS3(X, W, O);
 
     uint i = dispatchThreadID.x;
     if (i > O.GetLength()) return;
 
     uint c = i % X.channels;
+    uint b = i / (X.height * X.width * X.channels);
 
-    float variance = W.Get(c);
-    float mean = B.Get(c);
+    float mean = W.Get(b, 0, 0, c);
+    float variance = W.Get(b, 1, 0, c);
+
     // normalization factor
     float invNormFactor = 1 / sqrt(variance + _Epsilon);
 
@@ -427,7 +503,7 @@ NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
 void InstanceNormTail_Loop(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     DISPATCH_ARGS(O.length, 1, 1);
-    TENSOR_ARGS4(X, W, B, O);
+    TENSOR_ARGS3(X, W, O);
 
     uint i = dispatchThreadID.x;
     uint len = O.GetLength();
@@ -435,11 +511,11 @@ void InstanceNormTail_Loop(uint3 dispatchThreadID : SV_DispatchThreadID)
     while (i < len)
     {
         uint c = i % X.channels;
-        float bias = B.Get(c);
-        float scale = W.Get(c);
+        uint b = i / (X.height * X.width * X.channels);
 
-        float variance = W.Get(c);
-        float mean = B.Get(c);
+        float mean = W.Get(b, 0, 0, c);
+        float variance = W.Get(b, 1, 0, c);
+
         // normalization factor
         float invNormFactor = 1 / sqrt(variance + _Epsilon);
 
@@ -457,16 +533,18 @@ NUMTHREADS((32,4,1), (32,2,1), (16,2,1))
 void InstanceNormTail_CNyx2(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     DISPATCH_ARGS(O.channels, O.batch * O.height * O.width, 1);
-    TENSOR_ARGS4(X, W, B, O);
+    TENSOR_ARGS3(X, W, O);
 
     uint c = dispatchThreadID.x;
     uint i = dispatchThreadID.y * X.channels + c;
+    uint b = i / (X.height * X.width * X.channels);
 
     if (c >= X.channels) return;
     if (i >= X.GetLength()) return;
 
-    float variance = W.Get(c);
-    float mean = B.Get(c);
+    float mean = W.Get(b, 0, 0, c);
+    float variance = W.Get(b, 1, 0, c);
+
     // normalization factor
     float invNormFactor = 1 / sqrt(variance + _Epsilon);
 
