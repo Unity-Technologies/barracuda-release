@@ -1,13 +1,11 @@
 {
-    "name": "MacBLAS",
+    "name": "BurstBLAS",
     "references": [
-		"Barracuda"
+        "Barracuda",
+		"Unity.Burst"
     ],
     "optionalUnityReferences": [],
-    "includePlatforms": [
-        "Editor",
-        "macOSStandalone"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true
 }

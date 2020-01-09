@@ -1,6 +1,6 @@
 {
     "name": "Barracuda-editor",
-    "references": [],
+    "references": ["Barracuda"],
     "includePlatforms": [
         "Editor"
     ],

@@ -1,0 +1,260 @@
+#pragma kernel AvgPool2D
+#pragma kernel MaxPool2D
+#pragma kernel AvgPool2D_NoPads
+#pragma kernel MaxPool2D_NoPads
+//#pragma kernel MaxPool2D_Pool2x2_NoPads
+#pragma kernel GlobalAvgPool2D
+#pragma kernel GlobalAvgVariancePool2D
+
+#include "Tensor.cginc"
+
+TENSOR_DECL(X)
+TENSOR_DECL(W)
+TENSOR_DECL(B)
+TENSOR_DECL(WBK)
+TENSOR_DECL_RW(O)
+
+uint4 _Pool;
+uint4 _Stride;
+uint4 _Pad;
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void MaxPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float maxV = -FLT_MAX;
+        for (uint dy = 0; dy < _Pool.y; ++dy)
+            for (uint dx = 0; dx < _Pool.x; ++dx)
+            {
+                uint oy = y * _Stride.y + dy;
+                uint ox = x * _Stride.x + dx;
+
+                bool mask = (oy >= _Pad.y) && (ox >= _Pad.x) && (oy - _Pad.y < X.height) && (ox - _Pad.x < X.width);
+                float v = (mask)? X.Get(n, oy - _Pad.y, ox - _Pad.x, c): -FLT_MAX;
+                
+                maxV = max(v, maxV);
+            }
+
+        O.Set(n, y, x, c, maxV);
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void AvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float acc = 0;
+        float counter = 0;
+        for (uint dy = 0; dy < _Pool.y; ++dy)
+            for (uint dx = 0; dx < _Pool.x; ++dx)
+            {
+                uint oy = y * _Stride.y + dy;
+                uint ox = x * _Stride.x + dx;
+
+                bool mask = (oy >= _Pad.y) && (ox >= _Pad.x) && (oy - _Pad.y < X.height) && (ox - _Pad.x < X.width);
+                acc += (mask)? X.Get(n, oy - _Pad.y, ox - _Pad.x, c): 0;
+                counter += (mask)? 1: 0;
+            }
+
+        acc /= counter;
+        O.Set(n, y, x, c, acc);
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void MaxPool2D_NoPads(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float maxV = -FLT_MAX;
+        for (uint dy = 0; dy < _Pool[1]; ++dy)
+            for (uint dx = 0; dx < _Pool[0]; ++dx)
+            {
+                float v = X.Get(n, y * _Stride[1] + dy, x * _Stride[0] + dx, c);
+                maxV = max(v, maxV);
+            }
+
+        O.Set(n, y, x, c, maxV);
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void AvgPool2D_NoPads(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    float invPoolSize = 1.0f / (_Pool[0] * _Pool[1]);
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = 0;
+        for (uint dy = 0; dy < _Pool[1]; ++dy)
+            for (uint dx = 0; dx < _Pool[0]; ++dx)
+                v += X.Get(n, y * _Stride[1] + dy, x * _Stride[0] + dx, c) * invPoolSize;
+
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+//NUMTHREADS((16,4,4), (16,4,2), (16,2,2))
+void MaxPool2D_Pool2x2_NoPads(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v0 = X.Get(n, y*2,   x*2,   c);
+        float v1 = X.Get(n, y*2+1, x*2,   c);
+        float v2 = X.Get(n, y*2,   x*2+1, c);
+        float v3 = X.Get(n, y*2+1, x*2+1, c);
+        float v = max(v0, max(v1, max(v2, v3)));
+
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(32,1,1)]
+void GlobalAvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    if (c >= O.channels) return;
+    //ASSERT(X.batch == O.batch)
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = 0;
+        for (uint y = 0; y < X.height; ++y)
+            for (uint x = 0; x < X.width; ++x)
+                v += X.Get(n, y, x, c);
+
+        v /= (X.height * X.width);
+        O.Set(n, 0, 0, c, v);
+    }
+}
+
+
+
+#undef GROUP_SIZE
+#define GROUP_SIZE BARRACUDA_MAX_THREAD_COUNT
+
+groupshared float AvgVariancePool2D_SharedMean[1][GROUP_SIZE];
+groupshared float AvgVariancePool2D_SharedVariance[1][GROUP_SIZE];
+
+[numthreads(1, GROUP_SIZE, 1)]
+void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID)
+{
+    DISPATCH_ARGS(O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        uint tid = groupThreadID.y;
+        uint q = (X.height * X.width) / GROUP_SIZE;
+        uint r = (X.height * X.width) % GROUP_SIZE;
+
+        float mean = 0;
+        float mean2 = 0;
+
+        for (uint j = 0; j < q; j++)
+        {
+            float v = X.Get(n, tid + GROUP_SIZE * j, c);
+
+            // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+            // Squential addressing with none divergent branching
+            AvgVariancePool2D_SharedMean[groupThreadID.x][tid] = v;
+            AvgVariancePool2D_SharedVariance[groupThreadID.x][tid] = v * v;
+
+            GroupMemoryBarrierWithGroupSync();
+
+            for (uint s = GROUP_SIZE / 2; s > 0; s >>= 1)
+            {
+                if (tid < s)
+                {
+                    AvgVariancePool2D_SharedMean[groupThreadID.x][tid] += AvgVariancePool2D_SharedMean[groupThreadID.x][tid + s];
+                    AvgVariancePool2D_SharedVariance[groupThreadID.x][tid] += AvgVariancePool2D_SharedVariance[groupThreadID.x][tid + s];
+                }
+                GroupMemoryBarrierWithGroupSync();
+            }
+
+            mean = mean + AvgVariancePool2D_SharedMean[groupThreadID.x][0];
+            mean2 = mean2 + AvgVariancePool2D_SharedVariance[groupThreadID.x][0];
+        }
+
+
+        // N.B: you can reduce this part, but the extra logic wasn't worth it perf wise
+        if (tid == 0)
+        {
+            for (uint j = 0; j < r; j++)
+            {
+                float v = X.Get(n, q * GROUP_SIZE + j, c);
+                mean += v;
+                mean2 += v * v;
+            }
+            mean /= (X.height * X.width);
+            mean2 /= (X.height * X.width);
+
+            O.Set(n, 0, 0, c, mean);
+            O.Set(n, 1, 0, c, mean2 - mean * mean);
+        }
+
+    }
+}
+

@@ -1,6 +1,6 @@
 <!---TODO:
 	Advanced topics
-	* worker.AddInput(): to prewarm data
+	* worker.SetInput(): to prewarm data
 	* how to trim networks at runtime (multi brain models)
 	* loading model from url: var modelFromDiskOrInternet = ModelLoader.Load(url, verbose); // will download and cache model from url
 	* recurrent state
@@ -59,11 +59,11 @@ worker.Execute(inputs);
 Execution is asynchronous for GPU backends. Currently implementation is synchronous for CPU backends, however it is good to assume that execution will be async for all backends in the future.
 
 ### Fetch outputs
-If model has only single output, then simple `worker.Peek()` can be used, otherwise output names should be provided.
+If model has only single output, then simple `worker.PeekOutput()` can be used, otherwise output names should be provided.
 ```C#
-var O = worker.Peek(outputName);
+var O = worker.PeekOutput(outputName);
 ```
-_Note:_ `worker.Peek()` does not transfer ownership of the tensor to you and tensor will still be owned by the `worker`. Calling `worker.Peek()` is preferable way and allows to reduce memory allocations. However, if you expect to use tensor for longer time, call `worker.Fetch()` - otherwise tensor values will be lost after the next call to `worker.Execute()` or after call to `worker.Dispose()`
+_Note:_ `worker.PeekOutput()` does not transfer ownership of the tensor to you and tensor will still be owned by the `worker`. Calling `worker.PeekOutput()` is preferable way and allows to reduce memory allocations. However, if you expect to use tensor for longer time, call `worker.Fetch()` - otherwise tensor values will be lost after the next call to `worker.Execute()` or after call to `worker.Dispose()`
 
 ### Cleanup
 As a Barracuda client you are responsible to `Dispose` _worker_, _inputs_ and _outputs_ you created, received via `worker.Fetch()` or taken ownership by calling `tensor.TakeOwnership()`. This is necessary to properly free GPU resources.
@@ -71,7 +71,7 @@ As a Barracuda client you are responsible to `Dispose` _worker_, _inputs_ and _o
 O.Dispose();
 worker.Dispose();
 ```
-_Note:_ It is not necessary to `Dispose` tensor that you received via ``worker.Peek()`` call.
+_Note:_ It is not necessary to `Dispose` tensor that you received via ``worker.PeekOutput()`` call.
 
 ## Working with data
 
@@ -121,14 +121,14 @@ Note that to form a batch all textures must have the same width and height dimen
 ### Texture as output
 If you want to use Barracuda execution results further in the graphics pipeline, you can copy data from `Tensor` into `RenderTexture` without stalling CPU or GPU:
 ```C#
-	var tensor = worker.Peek();
+	var tensor = worker.PeekOutput();
 	var texture = BarracudaTextureUtils.TensorToRenderTexture(tensor);
 ```
 If you wish, you can reuse the same `RenderTexture` multiple times:
 ```C#
 	var texture = new RenderTexture(width, height, 0);
 	// ...
-	var tensor = worker.Peek();
+	var tensor = worker.PeekOutput();
 	BarracudaTextureUtils.TensorToRenderTexture(tensor, texture);
 ```
 

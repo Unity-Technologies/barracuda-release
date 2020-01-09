@@ -907,6 +907,13 @@ x::12
                     Debug.Assert((sizeof(float) * shape.length) == onnxTensor.RawData.Length);
                     Buffer.BlockCopy(byteArray, 0, data, 0, byteArray.Length);
                 }
+                else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Float16)
+                {
+                    var typedData = new UInt16[shape.length];
+                    Debug.Assert((sizeof(UInt16) * shape.length) == onnxTensor.RawData.Length);
+                    Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
+                    data = typedData.Select(x => HalfHelper.HalfToSingle(x)).ToArray();
+                }
                 else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Int32)
                 {
                     var typedData = new int[shape.length];

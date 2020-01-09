@@ -1,6 +1,8 @@
 {
     "name": "iOSBLAS",
-    "references": [],
+    "references": [
+        "Barracuda"
+    ],
     "optionalUnityReferences": [],
     "includePlatforms": [
         "Editor",

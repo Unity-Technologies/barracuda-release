@@ -1,5 +1,20 @@
 # Release notes
 
+## [0.4.0] - 2020-01-08
+- Now Barracuda ships as a source! At the moment no PRs are accepted, but this policy might change in the future.
+- Bumped min supported Unity version to 2018.x.
+- Moved Burst BLAS plugin to the Barracuda Core package.
+- API: Renamed AddInput() -> SetInput and Peek() -> PeekOutput(), old methods are still available, but will be removed in the future.
+- ONNX: added support for importing float16 models. They will be upscaled to float32 during import. No runtime support yet.
+- Performance: improved optimal kernel selection for Conv2D.
+- Performance: improved activation function performance.
+- Fix: kernel compilation errors on consoles.
+- Fix: possible out of bounds read in Border2D op.
+- Fix: prevent duplicate outputs to be added to the model via ModelBuilder.
+- Fix: made CreateWorker arguments `trimOutputs` and `additionalOutputs` more robust against using incorrect layer names that do not actually exist in the model.
+- Cleanup: removed unused Compute Kernels.
+- Docs: added RecurrentState docs
+
 ## [0.3.2] - 2019-11-22
 - Implemented PRelu activation
 - Performance: improved InstanceNormalization performance on GPU, 40% faster.
