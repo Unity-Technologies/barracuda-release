@@ -16,6 +16,9 @@
 //as a lot of LDS will be reserved but not used, reducing the amount of cache used.
 #pragma kernel Conv2DTrans_KernelCached_K5x5_T16x16 MAX_KERNEL_SIZE=5 GROUP_SIZE_X=16 GROUP_SIZE_Y=16
 
+#pragma kernel KernelWinograd_3x3
+#pragma kernel Conv2DWinograd_2x2_3x3
+
 #include "Tensor.cginc"
 
 TENSOR_DECL(X)
@@ -637,3 +640,171 @@ void CONV2DTRANS_NAME(MAX_KERNEL_SIZE, GROUP_SIZE_X,GROUP_SIZE_Y)(uint3 dispatch
 }
 #undef CONV2DTRANS_NAME
 #endif //defined(MAX_KERNEL_SIZE) && defined(GROUP_SIZE_X) && defined(GROUP_SIZE_Y)
+
+
+
+
+// https://github.com/andravin/wincnn
+// https://arxiv.org/pdf/1509.09308.pdf
+// Winograd: 4x4 image, 3x3 kernel, 2x2 output
+static const float4x3 Winograd_G = float4x3(float3(1, 0, 0), float3(0.5, 0.5, 0.5), float3(0.5, -0.5, 0.5), float3(0, 0, 1));
+static const float3x4 Winograd_GT = transpose(Winograd_G);
+[numthreads(1, 1, 1)]
+void KernelWinograd_3x3(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_ARGS2(X, O);
+
+    uint k = dispatchThreadID.x;
+    uint c = dispatchThreadID.y;
+
+
+    // transform kernel -- N.B: do this offline offline
+    float3x3 g;
+    g[0][0] = X.Get(0, 0, c, k);
+    g[0][1] = X.Get(0, 1, c, k);
+    g[0][2] = X.Get(0, 2, c, k);
+    g[1][0] = X.Get(1, 0, c, k);
+    g[1][1] = X.Get(1, 1, c, k);
+    g[1][2] = X.Get(1, 2, c, k);
+    g[2][0] = X.Get(2, 0, c, k);
+    g[2][1] = X.Get(2, 1, c, k);
+    g[2][2] = X.Get(2, 2, c, k);
+
+    float4x4 v = mul(Winograd_G, mul(g, Winograd_GT));
+
+    O.Set(0, 0, c, k, v[0][0]);
+    O.Set(1, 0, c, k, v[1][0]);
+    O.Set(2, 0, c, k, v[2][0]);
+    O.Set(3, 0, c, k, v[3][0]);
+    O.Set(0, 1, c, k, v[0][1]);
+    O.Set(1, 1, c, k, v[1][1]);
+    O.Set(2, 1, c, k, v[2][1]);
+    O.Set(3, 1, c, k, v[3][1]);
+    O.Set(0, 2, c, k, v[0][2]);
+    O.Set(1, 2, c, k, v[1][2]);
+    O.Set(2, 2, c, k, v[2][2]);
+    O.Set(3, 2, c, k, v[3][2]);
+    O.Set(0, 3, c, k, v[0][3]);
+    O.Set(1, 3, c, k, v[1][3]);
+    O.Set(2, 3, c, k, v[2][3]);
+    O.Set(3, 3, c, k, v[3][3]);
+}
+
+// BT x u x B, used mathematica to expresse the opperation using only +/-
+float4x4 ApplyWinnogradB(float4x4 d)
+{
+    return float4x4(float4( d[0][0] - d[0][2] - d[2][0] + d[2][2],  d[0][1] + d[0][2] - d[2][1] - d[2][2], -d[0][1] + d[0][2] + d[2][1] - d[2][2], -d[0][1] + d[0][3] + d[2][1] - d[2][3]),
+                    float4( d[1][0] - d[1][2] + d[2][0] - d[2][2],  d[1][1] + d[1][2] + d[2][1] + d[2][2], -d[1][1] + d[1][2] - d[2][1] + d[2][2], -d[1][1] + d[1][3] - d[2][1] + d[2][3]),
+                    float4(-d[1][0] + d[1][2] + d[2][0] - d[2][2], -d[1][1] - d[1][2] + d[2][1] + d[2][2],  d[1][1] - d[1][2] - d[2][1] + d[2][2],  d[1][1] - d[1][3] - d[2][1] + d[2][3]),
+                    float4(-d[1][0] + d[1][2] + d[3][0] - d[3][2], -d[1][1] - d[1][2] + d[3][1] + d[3][2],  d[1][1] - d[1][2] - d[3][1] + d[3][2],  d[1][1] - d[1][3] - d[3][1] + d[3][3])
+        );
+
+}
+// A x u x A, used mathematica to expresse the opperation using only +/-
+float2x2 ApplyWinnogradA(float4x4 uv)
+{
+    return float2x2(float2(uv[0][0] + uv[0][1] + uv[0][2] + uv[1][0] + uv[1][1] + uv[1][2] + uv[2][0] + uv[2][1] + uv[2][2], uv[0][1] - uv[0][2] + uv[0][3] + uv[1][1] - uv[1][2] + uv[1][3] + uv[2][1] - uv[2][2] + uv[2][3]),
+                    float2(uv[1][0] + uv[1][1] + uv[1][2] - uv[2][0] - uv[2][1] - uv[2][2] + uv[3][0] + uv[3][1] + uv[3][2], uv[1][1] - uv[1][2] + uv[1][3] - uv[2][1] + uv[2][2] - uv[2][3] + uv[3][1] - uv[3][2] + uv[3][3])
+        );
+}
+
+#undef GROUP_SIZE
+#define GROUP_SIZE 2
+
+// https://graphics.stanford.edu/~seander/bithacks.html#IntegerMinOrMax
+#define min_no_branch(x,y) (y ^ ((x ^ y) & -(x < y)))
+
+[numthreads(32, GROUP_SIZE, GROUP_SIZE)]
+void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(K.kernelCount, O.width, O.height);
+    TENSOR_ARGS4(X, K, B, O);
+
+    uint k = dispatchThreadID.x;
+    if (k >= K.channels) return;
+
+    uint2 index = 2 * dispatchThreadID.yz;
+
+    uint2 pad = uint2(_Pad[0], _Pad[1]);
+    uint2 XDim = uint2(X.width, X.height);
+
+
+    // empirically faster on android
+    // 0 if index - pad < 0 || index - pad > dim, given that we are dealing with uints, index - pad < 0 <=> index - pad ~= INTMAX
+    // assuming usual input dim it should be fine.
+    float4x4 paddingMask;
+    paddingMask[0][0] = all(index.xy + uint2(0, 0) - pad < XDim);
+    paddingMask[0][1] = all(index.xy + uint2(1, 0) - pad < XDim);
+    paddingMask[0][2] = all(index.xy + uint2(2, 0) - pad < XDim);
+    paddingMask[0][3] = all(index.xy + uint2(3, 0) - pad < XDim);
+    paddingMask[1][0] = all(index.xy + uint2(0, 1) - pad < XDim);
+    paddingMask[1][1] = all(index.xy + uint2(1, 1) - pad < XDim);
+    paddingMask[1][2] = all(index.xy + uint2(2, 1) - pad < XDim);
+    paddingMask[1][3] = all(index.xy + uint2(3, 1) - pad < XDim);
+    paddingMask[2][0] = all(index.xy + uint2(0, 2) - pad < XDim);
+    paddingMask[2][1] = all(index.xy + uint2(1, 2) - pad < XDim);
+    paddingMask[2][2] = all(index.xy + uint2(2, 2) - pad < XDim);
+    paddingMask[2][3] = all(index.xy + uint2(3, 2) - pad < XDim);
+    paddingMask[3][0] = all(index.xy + uint2(0, 3) - pad < XDim);
+    paddingMask[3][1] = all(index.xy + uint2(1, 3) - pad < XDim);
+    paddingMask[3][2] = all(index.xy + uint2(2, 3) - pad < XDim);
+    paddingMask[3][3] = all(index.xy + uint2(3, 3) - pad < XDim);
+
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float2x2 acc = B.Get(k);
+
+        for (uint c = 0; c < X.channels; ++c)
+        {
+            // 16 loads per thread
+            float4x4 d;
+            d[0][0] = X.Get(n, min_no_branch(index.xy + uint2(0, 0) - pad, XDim-1), c);
+            d[0][1] = X.Get(n, min_no_branch(index.xy + uint2(1, 0) - pad, XDim-1), c);
+            d[0][2] = X.Get(n, min_no_branch(index.xy + uint2(2, 0) - pad, XDim-1), c);
+            d[0][3] = X.Get(n, min_no_branch(index.xy + uint2(3, 0) - pad, XDim-1), c);
+            d[1][0] = X.Get(n, min_no_branch(index.xy + uint2(0, 1) - pad, XDim-1), c);
+            d[1][1] = X.Get(n, min_no_branch(index.xy + uint2(1, 1) - pad, XDim-1), c);
+            d[1][2] = X.Get(n, min_no_branch(index.xy + uint2(2, 1) - pad, XDim-1), c);
+            d[1][3] = X.Get(n, min_no_branch(index.xy + uint2(3, 1) - pad, XDim-1), c);
+            d[2][0] = X.Get(n, min_no_branch(index.xy + uint2(0, 2) - pad, XDim-1), c);
+            d[2][1] = X.Get(n, min_no_branch(index.xy + uint2(1, 2) - pad, XDim-1), c);
+            d[2][2] = X.Get(n, min_no_branch(index.xy + uint2(2, 2) - pad, XDim-1), c);
+            d[2][3] = X.Get(n, min_no_branch(index.xy + uint2(3, 2) - pad, XDim-1), c);
+            d[3][0] = X.Get(n, min_no_branch(index.xy + uint2(0, 3) - pad, XDim-1), c);
+            d[3][1] = X.Get(n, min_no_branch(index.xy + uint2(1, 3) - pad, XDim-1), c);
+            d[3][2] = X.Get(n, min_no_branch(index.xy + uint2(2, 3) - pad, XDim-1), c);
+            d[3][3] = X.Get(n, min_no_branch(index.xy + uint2(3, 3) - pad, XDim-1), c);
+            
+            d = d * paddingMask;
+
+            float4x4 v;
+            v[0][0] = K.Get(0, 0, c, k);
+            v[0][1] = K.Get(0, 1, c, k);
+            v[0][2] = K.Get(0, 2, c, k);
+            v[0][3] = K.Get(0, 3, c, k);
+            v[1][0] = K.Get(1, 0, c, k);
+            v[1][1] = K.Get(1, 1, c, k);
+            v[1][2] = K.Get(1, 2, c, k);
+            v[1][3] = K.Get(1, 3, c, k);
+            v[2][0] = K.Get(2, 0, c, k);
+            v[2][1] = K.Get(2, 1, c, k);
+            v[2][2] = K.Get(2, 2, c, k);
+            v[2][3] = K.Get(2, 3, c, k);
+            v[3][0] = K.Get(3, 0, c, k);
+            v[3][1] = K.Get(3, 1, c, k);
+            v[3][2] = K.Get(3, 2, c, k);
+            v[3][3] = K.Get(3, 3, c, k);
+
+            float4x4 u = ApplyWinnogradB(d);
+            float2x2 y = ApplyWinnogradA(v*u);
+            acc += y;
+        }
+
+        // 4 writes per thread
+        O.Set(n, index.y + 0, index.x + 0, k, acc[0][0]);
+        O.Set(n, index.y + 1, index.x + 0, k, acc[1][0]);
+        O.Set(n, index.y + 0, index.x + 1, k, acc[0][1]);
+        O.Set(n, index.y + 1, index.x + 1, k, acc[1][1]);
+    }
+}

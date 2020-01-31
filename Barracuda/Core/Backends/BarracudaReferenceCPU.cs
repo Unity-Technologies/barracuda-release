@@ -1802,6 +1802,33 @@ public class ReferenceCPUOps : IOps
         return X.Reshape(newShape);
     }
 
+    public virtual Tensor Gather(Tensor[] tensors, int axis)
+    {
+        Tensor X = tensors[0];
+        Tensor indices = tensors[1];
+
+        int[] shape = X.shape.ToArray();
+        shape[axis] = indices.flatWidth;
+
+        var O = NewTensor(new TensorShape(shape));
+
+        for (int b = 0; b < shape[0]; ++b)
+            for (int y = 0; y < shape[1]; ++y)
+                for (int x = 0; x < shape[2]; ++x)
+                    for (int c = 0; c < shape[3]; ++c)
+                    {
+                        if (axis == 0)
+                            O[b, y, x, c] = X[(int)indices[b], y, x, c];
+                        else if (axis == 1)
+                            O[b, y, x, c] = X[b, (int)indices[y], x, c];
+                        else if (axis == 2)
+                            O[b, y, x, c] = X[b, y, (int)indices[x], c];
+                        else
+                            O[b, y, x, c] = X[b, y, x, (int)indices[c]];
+                    }
+        return O;
+    }
+
     public virtual Tensor Transpose(Tensor X)
     {
         Assert.IsTrue(X.dimensions <= 2);

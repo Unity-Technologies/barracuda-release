@@ -40,7 +40,7 @@ namespace Barracuda
                     }
 
                     // TODO check on lower end iOS devices
-                    maxComputeWorkGroupSize = (gpuNumber <= 9) ? 224u : 256u;
+                    maxComputeWorkGroupSize = (gpuNumber <= 10) ? 224u : 256u;
                 }
                 else
                 {

@@ -78,16 +78,14 @@ public interface IWorker : IDisposable
 
     #region Outputs
     /// <summary>
-    /// Returns a reference to tensor from the last layer of the network
+    /// Returns a reference to the first output tensor. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
     /// Useful when network has only one output.
-    /// IMPORTANT: follow with TakeOwnership() call, if you want tensor to outlive worker or make tensor copy with DeepCopy()
-    /// see also WorkerExtensions.FetchAndTakeOwnership()
+    /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor.
     /// </summary>
     Tensor PeekOutput();
     /// <summary>
-    /// Returns a reference to tensor by name.
-    /// IMPORTANT: follow with TakeOwnership() call, if you want tensor to outlive worker or make tensor copy with DeepCopy()
-    /// see also WorkerExtensions.FetchAndTakeOwnership()
+    /// Returns a reference to output tensor by name. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
+    /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor.
     /// </summary>
     Tensor PeekOutput(string name);
     #endregion
@@ -96,6 +94,58 @@ public interface IWorker : IDisposable
     /// Returns a string summary after execution.
     /// </summary>
     string Summary();
+}
+
+public static class WorkerExtensions
+{
+    #region Blocking APIs
+    /// <summary>
+    /// Returns CPU copy of the first output tensor.
+    /// This method is a blocking call and will wait until network execution is completed.
+    /// Useful when network has only one output.
+    /// </summary>
+    public static Tensor CopyOutput(this IWorker worker)
+    {
+        // @TODO: consider using PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
+        var output = worker.PeekOutput();
+        output.Unpin(); // unpin will readback to CPU and
+                        // give allocator a chance to reuse allocated buffer
+        output.TakeOwnership();
+        return output;
+    }
+    /// <summary>
+    /// Returns CPU copy of output tensor by name.
+    /// This method is a blocking call and will wait until network execution is completed.
+    /// </summary>
+    public static Tensor CopyOutput(this IWorker worker, string name)
+    {
+        // @TODO: consider using PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
+        var output = worker.PeekOutput(name);
+        output.Unpin(); // unpin will readback to CPU and
+                        // give allocator a chance to reuse allocated buffer
+        output.TakeOwnership();
+        return output;
+    }
+
+    /// <summary>
+    /// Schedules network execution in one go and waits for result to be available.
+    /// Useful when network has only one input and caller does not need to know input's name.
+    /// </summary>
+    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, Tensor input)
+    {
+        worker.Execute(input);
+        return worker.CopyOutput();
+    }
+    /// <summary>
+    /// Schedules network execution in one go and waits for result to be available.
+    /// This method supports multiple inputs.
+    /// </summary>
+    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, IDictionary<string, Tensor> inputs)
+    {
+        worker.Execute(inputs);
+        return worker.CopyOutput();
+    }
+    #endregion
 }
 
 /// <summary>
@@ -116,7 +166,7 @@ public interface ITensorData : IDisposable
     /// <summary>
     /// Schedule an asynchronous download from device memory.
     /// `count` is the number of element to readback.
-    /// return `true` if the request was successfully schedule.
+    /// return `true` if the request was successfully scheduled.
     /// </summary>
     bool ScheduleAsyncDownload(int count);
     /// <summary>
@@ -223,8 +273,7 @@ public class RecurrentState : IDisposable
         var index = 0;
         foreach (var memory in m_Model.memories)
         {
-            // @TODO: consider using PeekOutput()+DeepCopy() instead of Unpin() that happens inside Fetch()
-            var newTensor = worker.Fetch(memory.output);
+            var newTensor = worker.CopyOutput(memory.output);
             Assert.IsTrue(newTensor.tensorOnDevice != m_Memories[index]);
             m_Memories[index].Dispose();
             m_Memories[index] = newTensor;
@@ -283,15 +332,17 @@ public class WorkerFactory
     }
 
     /// <summary>
-    /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
+    /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
     /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console.
-    /// `compareAgainstType` if different than `type` model will be run on those two backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
+    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
+    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
+    /// `verbose` will log scheduling of layers execution to the console (default == false)
     /// </summary>
-    public static IWorker CreateWorker(Type type, Model model, bool verbose, Type compareAgainstType)
+    public static IWorker CreateWorker(Model model, string[] additionalOutputs, string[] trimOutputs, Device device = Device.Auto, bool verbose = false)
     {
-        return CreateWorker(type, model, null, null, verbose, compareAgainstType);
+        var type = GetBestTypeForDevice(device);
+        return CreateWorker(type, model, additionalOutputs, trimOutputs, verbose, type);
     }
 
     /// <summary>
@@ -331,15 +382,36 @@ public class WorkerFactory
     }
 
     /// <summary>
+    /// Create a worker with explicitly specified backend `type` to execute the given `model`.
+    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
+    /// `model` is the associated model. See ModelLoader.cs.
+    /// `verbose` will log scheduling of layers execution to the console.
+    /// `compareAgainstType` if different than `type` model will be run on those two backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// </summary>
+    public static IWorker CreateWorker(Type type, Model model, bool verbose, Type compareAgainstType)
+    {
+        return CreateWorker(type, model, additionalOutputs:null, trimOutputs:null, verbose, compareAgainstType);
+    }
+
+    /// <summary>
+    /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
+    /// `model` is the associated model. See ModelLoader.cs.
+    /// `verbose` will log scheduling of layers execution to the console.
+    /// </summary>
+    public static IWorker CreateWorker(Model model, bool verbose = false)
+    {;
+        return CreateWorker(model, Device.Auto, verbose);
+    }
+
+    /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
     /// `model` is the associated model. See ModelLoader.cs.
     /// `device` is the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
     /// `verbose` will log scheduling of layers execution to the console.
     /// </summary>
-    public static IWorker CreateWorker(Model model, Device device = Device.Auto, bool verbose = true)
+    public static IWorker CreateWorker(Model model, Device device, bool verbose = false)
     {
-        var type = GetBestTypeForDevice(device);
-        return CreateWorker(type, model, null, null, verbose, type);
+        return CreateWorker(model, additionalOutputs:null, device, verbose);
     }
 
     /// <summary>
@@ -351,22 +423,7 @@ public class WorkerFactory
     /// </summary>
     public static IWorker CreateWorker(Model model, string[] additionalOutputs, Device device = Device.Auto, bool verbose = false)
     {
-        var type = GetBestTypeForDevice(device);
-        return CreateWorker(type, model, additionalOutputs, null, verbose, type);
-    }
-
-    /// <summary>
-    /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console (default == false)
-    /// </summary>
-    public static IWorker CreateWorker(Model model, string[] additionalOutputs = null, string[] trimOutputs = null, Device device = Device.Auto, bool verbose = false)
-    {
-        var type = GetBestTypeForDevice(device);
-        return CreateWorker(type, model, additionalOutputs, trimOutputs, verbose, type);
+        return CreateWorker(model, additionalOutputs, trimOutputs:null, device, verbose);
     }
 
     /// <summary>
@@ -406,7 +463,8 @@ public class WorkerFactory
     public static bool IsType(Type type, Device device)
     {
         type = BarracudaBackendsFactory.ResolveAutoType(type);
-        Assert.AreNotEqual(type, Type.Auto);
+        if (type == Type.Auto)
+            throw new ArgumentException($"Auto type is ambiguous in this context and not supported");
         return ((int)type & (int)device) == (int)device;
     }
 
@@ -424,6 +482,39 @@ public class WorkerFactory
     public static Type ValidateType(Type type)
     {
         return BarracudaBackendsFactory.ValidateType(type);
+    }
+}
+
+public static class NNModelExtensions
+{
+    /// <summary>
+    /// Create a worker that will execute `asset` using the best backend that is available for a given `device` type.
+    /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
+    /// `asset` is the associated NNModel asset.
+    /// `device` is the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
+    /// `verbose` will log scheduling of layers execution to the console.
+    /// </summary>
+    public static IWorker CreateWorker(this NNModel asset,
+        WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
+    {
+        var model = ModelLoader.Load(asset);
+        return WorkerFactory.CreateWorker(model, device, verbose);
+    }
+
+    /// <summary>
+    /// Create a worker that will execute `asset` using the best backend that is available for a given `device` type.
+    /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
+    /// `asset` is the associated NNModel asset.
+    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
+    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
+    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
+    /// `verbose` will log scheduling of layers execution to the console (default == false)
+    /// </summary>
+    public static IWorker CreateWorker(this NNModel asset,
+        string[] additionalOutputs, string[] trimOutputs, WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
+    {
+        var model = ModelLoader.Load(asset);
+        return WorkerFactory.CreateWorker(model, additionalOutputs, trimOutputs, device, verbose);
     }
 }
 

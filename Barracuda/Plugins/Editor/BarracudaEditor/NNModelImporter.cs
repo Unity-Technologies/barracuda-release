@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using UnityEditor;
 using UnityEngine;
 using UnityEditor.Experimental.AssetImporters;
@@ -8,7 +8,7 @@ namespace Barracuda
     /// <summary>
     /// Asset Importer of barracuda models.
     /// </summary>
-    [ScriptedImporter(1, new[] {"nn"})]
+    [ScriptedImporter(2, new[] {"nn"})]
     public class NNModelImporter : ScriptedImporter {
         private const string iconName = "NNModelIcon";
 
@@ -17,10 +17,17 @@ namespace Barracuda
         public override void OnImportAsset(AssetImportContext ctx)
         {
             var model = File.ReadAllBytes(ctx.assetPath);
+
+            var assetData = ScriptableObject.CreateInstance<NNModelData>();
+            assetData.Value = model;
+            assetData.name = "Data";
+            assetData.hideFlags = HideFlags.HideInHierarchy;
+
             var asset = ScriptableObject.CreateInstance<NNModel>();
-            asset.Value = model;
-            
+            asset.modelData = assetData;
             ctx.AddObjectToAsset("main obj", asset, LoadIconTexture());
+            ctx.AddObjectToAsset("model data", assetData);
+
             ctx.SetMainObject(asset);
         }
 

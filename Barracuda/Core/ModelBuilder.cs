@@ -29,6 +29,16 @@ namespace Barracuda
         /// <summary>
         /// Add an input to the model
         /// </summary>
+        public Model.Input Input(string name, TensorShape shape)
+        {
+            m_Model.inputs.Add(new Model.Input {name = name, shape = shape.ToArray()});
+
+            return m_Model.inputs.Last();
+        }
+
+        /// <summary>
+        /// Add an input to the model
+        /// </summary>
         public Model.Input Input(string name, Int32 batch, Int32 channels)
         {
             m_Model.inputs.Add(new Model.Input {name = name, shape = new []{batch, 1, 1, channels}});
@@ -55,6 +65,17 @@ namespace Barracuda
             if (!m_Model.outputs.Contains(name))
                 m_Model.outputs.Add(name);
             return name;
+        }
+
+        /// <summary>
+        /// Add memory to the model
+        /// </summary>
+        public Model.Memory Memory(string stateIn, object stateOut, TensorShape shape)
+        {
+            m_Model.memories.Add(new Model.Memory {shape = shape,
+                input = stateIn, output = ResolveInput(stateOut)});
+
+            return m_Model.memories.Last();
         }
 
         private string ResolveInput(object input)
@@ -406,6 +427,22 @@ namespace Barracuda
             return layer;
         }
 
+        /// <summary>
+        /// Maps integer to one-hot vector of length equal to depth.
+        /// </summary>
+        public Layer OneHot(string name, object input, int depth, int on, int off)
+        {
+            Layer layer = new Layer(name, Layer.Type.OneHot);
+            layer.inputs = new [] {ResolveInput(input)};
+            layer.pool = new int[] { depth };
+            layer.alpha = on;
+            layer.beta = off;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
 
         private Layer Activation(Layer.Activation activation, string name, object input)
         {
@@ -545,7 +582,7 @@ namespace Barracuda
         }
 
         /// <summary>
-        // Element-wise `Clip` activation function f(x, xmin, xmax) = min(max(x, xmin), xmax)
+        // Element-wise `Clip` function that limits values within an interval: f(x, xmin, xmax) = min(max(x, xmin), xmax)
         /// </summary>
         public Layer Clip(string name, object input, float min, float max)
         {
@@ -557,7 +594,7 @@ namespace Barracuda
         }
 
         /// <summary>
-        /// Element-wise `Exp` activation function: f(x) = e^{x}
+        /// Element-wise `Exp` function that calculates exponential of the input: f(x) = e^{x}
         /// </summary>
         public Layer Exp(string name, object input)
         {
@@ -565,7 +602,7 @@ namespace Barracuda
         }
 
         /// <summary>
-        /// Element-wise `Log` activation function: f(x) = log(x)
+        /// Element-wise `Log` function that calculates the natural log of the input: f(x) = log(x)
         /// </summary>
         public Layer Log(string name, object input)
         {
@@ -573,7 +610,7 @@ namespace Barracuda
         }
 
         /// <summary>
-        /// Element-wise `Neg` activation function: f(x) = -x
+        /// Element-wise function that flips the sign of the input: f(x) = -x
         /// </summary>
         public Layer Neg(string name, object input)
         {
@@ -581,11 +618,43 @@ namespace Barracuda
         }
 
         /// <summary>
-        /// Element-wise `Reciprocal` activation function: f(x) = 1/x
+        /// Element-wise function that calculates reciprocal of the input: f(x) = 1/x
         /// </summary>
         public Layer Reciprocal(string name, object input)
         {
             return Activation(Layer.Activation.Reciprocal, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise function that calculates absolute values of the input: f(x) = abs(x)
+        /// </summary>
+        public Layer Abs(string name, object input)
+        {
+            return Activation(Layer.Activation.Abs, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise function that produces rounding towards the greatest integer less than or equal to the input value: f(x) = ceil(x)
+        /// </summary>
+        public Layer Ceil(string name, object input)
+        {
+            return Activation(Layer.Activation.Ceil, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise function that produces rounding towards least integer greater than or equal to the input value: f(x) = floor(x)
+        /// </summary>
+        public Layer Floor(string name, object input)
+        {
+            return Activation(Layer.Activation.Floor, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise function that produces rounding of the input value: f(x) = round(x)
+        /// </summary>
+        public Layer Round(string name, object input)
+        {
+            return Activation(Layer.Activation.Round, name, input);
         }
 
 
@@ -851,6 +920,11 @@ namespace Barracuda
             return Pad(Layer.Type.Pad2DSymmetric, name, input, pad);
         }
 
+        /// <summary>
+        /// Generates a Tensor with random values drawn from a normal distribution.
+        /// The shape of the tensor is specified by input tensor
+        /// The normal distribution is specified by mean and scale
+        /// </summary>
         public Layer RandomNormal(string name, float mean, float scale, float seed, object input)
         {
             Layer layer = new Layer(name, Layer.Type.RandomNormal);
@@ -863,6 +937,11 @@ namespace Barracuda
             return layer;
         }
 
+        /// <summary>
+        /// Generates a Tensor with random values drawn from a normal distribution.
+        /// The shape of the tensor is specified by scale
+        /// The normal distribution is specified by mean and scale
+        /// </summary>
         public Layer RandomNormal(string name, float mean, float scale, float seed, Int32[] shape)
         {
             Layer layer = new Layer(name, Layer.Type.RandomNormal);
@@ -875,6 +954,11 @@ namespace Barracuda
             return layer;
         }
 
+        /// <summary>
+        /// Generates a Tensor with random values drawn from a uniform distribution.
+        /// The shape of the tensor is specified by input tensor
+        /// The uniform distribution scale is specified by min and max range
+        /// </summary>
         public Layer RandomUniform(string name, float min, float max, float seed, object input)
         {
             Layer layer = new Layer(name, Layer.Type.RandomUniform);
@@ -887,6 +971,11 @@ namespace Barracuda
             return layer;
         }
 
+        /// <summary>
+        /// Generates a Tensor with random values drawn from a uniform distribution.
+        /// The shape of the tensor is specified by shape
+        /// The uniform distribution scale is specified by min and max range
+        /// </summary>
         public Layer RandomUniform(string name, float min, float max, float seed, Int32[] shape)
         {
             Layer layer = new Layer(name, Layer.Type.RandomUniform);
@@ -898,5 +987,39 @@ namespace Barracuda
 
             return layer;
         }
+
+        /// <summary>
+        /// Computes a reduce operation (max/min/mean/prod/sum) of the input tensor's element along the provided axis
+        /// </summary>
+        public Layer Reduce(Layer.Type type, string name, object input, int axis)
+        {
+            Layer layer = new Layer(name, type);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.axis = axis;
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Gathers input along provided axis. Swizzling pattern is given by input indices:
+        ///     axis == 0: gatheredData[b, y, x, c] = data[indices[b], y, x, c]
+        ///     axis == 1: gatheredData[b, y, x, c] = data[b, indices[y], x, c]
+        ///     axis == 2: gatheredData[b, y, x, c] = data[b, y, indices[x], c]
+        ///     axis == 3: gatheredData[b, y, x, c] = data[b, y, x, indices[c]]
+        /// </summary>
+        public Layer Gather(string name, object input, object indices, int axis)
+        {
+            object[] inputs = new[] { input, indices };
+
+            Layer layer = new Layer(name, Layer.Type.Gather);
+            layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
+            layer.axis = axis;
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+
     }
 }

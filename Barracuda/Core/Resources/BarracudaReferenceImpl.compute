@@ -59,6 +59,7 @@
 #pragma kernel Pad2DEdge
 #pragma kernel Pad2DReflect
 #pragma kernel Pad2DSymmetric
+#pragma kernel Gather
 
 #include "Tensor.cginc"
 #include "Random.cginc"
@@ -72,6 +73,7 @@ TENSOR_DECL_RW(O)
 uint4 _Pad;
 uint4 _Pool;
 uint4 _Stride;
+uint4 _ChannelWriteMask;
 float _Alpha;
 float _Beta;
 float _Epsilon;
@@ -1226,65 +1228,66 @@ static const float4x2 Winograd_A = transpose(Winograd_AT);
 [numthreads(64, 1, 1)]
 void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID: SV_GroupThreadID, uint3 groupID: SV_GroupID)
 {
-	DISPATCH_ARGS(K.kernelCount, O.width, O.height);
-	TENSOR_ARGS4(X, K, B, O);
-
-	uint k = dispatchThreadID.x;
-	uint x = dispatchThreadID.y;
-	uint y = dispatchThreadID.z;
-
-	if (k >= K.channels) return;
-	if (x >= O.width) return;
-	if (y >= O.height) return;
-
-
-	for (uint n = 0; n < O.batch; ++n)
-	{
-		float2x2 acc = B.Get(k);
-
-		for (uint c = 0; c < X.channels; ++c)
-		{
-			float4x4 d = 0;
-			int ix;
-
-			// 16 loads per thread
-			for (ix = 0; ix < 4; ix++)
-			{
-				for (int iy = 0; iy < 4; iy++)
-				{
-					uint2 index = ((4 * groupID.yz + int2(ix, iy)) * 1 + groupThreadID.yz);
-					d[ix][iy] = X.Get(n, index.yx, c);
-				}
-			}
-
-			// transform kernel -- N.B: do this offline offline
-			float3x3 g;
-			for (ix = 0; ix < 3; ix++)
-			{
-				for (int iy = 0; iy < 3; iy++)
-				{
-					g[ix][iy] = K.Get(ix, iy, c, k);
-				}
-			}
-			// NB, matrix * can be written as +/-, no need for *
-			float4x4 v = mul(Winograd_G,  mul(g, Winograd_GT));
-			float4x4 u = mul(Winograd_BT, mul(d, Winograd_B));
-			float2x2 y = mul(Winograd_AT, mul(v*u, Winograd_A));
-
-			acc += y;
-		}
-		acc = transpose(acc);
-
-		// 4 writes per thread
-		for (int ix = 0; ix < 2; ix++)
-		{
-			for (int iy = 0; iy < 2; iy++)
-			{
-				uint2 index = (2 * groupID.yz + int2(ix, iy)) * 1 + groupThreadID.yz;
-				O.Set(n, index.y, index.x, k, acc[ix][iy]);
-			}
-		}
-	}
+    DISPATCH_ARGS(K.kernelCount, O.width, O.height);
+    TENSOR_ARGS4(X, K, B, O);
+    
+    uint k = dispatchThreadID.x;
+    if (k >= K.channels) return;
+    
+    uint2 index = 2 * dispatchThreadID.yz;
+    
+    uint2 pad = uint2(_Pad[0], _Pad[1]);
+    uint2 XDim = uint2(X.width, X.height);
+    
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float2x2 acc = B.Get(k);
+    
+        for (uint c = 0; c < X.channels; ++c)
+        {
+            // 16 loads per thread
+            float4x4 d;
+            d[0][0] = any(index.xy + uint2(0, 0) >= XDim + pad) || any(index.xy + uint2(0, 0) < pad) ? 0.0 : X.Get(n, index.xy + uint2(0, 0) - pad, c);
+            d[0][1] = any(index.xy + uint2(1, 0) >= XDim + pad) || any(index.xy + uint2(1, 0) < pad) ? 0.0 : X.Get(n, index.xy + uint2(1, 0) - pad, c);
+            d[0][2] = any(index.xy + uint2(2, 0) >= XDim + pad) || any(index.xy + uint2(2, 0) < pad) ? 0.0 : X.Get(n, index.xy + uint2(2, 0) - pad, c);
+            d[0][3] = any(index.xy + uint2(3, 0) >= XDim + pad) || any(index.xy + uint2(3, 0) < pad) ? 0.0 : X.Get(n, index.xy + uint2(3, 0) - pad, c);
+            d[1][0] = any(index.xy + uint2(0, 1) >= XDim + pad) || any(index.xy + uint2(0, 1) < pad) ? 0.0 : X.Get(n, index.xy + uint2(0, 1) - pad, c);
+            d[1][1] = any(index.xy + uint2(1, 1) >= XDim + pad) || any(index.xy + uint2(1, 1) < pad) ? 0.0 : X.Get(n, index.xy + uint2(1, 1) - pad, c);
+            d[1][2] = any(index.xy + uint2(2, 1) >= XDim + pad) || any(index.xy + uint2(2, 1) < pad) ? 0.0 : X.Get(n, index.xy + uint2(2, 1) - pad, c);
+            d[1][3] = any(index.xy + uint2(3, 1) >= XDim + pad) || any(index.xy + uint2(3, 1) < pad) ? 0.0 : X.Get(n, index.xy + uint2(3, 1) - pad, c);
+            d[2][0] = any(index.xy + uint2(0, 2) >= XDim + pad) || any(index.xy + uint2(0, 2) < pad) ? 0.0 : X.Get(n, index.xy + uint2(0, 2) - pad, c);
+            d[2][1] = any(index.xy + uint2(1, 2) >= XDim + pad) || any(index.xy + uint2(1, 2) < pad) ? 0.0 : X.Get(n, index.xy + uint2(1, 2) - pad, c);
+            d[2][2] = any(index.xy + uint2(2, 2) >= XDim + pad) || any(index.xy + uint2(2, 2) < pad) ? 0.0 : X.Get(n, index.xy + uint2(2, 2) - pad, c);
+            d[2][3] = any(index.xy + uint2(3, 2) >= XDim + pad) || any(index.xy + uint2(3, 2) < pad) ? 0.0 : X.Get(n, index.xy + uint2(3, 2) - pad, c);
+            d[3][0] = any(index.xy + uint2(0, 3) >= XDim + pad) || any(index.xy + uint2(0, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(0, 3) - pad, c);
+            d[3][1] = any(index.xy + uint2(1, 3) >= XDim + pad) || any(index.xy + uint2(1, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(1, 3) - pad, c);
+            d[3][2] = any(index.xy + uint2(2, 3) >= XDim + pad) || any(index.xy + uint2(2, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(2, 3) - pad, c);
+            d[3][3] = any(index.xy + uint2(3, 3) >= XDim + pad) || any(index.xy + uint2(3, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(3, 3) - pad, c);
+    
+            float3x3 g;
+            g[0][0] = K.Get(0, 0, c, k);
+            g[0][1] = K.Get(0, 1, c, k);
+            g[0][2] = K.Get(0, 2, c, k);
+            g[1][0] = K.Get(1, 0, c, k);
+            g[1][1] = K.Get(1, 1, c, k);
+            g[1][2] = K.Get(1, 2, c, k);
+            g[2][0] = K.Get(2, 0, c, k);
+            g[2][1] = K.Get(2, 1, c, k);
+            g[2][2] = K.Get(2, 2, c, k);
+    
+            float4x4 v = mul(Winograd_G,  mul(g, Winograd_GT));
+            float4x4 u = mul(Winograd_BT, mul(d, Winograd_B));
+            float2x2 y = mul(Winograd_AT, mul(v*u, Winograd_A));
+    
+            acc += y;
+        }
+    
+        // 4 writes per thread
+        O.Set(n, index.y + 0, index.x + 0, k, acc[0][0]);
+        O.Set(n, index.y + 1, index.x + 0, k, acc[1][0]);
+        O.Set(n, index.y + 0, index.x + 1, k, acc[0][1]);
+        O.Set(n, index.y + 1, index.x + 1, k, acc[1][1]);
+    }
 }
 
 [numthreads(4,4,4)]
@@ -1463,18 +1466,17 @@ void TextureToTensor(uint3 dispatchThreadID : SV_DispatchThreadID)
     //  offset by 0.5 to get texel centers
     //  divide by texture resolution (_Pool)
     float3 uvw = (float3)dispatchThreadID + float3(0.5f, 0.5f, 0);
-    uvw /= (float3)_Pool.xyz;
+    uvw.xy /= _Pool.xy;
     if (_FlipY)
         uvw.y = 1 - uvw.y;
 
     float4 v = Xtex2D.SampleLevel(samplerXtex2D, uvw.xy, 0);
     //texArray.SampleLevel(smpArray, loc, 0);
 
-    uint4 channelWriteMask = _Stride;
     bool specialCaseWhenChannelMaskIsEmptyStoresAverage = true;
     for (int i = 0; i < 4; ++i)
     {
-        if (channelWriteMask[i] == 1)
+        if (_ChannelWriteMask[i] == 1)
         {
             O.Set(b, y, x, c, v[i]);
             c += 1;
@@ -1574,11 +1576,11 @@ void Border2D(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-void ClampHWToTensorShape(uint4 Xshape, inout int height, inout int width)
+void ClampHWToTensorShape(uint2 Xshape, inout int height, inout int width)
 {
     width = max(width, 0);
     height = max(height, 0);
-    width = min(width, (int)Xshape.z - 1);
+    width = min(width, (int)Xshape.x - 1);
     height = min(height, (int)Xshape.y - 1);
 }
 
@@ -1598,7 +1600,7 @@ void Pad2DEdge(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    uint4 Xshape = _Stride;
+    uint2 Xshape = uint2(X.width, X.height);
 
     //clamp read indices to source
     ClampHWToTensorShape(Xshape, readY, readX);
@@ -1626,9 +1628,9 @@ void Pad2DReflect(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    uint4 Xshape = _Stride;
+    uint2 Xshape = uint2(X.width, X.height);
 
-    int lastXIndex = Xshape.z - 1;
+    int lastXIndex = Xshape.x - 1;
     int lastYIndex = Xshape.y - 1;
 
     //x reflect indexing
@@ -1669,9 +1671,9 @@ void Pad2DSymmetric(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    uint4 Xshape = _Stride;
+    uint2 Xshape = uint2(X.width, X.height);
 
-    int lastXIndex = Xshape.z - 1;
+    int lastXIndex = Xshape.x - 1;
     int lastYIndex = Xshape.y - 1;
 
     //x symmetric indexing
@@ -1692,6 +1694,38 @@ void Pad2DSymmetric(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < O.batch; ++n)
     {
         float v = X.Get(n, readY, readX, c);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+uint _Axis;
+
+[numthreads(4, 4, 4)]
+void Gather(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS3(X, K, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = 0.0;
+        if (_Axis == 0)
+            v = X.Get((uint)K.Get(n), y, x, c);
+        else if (_Axis == 1)
+            v = X.Get(n, (uint)K.Get(y), x, c);
+        else if (_Axis == 2)
+            v = X.Get(n, y, (uint)K.Get(x), c);
+        else
+            v = X.Get(n, y, x, (uint)K.Get(c));
+
         O.Set(n, y, x, c, v);
     }
 }

@@ -46,11 +46,11 @@ void Border2D(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-void ClampHWToTensorShape(uint4 Xshape, inout int height, inout int width)
+void ClampHWToTensorShape(uint2 Xshape, inout int height, inout int width)
 {
     width = max(width, 0);
     height = max(height, 0);
-    width = min(width, (int)Xshape.z - 1);
+    width = min(width, (int)Xshape.x - 1);
     height = min(height, (int)Xshape.y - 1);
 }
 
@@ -70,10 +70,9 @@ void Pad2DEdge(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    uint4 Xshape = _Stride;
 
     //clamp read indices to source
-    ClampHWToTensorShape(Xshape, readY, readX);
+    ClampHWToTensorShape(uint2(X.width, X.height), readY, readX);
 
     for (uint n = 0; n < O.batch; ++n)
     {
@@ -91,16 +90,17 @@ void Pad2DReflect(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint c = dispatchThreadID.x;
     uint x = dispatchThreadID.y;
     uint y = dispatchThreadID.z;
-
+    
     if (c >= O.channels) return;
     if (x >= O.width) return;
     if (y >= O.height) return;
 
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    uint4 Xshape = _Stride;
+    
+    uint2 Xshape = uint2(X.width, X.height);
 
-    int lastXIndex = Xshape.z - 1;
+    int lastXIndex = Xshape.x - 1;
     int lastYIndex = Xshape.y - 1;
 
     //x reflect indexing
@@ -136,9 +136,10 @@ void Pad2DSymmetric(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    uint4 Xshape = _Stride;
+    
+    uint2 Xshape = uint2(X.width, X.height);
 
-    int lastXIndex = Xshape.z - 1;
+    int lastXIndex = Xshape.x - 1;
     int lastYIndex = Xshape.y - 1;
 
     //x reflect indexing

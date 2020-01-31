@@ -51,7 +51,7 @@ public class ComputeTensorData : ITensorData
 #endif
     }
 
-    protected ComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset, string buffername)
+    public ComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset, string buffername)
     {
         name = buffername;
         m_Buffer = buffer;
@@ -612,9 +612,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
             var srcChannelMask = TextureFormatUtils.FormatToChannelMask(tex, texData.interpretPixelAsChannels);
 
             fn.SetTexture("X", tex);
-            fn.shader.SetInts("_Pool", new int [] {tex.width, tex.height, 1, 1});
+            fn.shader.SetInts("_Pool", new int [] {tex.width, tex.height});
             fn.shader.SetInts("_Pad", offsets);
-            fn.shader.SetInts("_Stride", new [] {(int)srcChannelMask[0], (int)srcChannelMask[1], (int)srcChannelMask[2], (int)srcChannelMask[3] });
+            fn.shader.SetInts("_ChannelWriteMask", new [] {(int)srcChannelMask[0], (int)srcChannelMask[1], (int)srcChannelMask[2], (int)srcChannelMask[3] });
 
             fn.Dispatch(texData.shape.width, texData.shape.height, texDepth);
 
@@ -681,21 +681,19 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        bool useWinograd = (K.width == 3) && (K.height == 3) && (stride[0] == 1); // only 3x3 kernel
-             useWinograd = useWinograd && (stride[0] == 1) && (pad[0] == 0) && (pad[0] == 0); // no support for padding and stride
+        bool useWinograd = K.kernelWidth == 3 && K.kernelHeight == 3 && stride[0] == 1 && stride[1] == 1 && O.width % 2 == 0 && O.height % 2 == 0;
         if( useWinograd )
         {
             var fnw = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
             SetTensor(fnw, "X", X);
             SetTensor(fnw, "K", K);
             SetTensor(fnw, "B", B);
-            fnw.shader.SetInts("_Stride", stride);
             fnw.shader.SetInts("_Pad", pad);
 
             var ow = Dispatch(fnw, O, K.kernelCount, IDivC(O.width,2), IDivC(O.height,2));
             return ow;
         }
-        
+
         var fn = new ComputeFunc(m_Kernels, "Conv2D");
 
         SetTensor(fn, "X", X);
@@ -788,14 +786,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "X", X);
 
         fn.shader.SetInts("_Pad", pad);
-        fn.shader.SetInts("_Stride", X.shape.ToArray());
 
         if (kernelName == "Border2D")
         {
             // NOTE: negative "pad" variable will crop X tensor
             int croppedWidth = X.width - Math.Max(0, -pad[2]);
             int croppedHeight = X.height - Math.Max(0, -pad[3]);
-            var croppedSize = new int[] { 0, 0, 0, 0 };
+            var croppedSize = new int[] { 0, 0 };
             croppedSize[0] = croppedWidth;
             croppedSize[1] = croppedHeight;
 
@@ -1078,6 +1075,24 @@ public class ReferenceComputeOps : ReferenceCPUOps
             offsets[axis] += X.shape[axis];
         }
         return result;
+    }
+
+    public override Tensor Gather(Tensor[] tensors, int axis)
+    {
+        Tensor X = tensors[0];
+        Tensor indices = tensors[1];
+
+        int[] shape = X.shape.ToArray();
+        shape[axis] = indices.flatWidth;
+
+        var O = new TensorShape(shape);
+
+        var fn = new ComputeFunc(m_Kernels, "Gather");
+        SetTensor(fn, "X", X);
+        SetTensor(fn, "K", indices);
+        fn.shader.SetInts("_Axis", axis);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
     public virtual Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)

@@ -549,6 +549,11 @@ public class GenericWorker : IWorker
                 Profiler.BeginSample ("Barracuda.Transpose");
                 X = m_Ops.Transpose(X);
             }
+            else if (l.type == Layer.Type.Gather)
+            {
+                Profiler.BeginSample ("Barracuda.Gather");
+                X = m_Ops.Gather(inputs, l.axis);
+            }
             else if (l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)
             {
@@ -557,7 +562,6 @@ public class GenericWorker : IWorker
             else if (l.type == Layer.Type.Concat)
             {
                 Profiler.BeginSample ("Barracuda.Concat");
-
                 X = m_Ops.Concat(inputs, l.axis);
             }
             else if (l.type == Layer.Type.StridedSlice)

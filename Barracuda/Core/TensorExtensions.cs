@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq; // Enumerable.Range(), Enumerable.SequenceEqual()
@@ -38,21 +38,46 @@ public static class TensorExtensions
             X[i] = Mathf.Cos(i);
     }
 
+    static public float[] AsFloats(this Tensor x)
+    {
+        return x.readonlyArray;
+    }
+
+    static public int[] AsInts(this Tensor x)
+    {
+        return Array.ConvertAll(x.readonlyArray, (v => (int)v));
+    }
+
+    static public long[] AsLongs(this Tensor x)
+    {
+        return Array.ConvertAll(x.readonlyArray, (v => (long)v));
+    }
+
+    static public string DataToString(this Tensor X, int size = 32)
+    {
+        var str = "";
+        for (int i = 0; i < X.length && i < size; ++i)
+        {
+            str += X[i];
+            str += " ";
+        }
+        if (X.length > size)
+            str += "...";
+        return str;
+    }
+
     static public void Print(this Tensor X, string msg = "")
     {
-        D.Log(msg + X.name + " " + X.shape);
+        if (msg.Length > 0)
+            msg += " ";
+        D.Log($"{msg}{X.name} {X.shape}");
     }
 
     static public void PrintDataPart(this Tensor X, int size, string msg = "")
     {
         if (msg.Length > 0)
             msg += " ";
-        for (int i = 0; i < X.length && i < size; ++i)
-        {
-            msg += X[i];
-            msg += " ";
-        }
-        D.Log(msg);
+        D.Log($"{msg}{X.DataToString(size)}");
     }
 
     static public bool Equals(this Tensor X, Tensor Y)
@@ -145,7 +170,15 @@ public static class TensorExtensions
         }
         return result.ToArray();
     }
+    static public TensorShape Gather(TensorShape[] shapes, int axis)
+    {
+        TensorShape X = shapes[0];
+        TensorShape indices = shapes[1];
+        int[] shape = X.ToArray();
+        shape[axis] = indices.length;
 
+        return new TensorShape(shape);
+    }
     static public TensorShape Concat(TensorShape[] shapes, int axis)
     {
         if (shapes.Length == 0)

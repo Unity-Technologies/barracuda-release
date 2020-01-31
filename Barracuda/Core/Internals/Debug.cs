@@ -14,7 +14,7 @@ namespace Barracuda
 
         public static bool warningEnabled = true;
         public static bool errorEnabled = true;
-        public static bool logEnabled = Application.isEditor;
+        public static bool logEnabled = true;
 
 #if BARRACUDA_LOG_ENABLED
         public static void LogWarning(object message)

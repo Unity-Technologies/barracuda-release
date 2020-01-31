@@ -1,5 +1,33 @@
 # Release notes
 
+## [0.5.0] - 2020-01-29
+- Performance: added small optimizations for Dense layers on GPU.
+- API: added worker.CopyOutput() instead of worker.Fetch(). The new name better reflects the functionality.
+- API: introduced CreateWorker() convenience function directly on NNModel asset instance. Should make it easier for users instead of looking docs for ModelLoader and then WorkerFactory.
+- API: added ModelBuilder.Input() with TensorShape argument.
+- API: added Tensor constructor that accepts ComputeBuffer as an argument.
+- API: ModelLoader.Load() verbose parameter default value changed from `true` to `false`.
+- Examples: updated according with the latest API changes.
+- ONNX: C# importer refactoring and cleanup.
+- ONNX: added constant node baking.
+- ONNX: added override for global inputs, set "sequence_length" to 1.
+- ONNX: added handling of :0 in string name from TF->ONNX import, keep unconnected constants.
+- ONNX: added Gather support.
+- ONNX: added OneHot support.
+- ONNX: added Shape support.
+- ONNX: added Abs, Ceil, Floor, Round.
+- ONNX: improved ONNX asset handling performance in Unity Editor UI.
+- ONNX: implemented Upsample support for opset=9!
+- ONNX: fixed Upsample support for opset=7,8.
+- ONNX: implemented Slice for constant tensors.
+- ONNX: implemented Resize op using Upsample2D or AvgPool2D depending, if scale is larger than 1 or not.
+- ONNX: implemented arbitrary axis support for Concat.
+- ONNX: implemented multiple axes support for Reduce ops.
+- Importers: .nn and .onnx importer versions were increased, expect model reimport to happen automatically.
+- Fix: fixed Unity 2020.1 support. Unity versions > 2020.1.0a21 should work fine now.
+- Fix: moved MatrixUtils and ComputeShaderSingleton to Barracuda namespace.
+- Fix: fixed GPU kernel selection for iPhone7 (A10), as it is limited to 224 thread groups.
+
 ## [0.4.0] - 2020-01-08
 - Now Barracuda ships as a source! At the moment no PRs are accepted, but this policy might change in the future.
 - Bumped min supported Unity version to 2018.x.

@@ -251,6 +251,14 @@ public class ModelAnalyzer
                 O = new TensorShape(X.flatWidth, X.flatHeight);
             }
             else if (
+                l.type == Layer.Type.Gather)
+            {
+                int[] shape = shapesByName[l.inputs[0]].ToArray();
+                shape[l.axis] = shapesByName[l.inputs[1]].flatWidth;
+
+                O = new TensorShape(shape);
+            }
+            else if (
                 l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)
             {
@@ -370,35 +378,6 @@ public class ModelAnalyzer
 
         return requireStorage;
     }
-
-    /*static public HashSet<Layer> FindUpstreamLayers(Model model, string[] outputs)
-    {
-        var layersByName = new Dictionary<string, Layer>();
-        foreach (var l in model.layers)
-            layersByName.Add(l.name, l);
-
-        var connected = new HashSet<Layer>();
-        Func<string[], HashSet<Layer>(), HashSet<Layer>()> visitor = (layerNames, visitNext) =>
-        {
-            foreach (var i in layerNames)
-                if (layersByName.ContainsKey(i))
-                {
-                    visitNext.Add(layersByName[i]);
-                    connected.Add(layersByName[i]);
-                }
-            return visitNext;
-        };
-
-        var layersToVisit = visitor(outputs, new HashSet<Layer>());
-        while (layersToVisit.Count > 0)
-        {
-            var visitNext = new HashSet<Layer>();
-            foreach (var l in layersToVisit)
-                visitor(l.inputs, visitNext);
-            layersToVisit = visitNext;
-        }
-        return connected;
-    }*/
 
     static public HashSet<Layer> FindUpstreamLayers(Model model, string[] outputs)
     {

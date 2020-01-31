@@ -1,4 +1,4 @@
-﻿#define BARRACUDA_MAX_THREAD_COUNT 64
+#define BARRACUDA_MAX_THREAD_COUNT 64
 #if (BARRACUDA_MAX_THREAD_COUNT>=256)
 #define NUMTHREADS(t256,t128,t64) [numthreads t256]
 #define NUMTHREAD(t256, t128, t64) t256
@@ -245,6 +245,10 @@ struct ReadWriteTensor : Tensor
     void Set(uint b, uint h, uint w, uint ch, float v)
     {
         data[Index(b,h,w,ch)] = v;
+    }
+    void Set(uint b, uint2 pos, uint ch, float v)
+    {
+        data[Index(b, pos.y, pos.x, ch)] = v;
     }
     void Set(uint b, uint i, uint ch, float v)
     {

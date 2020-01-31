@@ -91,6 +91,16 @@ public sealed class ComputeKernelLibrary
                 ),
             },
             new[] { // float32
+                new Entry("Dense_Tilled2x2_Cached",
+                    Int3(w/2, h/2),                                 BigO(X.flatWidth)/2,
+                    StrictAnd(w % 2 == 0 && h % 2 == 0 && X.flatWidth % 32 == 0),
+                    (Application.platform == RuntimePlatform.Android) || (Application.platform == RuntimePlatform.IPhonePlayer) || (SystemInfo.graphicsDeviceVendor.Contains("Intel"))
+                ),
+                new Entry("Dense_Tilled4x4_Cached",
+                    Int3(w/4, h/4),                                 BigO(X.flatWidth)/4,
+                    StrictAnd(w % 4 == 0 && h % 4 == 0 && X.flatWidth % 32 == 0),
+                    (Application.platform == RuntimePlatform.Android) || (Application.platform == RuntimePlatform.IPhonePlayer) || (SystemInfo.graphicsDeviceVendor.Contains("Intel"))
+                ),
                 new Entry("Dense_T8x8_R8x8",
                     Int3(w / 8, h / 8),                             BigO(X.flatWidth)/8,
                     StrictAnd(w % 64 == 0 && h % 64 == 0 && X.flatWidth % 64 == 0)
@@ -136,7 +146,11 @@ public sealed class ComputeKernelLibrary
         var c = X.channels;
 
         return new[] {
-
+            new Entry("Conv2DWinograd_2x2_3x3",
+                Int3(k, IDivC(w, 2), IDivC(h, 2)),  BigO(X.channels) * 1 / (2*2.25f),
+                StrictAnd(K.kernelWidth == 3 && K.kernelHeight == 3 && stride[0] == 1 && stride[1] == 1 && h % 2 == 0 && w % 2 == 0),
+                (Application.platform == RuntimePlatform.Android) || (Application.platform == RuntimePlatform.IPhonePlayer) || (SystemInfo.graphicsDeviceVendor.Contains("Intel"))
+            ),
             new Entry("Conv2DKernel1x1_StrictC16K64_T16x16_R4x4",
                 Int3(IDivC(k, 4), IDivC(n*w*h, 4)),                 BigO(X.channels) * 0.8f / 4,
                 K.kernelWidth == 1 && K.kernelHeight == 1 &&
@@ -366,8 +380,9 @@ public sealed class ComputeKernelLibrary
         public readonly bool valid;
         public readonly bool strict;
         public readonly uint loopStride; // > 0 indicates looping kernel
+        public readonly bool devicePriority;
 
-        public Entry(string name_, int[] dispatch_, float bigO_ = 1.0f, bool valid_ = true)
+        public Entry(string name_, int[] dispatch_, float bigO_ = 1.0f, bool valid_ = true, bool devicePriority_ = false)
         {
             name = name_;
             dispatch = dispatch_;
@@ -375,6 +390,7 @@ public sealed class ComputeKernelLibrary
             valid = valid_;
             strict = false;
             loopStride = 0;
+            devicePriority = devicePriority_;
         }
 
         public Entry(string name_, int[] dispatch_, float bigO_, uint loopStride_) :
@@ -385,6 +401,12 @@ public sealed class ComputeKernelLibrary
 
         public Entry(string name_, int[] dispatch_, float bigO_, StrictDimensions strictDims) :
             this(name_, dispatch_, bigO_, strictDims.valid)
+        {
+            strict = true;
+        }
+
+        public Entry(string name_, int[] dispatch_, float bigO_, StrictDimensions strictDims, bool devicePriority_) :
+            this(name_, dispatch_, bigO_, strictDims.valid, devicePriority_)
         {
             strict = true;
         }
@@ -435,9 +457,9 @@ public struct ComputeKernel
         func.Dispatch(dispatch);
     }
 
+    const long  InvalidEntry = long.MaxValue;
     internal static long CalculateEntryScore(ComputeShader[] kernels, ComputeKernelLibrary.Entry entry, bool verbose)
     {
-        const long InvalidEntry = long.MaxValue;
         long work = InvalidEntry;
         try
         {
@@ -486,15 +508,30 @@ public struct ComputeKernel
     public static ComputeKernel BestKernel(ComputeShader[] kernels, ComputeKernelLibrary.Entry[] entrees, bool verbose)
     {
         var bestEntry = entrees[0];
-        var bestScore = long.MaxValue;
+        var bestScore = InvalidEntry;
+        bool foundKernelWithDevicePriority = false;
         for (int i = 0; i < entrees.Length; i++)
         {
             var score = CalculateEntryScore(kernels, entrees[i], verbose);
-            if (score < bestScore)
+            bool entryDevicePriority = entrees[i].devicePriority;
+
+            if (score == InvalidEntry)
+                continue;
+
+            // first time we encounter a kernel with device priority
+            if (!foundKernelWithDevicePriority && entryDevicePriority) 
             {
-                bestEntry = entrees[i];
                 bestScore = score;
+                bestEntry = entrees[i];
             }
+            // compute best entry: sort only on priority kernels (if some exist), else sort on non priority
+            else if ( (!foundKernelWithDevicePriority && !entryDevicePriority) || (foundKernelWithDevicePriority && entryDevicePriority))
+            {
+                bestScore = (score <= bestScore) ? score : bestScore;
+                bestEntry = (score <= bestScore) ? entrees[i] : bestEntry;
+            }
+
+            foundKernelWithDevicePriority = foundKernelWithDevicePriority || entryDevicePriority;
         }
 
         if (verbose)
@@ -566,6 +603,34 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad)
+    {
+        Assert.AreEqual(X.channels, K.kernelDepth);
+        Assert.AreEqual(K.kernelCount, B.flatWidth);
+        Assert.AreEqual(B.flatWidth, B.length);
+        Assert.AreEqual(stride.Length, 2);
+        Assert.AreEqual(pad.Length, 4);
+
+        // Winograd
+        // transform kernel
+        TensorShape Kws = new TensorShape(K.batch + 1, K.height + 1, K.width, K.channels);
+        var fn_wk = new ComputeFunc(m_Kernels, "KernelWinograd_3x3");
+        fn_wk.SetTensor("X", K.shape, Pin(K).buffer);
+
+        var Kw = Dispatch(fn_wk, Kws, K.kernelCount, X.channels, 1);
+
+        var fn_w = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
+
+        SetTensor(fn_w, "X", X);
+        SetTensor(fn_w, "K", Kw);
+        SetTensor(fn_w, "B", B);
+
+        fn_w.shader.SetInts("_Pad", pad);
+         
+        var OW = Dispatch(fn_w, O.shape, Kw.kernelCount, IDivC(O.width, 2), IDivC(O.height, 2));
+        return OW;
+    }
+
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -579,6 +644,11 @@ public class ComputeOps : ReferenceComputeOps
 
         if (printKernels)
             Debug.Log($"{fn.func.kernelName}: {O.shape} = {X.shape} # {K.shape} stride: {stride[0]},{stride[1]} pad:{pad[0]},{pad[1]}" );
+
+        if (fn.func.kernelName == "Conv2DWinograd_2x2_3x3")
+        {
+            return Conv2DWinograd(X, K, B, O, stride, pad);
+        }
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("O", O.shape, Pin(O).buffer);
@@ -958,14 +1028,13 @@ public class ComputeOps : ReferenceComputeOps
         fn.SetTensor("O", O.shape, Pin(O).buffer);
 
         fn.shader.SetInts("_Pad", pad);
-        fn.shader.SetInts("_Stride", X.shape.ToArray());
 
         if (kernelName == "Border2D")
         {
             // NOTE: negative "pad" variable will crop X tensor
             int croppedWidth = X.width - Math.Max(0, -pad[2]);
             int croppedHeight = X.height - Math.Max(0, -pad[3]);
-            var croppedSize = new int[] { 0, 0, 0, 0 };
+            var croppedSize = new int[] { 0, 0 };
             croppedSize[0] = croppedWidth;
             croppedSize[1] = croppedHeight;
 

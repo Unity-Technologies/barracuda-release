@@ -2,7 +2,6 @@
 #pragma kernel MaxPool2D
 #pragma kernel AvgPool2D_NoPads
 #pragma kernel MaxPool2D_NoPads
-//#pragma kernel MaxPool2D_Pool2x2_NoPads
 #pragma kernel GlobalAvgPool2D
 #pragma kernel GlobalAvgVariancePool2D
 
@@ -134,33 +133,6 @@ void AvgPool2D_NoPads(uint3 dispatchThreadID : SV_DispatchThreadID)
         for (uint dy = 0; dy < _Pool[1]; ++dy)
             for (uint dx = 0; dx < _Pool[0]; ++dx)
                 v += X.Get(n, y * _Stride[1] + dy, x * _Stride[0] + dx, c) * invPoolSize;
-
-        O.Set(n, y, x, c, v);
-    }
-}
-
-NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
-//NUMTHREADS((16,4,4), (16,4,2), (16,2,2))
-void MaxPool2D_Pool2x2_NoPads(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
-    DISPATCH_ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v0 = X.Get(n, y*2,   x*2,   c);
-        float v1 = X.Get(n, y*2+1, x*2,   c);
-        float v2 = X.Get(n, y*2,   x*2+1, c);
-        float v3 = X.Get(n, y*2+1, x*2+1, c);
-        float v = max(v0, max(v1, max(v2, v3)));
 
         O.Set(n, y, x, c, v);
     }

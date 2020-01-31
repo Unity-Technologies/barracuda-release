@@ -92,6 +92,7 @@ public interface IOps
     Tensor Concat(Tensor[] tensors, int axis);
     Tensor StridedSlice(Tensor x, int[] starts, int[] ends, int[] stride);
     Tensor Tile(Tensor x, int[] repeats);
+    Tensor Gather(Tensor[] tensors, int axis);
 
     /// <summary>
     /// Prepares tensor for use
@@ -115,8 +116,8 @@ public interface IOps
 /// </summary>
 public interface IModelCompiler
 {
-	void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes);
-	void PreExecuteLayer(Layer layer, Tensor[] inputs);
+    void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes);
+    void PreExecuteLayer(Layer layer, Tensor[] inputs);
 }
 
 /// <summary>

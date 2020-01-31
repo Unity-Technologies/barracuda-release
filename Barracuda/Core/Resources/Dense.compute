@@ -7,6 +7,9 @@
 #pragma kernel Dense_T8x8_R4x4 DENSE=1 BLOCK_SIZE=4
 #pragma kernel Dense_T16x16_R4x4 DENSE=1 BLOCK_SIZE=4
 
+#pragma kernel Dense_Tilled2x2_Cached
+#pragma kernel Dense_Tilled4x4_Cached
+
 #include "Tensor.cginc"
 
 TENSOR_DECL(X)
@@ -1669,4 +1672,115 @@ void DenseTiled64x64(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupT
               
     #undef X_
     #undef W_
+}
+
+// reference: "Optimizing the General Matrix Multiplication" GPU - Pro 5
+// https://github.com/strin/gemm-android
+// https://github.com/dividiti/gemmbench/tree/master/program/arm-mali-sgemm
+// Best configurations one OnePlus 6T:
+// K16, numthreads32x2/4/8 // K32 numthreads32x2/4/8
+#undef TILE_WIDTH
+#define TILE_WIDTH 16
+
+[numthreads(32, 4, 1)]
+void Dense_Tilled2x2_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.flatWidth / 2, O.flatHeight / 2, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
+
+    float b0 = B.Get(x * 2 + 0);
+    float b1 = B.Get(x * 2 + 1);
+    float4 v = float4(b0, b1, b0, b1);
+
+    for (uint m = 0; m < X.GetFlatWidth() / 4; m += TILE_WIDTH)
+    {
+        for (uint i = 0; i < TILE_WIDTH; ++i)
+        {
+            uint k = m + i;
+            float4 x0 = float4(X.Get(2 * y + 0, 4 * k + 0), X.Get(2 * y + 0, 4 * k + 1), X.Get(2 * y + 0, 4 * k + 2), X.Get(2 * y + 0, 4 * k + 3));
+            float4 x1 = float4(X.Get(2 * y + 1, 4 * k + 0), X.Get(2 * y + 1, 4 * k + 1), X.Get(2 * y + 1, 4 * k + 2), X.Get(2 * y + 1, 4 * k + 3));
+
+            float4 w0 = float4(W.Get(4 * k + 0, 2 * x + 0), W.Get(4 * k + 1, 2 * x + 0), W.Get(4 * k + 2, 2 * x + 0), W.Get(4 * k + 3, 2 * x + 0));
+            float4 w1 = float4(W.Get(4 * k + 0, 2 * x + 1), W.Get(4 * k + 1, 2 * x + 1), W.Get(4 * k + 2, 2 * x + 1), W.Get(4 * k + 3, 2 * x + 1));
+
+            v += float4(dot(x0, w0), dot(x0, w1), dot(x1, w0), dot(x1, w1));
+        }
+        AllMemoryBarrierWithGroupSync();
+    }
+
+    O.Set(y * 2 + 0, x * 2 + 0, v.x);
+    O.Set(y * 2 + 0, x * 2 + 1, v.y);
+    O.Set(y * 2 + 1, x * 2 + 0, v.z);
+    O.Set(y * 2 + 1, x * 2 + 1, v.w);
+}
+
+#undef TILE_WIDTH
+#define TILE_WIDTH 16
+
+[numthreads(32, 4, 1)]
+void Dense_Tilled4x4_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.flatWidth / 4, O.flatHeight / 4, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
+
+    float b0 = B.Get(x * 4 + 0);
+    float b1 = B.Get(x * 4 + 1);
+    float b2 = B.Get(x * 4 + 2);
+    float b3 = B.Get(x * 4 + 3);
+
+    float4 v0 = float4(b0, b1, b0, b1);
+    float4 v1 = float4(b2, b3, b2, b3);
+    float4 v2 = float4(b0, b1, b0, b1);
+    float4 v3 = float4(b2, b3, b2, b3);
+
+    for (uint m = 0; m < X.GetFlatWidth() / 4; m += TILE_WIDTH)
+    {
+        for (uint i = 0; i < TILE_WIDTH; ++i)
+        {
+            uint k = m + i;
+            float4 x0 = float4(X.Get(4 * y + 0, 4 * k + 0), X.Get(4 * y + 0, 4 * k + 1), X.Get(4 * y + 0, 4 * k + 2), X.Get(4 * y + 0, 4 * k + 3));
+            float4 x1 = float4(X.Get(4 * y + 1, 4 * k + 0), X.Get(4 * y + 1, 4 * k + 1), X.Get(4 * y + 1, 4 * k + 2), X.Get(4 * y + 1, 4 * k + 3));
+            float4 x2 = float4(X.Get(4 * y + 2, 4 * k + 0), X.Get(4 * y + 2, 4 * k + 1), X.Get(4 * y + 2, 4 * k + 2), X.Get(4 * y + 2, 4 * k + 3));
+            float4 x3 = float4(X.Get(4 * y + 3, 4 * k + 0), X.Get(4 * y + 3, 4 * k + 1), X.Get(4 * y + 3, 4 * k + 2), X.Get(4 * y + 3, 4 * k + 3));
+
+            float4 w0 = float4(W.Get(4 * k + 0, 4 * x + 0), W.Get(4 * k + 1, 4 * x + 0), W.Get(4 * k + 2, 4 * x + 0), W.Get(4 * k + 3, 4 * x + 0));
+            float4 w1 = float4(W.Get(4 * k + 0, 4 * x + 1), W.Get(4 * k + 1, 4 * x + 1), W.Get(4 * k + 2, 4 * x + 1), W.Get(4 * k + 3, 4 * x + 1));
+
+            float4 w2 = float4(W.Get(4 * k + 0, 4 * x + 2), W.Get(4 * k + 1, 4 * x + 2), W.Get(4 * k + 2, 4 * x + 2), W.Get(4 * k + 3, 4 * x + 2));
+            float4 w3 = float4(W.Get(4 * k + 0, 4 * x + 3), W.Get(4 * k + 1, 4 * x + 3), W.Get(4 * k + 2, 4 * x + 3), W.Get(4 * k + 3, 4 * x + 3));
+
+            v0 += float4(dot(x0, w0), dot(x0, w1), dot(x1, w0), dot(x1, w1));
+            v1 += float4(dot(x0, w2), dot(x0, w3), dot(x1, w2), dot(x1, w3));
+            v2 += float4(dot(x2, w0), dot(x2, w1), dot(x3, w0), dot(x3, w1));
+            v3 += float4(dot(x2, w2), dot(x2, w3), dot(x3, w2), dot(x3, w3));
+        }
+        AllMemoryBarrierWithGroupSync();
+    }
+
+    O.Set(y * 4 + 0, x * 4 + 0, v0.x);
+    O.Set(y * 4 + 0, x * 4 + 1, v0.y);
+    O.Set(y * 4 + 1, x * 4 + 0, v0.z);
+    O.Set(y * 4 + 1, x * 4 + 1, v0.w);
+
+    O.Set(y * 4 + 0, x * 4 + 2, v1.x);
+    O.Set(y * 4 + 0, x * 4 + 3, v1.y);
+    O.Set(y * 4 + 1, x * 4 + 2, v1.z);
+    O.Set(y * 4 + 1, x * 4 + 3, v1.w);
+
+
+    O.Set(y * 4 + 2, x * 4 + 0, v2.x);
+    O.Set(y * 4 + 2, x * 4 + 1, v2.y);
+    O.Set(y * 4 + 3, x * 4 + 0, v2.z);
+    O.Set(y * 4 + 3, x * 4 + 1, v2.w);
+
+    O.Set(y * 4 + 2, x * 4 + 2, v3.x);
+    O.Set(y * 4 + 2, x * 4 + 3, v3.y);
+    O.Set(y * 4 + 3, x * 4 + 2, v3.z);
+    O.Set(y * 4 + 3, x * 4 + 3, v3.w);
 }

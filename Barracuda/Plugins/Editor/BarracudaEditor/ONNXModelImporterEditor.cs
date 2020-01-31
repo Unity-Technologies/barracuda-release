@@ -5,6 +5,7 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.Experimental.AssetImporters;
 using UnityEngine;
+using System;
 
 namespace Barracuda
 {
@@ -58,8 +59,11 @@ public class NNModelEditor : Editor
 
     void OnEnable()
     {
+        // TODO: investigate perf -- method takes 1s the first time you click on the model in the UI
         var nnModel = target as NNModel;
         if (nnModel == null)
+            return;
+        if (nnModel.modelData == null)
             return;
 
         m_Model = ModelLoader.Load(nnModel, verbose:false);
@@ -67,10 +71,26 @@ public class NNModelEditor : Editor
             return;
 
         m_Inputs = m_Model.inputs.Select(i => i.name).ToList();
-        m_InputsDesc = m_Model.inputs.Select(i => $"shape: {new TensorShape(i.shape).ToString()}").ToList();
-
+        m_InputsDesc = m_Model.inputs.Select(i => $"shape: ({String.Join(",", i.shape)})").ToList();
         m_Outputs = m_Model.outputs.ToList();
-        m_OutputsDesc = m_Model.outputs.Select(i => "").ToList();
+        
+        bool allKnownShapes = true;
+        var inputShapes = new Dictionary<string, TensorShape>();
+        foreach (var i in m_Model.inputs)
+        {
+            allKnownShapes = allKnownShapes && !i.shape.Contains(-1) && !i.shape.Contains(0);
+            if (!allKnownShapes)
+                break;
+            inputShapes.Add(i.name, new TensorShape(i.shape));
+        }
+        if (allKnownShapes)
+        {
+            m_OutputsDesc = m_Model.outputs.Select(i => { TensorShape shape; bool sucess = ModelAnalyzer.TryGetOutputTensorShape(m_Model, inputShapes, i, out shape); return sucess ? $"shape: {shape.ToString()}" : "shape: (-1,-1,-1,-1)"; }).ToList();
+        }
+        else
+        {
+            m_OutputsDesc = m_Model.outputs.Select(i => "shape: (-1,-1,-1,-1)").ToList();
+        }
 
         m_Memories = m_Model.memories.Select(i => i.input).ToList();
         m_MemoriesDesc = m_Model.memories.Select(i => $"shape:{i.shape.ToString()} output:{i.output}").ToList();

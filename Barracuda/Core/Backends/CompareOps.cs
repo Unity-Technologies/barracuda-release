@@ -512,7 +512,13 @@ public class CompareOps : IOps
         CheckSame(Y, Z, Layer.Type.Transpose);
         return Y;
     }
-
+    Tensor IOps.Gather(Tensor[] tensors, int axis)
+    {
+        var Y = m_Ops1.Gather(tensors, axis);
+        var Z = m_Ops2.Gather(tensors, axis);
+        CheckSame(Y,Z, Layer.Type.Gather);
+        return Y;
+    }
     Tensor IOps.Concat(Tensor[] tensors, int axis)
     {
         var Y = m_Ops1.Concat(tensors, axis);

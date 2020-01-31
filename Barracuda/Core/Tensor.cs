@@ -50,13 +50,16 @@ public struct TensorShape
         channels = ch > 0 ? ch : 1;
     }
     /// <summary>
-    /// Create a TensorShape of arbitrary shape.
-    /// `shape` parameter should be of length 4.
+    /// Create a TensorShape of arbitrary `shape`.
+    /// Currently `shape` can have only up to 4 dimensions.
     /// </summary>
     public TensorShape(int[] shape)
-        : this(shape[0], shape[1], shape[2], shape[3])
+        : this(
+            shape.Length > 0 ? shape[0] : 0,
+            shape.Length > 1 ? shape[1] : 0,
+            shape.Length > 2 ? shape[2] : 0,
+            shape.Length > 3 ? shape[3] : 0)
     {
-        Assert.AreEqual(4, shape.Length);
     }
     #endregion
 
@@ -354,7 +357,7 @@ public class Tensor : IDisposable
     /// </summary>
     public Tensor(int b, int ch, float[] srcData, string n = "") : this(new TensorShape(b, ch), srcData, n) {}
     /// <summary>
-    /// Create a Tensor of shape tensorShape `s`, an array of data `srcData` and an optional name `n`
+    /// Create a Tensor of shape `s`, an array of data `srcData` and an optional name `n`
     /// `srcData` should be of size `s.length`.
     /// </summary>
     public Tensor(TensorShape s, float[] srcData, string n = "")
@@ -385,7 +388,7 @@ public class Tensor : IDisposable
     /// </summary>
     public Tensor(int b, int ch, float[][] srcData, string n = "") : this(new TensorShape(b, ch), srcData, n) {}
     /// <summary>
-    /// Create a Tensor of shape tensorShape `s`, an array of data `srcData` and an optional name `n`
+    /// Create a Tensor of shape `s`, an array of data `srcData` and an optional name `n`
     /// `srcData` should be of size `s.length`.
     /// </summary>
     public Tensor(TensorShape s, float[][] srcData, string n = "")
@@ -405,6 +408,40 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+    /// <summary>
+    /// Create a Tensor from a shape `s`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional name `n`
+    /// `s` should be of size 4, order is [b,h,w,ch].
+    /// `srcBuffer` should be larger than s[0]*s[1]*s[2]*s[3].
+    /// </summary>
+    public Tensor(int[] s, UnityEngine.ComputeBuffer srcBuffer, string n = "") : this(new TensorShape(s), srcBuffer, n) {}
+    /// <summary>
+    /// Create a Tensor of shape [b,h,w,ch], associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional name `n`
+    /// `srcBuffer` should be larger than b*h*w*ch
+    /// </summary>
+    public Tensor(int b, int h, int w, int ch, UnityEngine.ComputeBuffer srcBuffer, string n = "") : this(new TensorShape(b, h, w, ch), srcBuffer, n) {}
+    /// <summary>
+    /// Create a Tensor of shape [b,1,1,ch], associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional name `n`
+    /// `srcBuffer` should be larger than b*ch
+    /// </summary>
+    public Tensor(int b, int ch, UnityEngine.ComputeBuffer srcBuffer, string n = "") : this(new TensorShape(b, ch), srcBuffer, n) {}
+    /// <summary>
+    /// Create a Tensor of shape `s`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional name `n`
+    /// `srcBuffer` should be larger than `s.length`.
+    /// </summary>
+    public Tensor(TensorShape s, UnityEngine.ComputeBuffer srcBuffer, string n = "")
+    {
+        name = n;
+        shape = s;
+        if (srcBuffer.count < s.length)
+            throw new ArgumentException($"Compute buffer {name} capacity is {srcBuffer.count} less than {s.length} required for shape {s}");
+        if (srcBuffer.stride == 4)
+            throw new ArgumentException($"Currently only compute buffers with stride of 4 are supported. Compute buffer {name} stride is {srcBuffer.stride} instead");
+        m_TensorOnDevice = new ComputeTensorData(srcBuffer, shape, offset:0, name);
+        m_TensorAllocator = null;
+        m_Cache = null;
+        m_CacheIsDirty = false;
+    }
+
     /// <summary>
     /// Create a Tensor from a texture, shape is [1, texture.height, texture.width, `channels=3`]
     /// </summary>
@@ -441,7 +478,7 @@ public class Tensor : IDisposable
     /// </summary>
     public Tensor(int b, int ch, ITensorData d, string n = "") : this(new TensorShape(b, ch), d, n) {}
     /// <summary>
-    /// Create a Tensor of shape tensorShape `s`, a ITensorData `d` and an optional name `n`
+    /// Create a Tensor of shape `s`, a ITensorData `d` and an optional name `n`
     /// </summary>
     public Tensor(TensorShape s, ITensorData d, string n = "")
     {
@@ -470,7 +507,7 @@ public class Tensor : IDisposable
     /// </summary>
     public Tensor(int b, int ch, string n = "") : this(new TensorShape(b, ch), n) {}
     /// <summary>
-    /// Create an uninitialized Tensor of shape tensorShape `s`.
+    /// Create an uninitialized Tensor of shape `s`.
     /// </summary>
     public Tensor(TensorShape s, string n = "")
     {
@@ -497,7 +534,7 @@ public class Tensor : IDisposable
     /// </summary>
     public Tensor(int b, int ch, ITensorData d, ITensorAllocator a) : this(new TensorShape(b, ch), d, a) {}
     /// <summary>
-    /// Create a Tensor of shape tensorShape `s`, a ITensorData `d` and a ITensorAllocator `a`
+    /// Create a Tensor of shape `s`, a ITensorData `d` and a ITensorAllocator `a`
     /// </summary>
     public Tensor(TensorShape s, ITensorData d, ITensorAllocator a)
     {
@@ -529,7 +566,7 @@ public class Tensor : IDisposable
     /// </summary>
     public Tensor(int b, int ch, ITensorAllocator a) : this(new TensorShape(b, ch), a) {}
     /// <summary>
-    /// Create an uninitialized Tensor of shape tensorShape `s` and ITensorAllocator `a`.
+    /// Create an uninitialized Tensor of shape `s` and ITensorAllocator `a`.
     /// </summary>
     public Tensor(TensorShape s, ITensorAllocator a)
     {
@@ -830,7 +867,8 @@ public class Tensor : IDisposable
     /// </summary>
     public void ToRenderTexture(UnityEngine.RenderTexture target, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f)
     {
-        BarracudaTextureUtils.TensorToRenderTexture(this, target, batch, fromChannel, scale, bias);
+        var gpuBackend = new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels);
+        gpuBackend.TensorToRenderTexture(this, target, batch, fromChannel, scale, bias);
     }
 
     /// <summary>
@@ -838,7 +876,9 @@ public class Tensor : IDisposable
     /// </summary>
     public UnityEngine.RenderTexture ToRenderTexture(int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f)
     {
-        return BarracudaTextureUtils.TensorToRenderTexture(this, batch, fromChannel, scale, bias);
+        var target = new UnityEngine.RenderTexture(width, height, 0);
+        ToRenderTexture(target, batch, fromChannel, scale, bias);
+        return target;
     }
     #endregion
 

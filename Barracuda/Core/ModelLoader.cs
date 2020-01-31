@@ -15,36 +15,36 @@ public static class ModelLoader
 {
     /// <summary>
     /// Return an object oriented representation (aka: `Model`) of a neural network from a binary representation of type `NNModel`.
-    /// By default details are logged to the console, set `verbose` to false to load silently.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
     /// </summary>
-    public static Model Load(NNModel model, bool verbose = true)
+    public static Model Load(NNModel model, bool verbose = false)
     {
-        return Load(model.Value, verbose);
+        return Load(model.modelData.Value, verbose);
     }
 
     /// <summary>
     /// Return an object oriented representation (aka: `Model`) of a neural network from a `.bc` file from the the streaming asset folder.
-    /// By default details are logged to the console, set verbose to false to load silently.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
     /// </summary>
-    public static Model LoadFromStreamingAssets(string filename, bool verbose = true)
+    public static Model LoadFromStreamingAssets(string filename, bool verbose = false)
     {
         return Load(Path.Combine(Application.streamingAssetsPath, filename), verbose);
     }
 
     /// <summary>
     /// Return an object oriented representation (aka: `Model`) of a neural network from a `.bc` file.
-    /// By default details are logged to the console, set verbose to false to load silently.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
     /// </summary>
-    public static Model Load(string filepath, bool verbose = true)
+    public static Model Load(string filepath, bool verbose = false)
     {
         return Load(Open(filepath), verbose);
     }
 
     /// <summary>
     /// Return an object oriented representation (aka: `Model`) of a neural network from a byte[] array.
-    /// By default details are logged to the console, set verbose to false to load silently.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
     /// </summary>
-    public static Model Load(byte[] stream, bool verbose = true)
+    public static Model Load(byte[] stream, bool verbose = false)
     {
         return Load(Open(stream), verbose);
     }

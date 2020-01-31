@@ -453,7 +453,12 @@ public class StatsOps : IOps
         Elementwise(X);
         return m_Ops.Transpose(X);
     }
-
+    Tensor IOps.Gather(Tensor[] tensors, int axis)
+    {
+        var O =  m_Ops.Gather(tensors, axis);
+        Elementwise(O);
+        return O;
+    }
     Tensor IOps.Concat(Tensor[] tensors, int axis)
     {
         var O = m_Ops.Concat(tensors, axis);

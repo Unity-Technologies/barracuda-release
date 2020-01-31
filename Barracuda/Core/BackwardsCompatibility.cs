@@ -6,14 +6,15 @@ using UnityEngine.Assertions;
 
 namespace Barracuda {
 
-// @TODO: deprecate, left here only for backwards compatibility
-public static class WorkerExtensions
+// Deprecated APIs, left here only for backwards compatibility
+public static class DeprecatedWorkerExtensions
 {
     #region Inputs
     /// <summary>
     /// Specify single tensor value as the input for the network.
     /// Useful when network has only one input and caller does not need to know input's name.
     /// </summary>
+    [ObsoleteAttribute("Use SetInput instead.", false)]
     public static void AddInput(this IWorker worker, Tensor x)
     {
         worker.SetInput(x);
@@ -21,6 +22,7 @@ public static class WorkerExtensions
     /// <summary>
     /// Specify tensor value for the named input of the network.
     /// </summary>
+    [ObsoleteAttribute("Use SetInput instead.", false)]
     public static void AddInput(this IWorker worker, string name, Tensor x)
     {
         worker.SetInput(name, x);
@@ -29,55 +31,35 @@ public static class WorkerExtensions
 
     #region Outputs
     /// <summary>
-    /// Returns a reference to tensor from the last layer of the network
+    /// Returns a reference to the first output tensor.
     /// Useful when network has only one output.
     /// IMPORTANT: follow with TakeOwnership() call, if you want tensor to outlive worker or make tensor copy with DeepCopy()
-    /// see also WorkerExtensions.FetchAndTakeOwnership()
     /// </summary>
+    [ObsoleteAttribute("Use PeekOutput instead.", false)]
     public static Tensor Peek(this IWorker worker)
     {
         return worker.PeekOutput();
     }
     /// <summary>
-    /// Returns a reference to tensor by name.
+    /// Returns a reference to output tensor by name.
     /// IMPORTANT: follow with TakeOwnership() call, if you want tensor to outlive worker or make tensor copy with DeepCopy()
-    /// see also WorkerExtensions.FetchAndTakeOwnership()
     /// </summary>
+    [ObsoleteAttribute("Use PeekOutput instead.", false)]
     public static Tensor Peek(this IWorker worker, string name)
     {
         return worker.PeekOutput(name);
     }
     #endregion
 
-
-    #region Blocking APIs
-    /// <summary>
-    /// Schedules network execution in one go and waits for result to be available.
-    /// Useful when network has only one input and caller does not need to know input's name.
-    /// </summary>
-    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, Tensor input)
-    {
-        worker.Execute(input);
-        return worker.Fetch();
-    }
-    /// <summary>
-    /// Schedules network execution in one go and waits for result to be available.
-    /// </summary>
-    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, IDictionary<string, Tensor> inputs)
-    {
-        worker.Execute(inputs);
-        return worker.Fetch();
-    }
-    #endregion
-
     #region Non-blocking APIs
     /// <summary>
-    /// Returns first output tensor and takes ownership of memory to outlive worker.
+    /// Returns the output tensor and takes ownership of memory to outlive the worker.
     /// Useful when network has only one output.
     /// </summary>
+    [ObsoleteAttribute("Use PeekOutput followed by TakeOwnership or DeepCopy instead.", false)]
     public static Tensor FetchAndTakeOwnership(this IWorker worker)
     {
-        var output = worker.Peek();
+        var output = worker.PeekOutput();
         output.TakeOwnership();
         return output;
 
@@ -85,44 +67,37 @@ public static class WorkerExtensions
     /// <summary>
     /// Returns output tensor by name and takes ownership of memory to outlive worker.
     /// </summary>
+    [ObsoleteAttribute("Use PeekOutput followed by TakeOwnership or DeepCopy instead.", false)]
     public static Tensor FetchAndTakeOwnership(this IWorker worker, string name)
     {
-        var output = worker.Peek(name);
+        var output = worker.PeekOutput(name);
         output.TakeOwnership();
         return output;
     }
     #endregion
 
-    // @TODO: rename these APIs, Fetch() name kept for backwards compatibility
-    #region Backward compatiblity
+    #region Blocking APIs
     /// <summary>
-    /// DEPRECATED: Use FetchAndTakeOwnership() instead.
     /// This method is a blocking call while FetchAndTakeOwnership() is not.
     /// </summary>
+    [ObsoleteAttribute("Use CopyOutput instead.", false)]
     public static Tensor Fetch(this IWorker worker)
     {
-        var output = worker.Peek();
-        output.Unpin(); // unpin will readback to CPU and
-                        // give allocator a chance to reuse allocated buffer
-        output.TakeOwnership();
-        return output;
+        return worker.CopyOutput();
     }
     /// <summary>
-    /// DEPRECATED: Use FetchAndTakeOwnership() instead.
     /// This method is a blocking call while FetchAndTakeOwnership() is not.
     /// </summary>
+    [ObsoleteAttribute("Use CopyOutput instead.", false)]
     public static Tensor Fetch(this IWorker worker, string name)
     {
-        var output = worker.Peek(name);
-        output.Unpin(); // unpin will readback to CPU and
-                        // give allocator a chance to reuse allocated buffer
-        output.TakeOwnership();
-        return output;
+        return worker.CopyOutput(name);
     }
     #endregion
 }
 
-// @TODO: deprecate, left here only for backwards compatibility
+// Deprecated, left here only for backwards compatibility
+[ObsoleteAttribute("Use WorkerFactory class instead.", false)]
 public class BarracudaWorkerFactory : WorkerFactory
 {
     public enum Flags
@@ -137,13 +112,14 @@ public class BarracudaWorkerFactory : WorkerFactory
     }
 }
 
-// @TODO: make internal or remove completely. Left here for backwards compatibility.
+// Deprecated, left here only for backwards compatibility
+[ObsoleteAttribute("Use Tensor.ToRenderTexture method instead.", false)]
 public class BarracudaTextureUtils
 {
     public static void TensorToRenderTexture(Tensor x, RenderTexture target,
                                             int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f)
     {
-        new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels).TensorToRenderTexture(x, target, batch, fromChannel, scale, bias);
+        x.ToRenderTexture(target, batch, fromChannel, scale, bias);
     }
 
     /// <summary>
@@ -152,9 +128,7 @@ public class BarracudaTextureUtils
     public static RenderTexture TensorToRenderTexture(Tensor x,
                                                 int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f)
     {
-        var target = new RenderTexture(x.width, x.height, 0);
-        TensorToRenderTexture(x, target, batch, fromChannel, scale, bias);
-        return target;
+        return x.ToRenderTexture(batch, fromChannel, scale, bias);
     }
 }
 

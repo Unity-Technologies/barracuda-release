@@ -81,6 +81,7 @@ public class Layer
         Transpose = 202,
         Squeeze = 203,              // TODO: NOT IMPLEMENTED
         Unsqueeze = 204,            // TODO: NOT IMPLEMENTED
+        Gather = 205,
 
         Concat = 210,
         StridedSlice = 211,
@@ -116,6 +117,7 @@ public class Layer
         Ceil = 102,
         Clip = 103,
         Floor = 104,
+        Round = 105,                // TODO: NOT IMPLEMENTED
 
         Reciprocal = 110,
         Sqrt = 111,
