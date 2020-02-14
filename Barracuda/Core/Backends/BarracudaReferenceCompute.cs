@@ -97,32 +97,51 @@ public class ComputeTensorData : ITensorData
         Assert.IsTrue(offset + count <= data.Length);
 
         m_Buffer.SetData(data, offset, m_Offset, count);
-        #if UNITY_2018
+        m_AsyncDownloadSchedulingFrame = -1;
+        #if UNITY_2018_2_OR_NEWER
         m_AsyncDownloadRequested = false;
         #endif
     }
 
-    #if UNITY_2018
-    private bool m_AsyncDownloadRequested = false;
-    private AsyncGPUReadbackRequest m_AsyncDownloadRequest;
     public virtual bool ScheduleAsyncDownload(int count)
     {
-        if (!SystemInfo.supportsAsyncGPUReadback)
-            return true;
+        #if UNITY_2018_2_OR_NEWER
+        if (SystemInfo.supportsAsyncGPUReadback)
+            return WaitForAsyncReadback(count);
+        #endif
+
+        return WaitFor3Frames(count);
+    }
+
+    private int m_AsyncDownloadSchedulingFrame = -1;
+    private bool WaitFor3Frames(int count)
+    {
+        if (m_AsyncDownloadSchedulingFrame < 0)
+            m_AsyncDownloadSchedulingFrame = Time.frameCount;
+        var framesPassed = Time.frameCount - m_AsyncDownloadSchedulingFrame;
+        return framesPassed > 3;
+    }
+
+    #if UNITY_2018_2_OR_NEWER
+    private bool m_AsyncDownloadRequested = false;
+    private AsyncGPUReadbackRequest m_AsyncDownloadRequest;
+    private bool WaitForAsyncReadback(int count)
+    {
+        if (m_AsyncDownloadRequested)
+        {
+            if (m_AsyncDownloadRequest.hasError)
+                m_AsyncDownloadRequested = false;
+            else
+                m_AsyncDownloadRequest.Update();
+        }
 
         if (!m_AsyncDownloadRequested)
         {
-            m_AsyncDownloadRequest = AsyncGPUReadback.Request(m_Buffer);
+            m_AsyncDownloadRequest = AsyncGPUReadback.Request(m_Buffer, count * sizeof(float), m_Offset * sizeof(float));
             m_AsyncDownloadRequested = true;
         }
-        else
-            m_AsyncDownloadRequest.Update();
+
         return m_AsyncDownloadRequest.done;
-    }
-    #else
-    public virtual bool ScheduleAsyncDownload(int count)
-    {
-        return true;
     }
     #endif
 
@@ -136,15 +155,23 @@ public class ComputeTensorData : ITensorData
         Assert.IsTrue(GetMaxCount() >= count);
         count = Math.Min(GetMaxCount(), count);
 
-        #if UNITY_2018
+        m_AsyncDownloadSchedulingFrame = -1;
+        #if UNITY_2018_2_OR_NEWER
         if (m_AsyncDownloadRequested)
         {
             m_AsyncDownloadRequested = false;
-            m_AsyncDownloadRequest.WaitForCompletion();
-            Profiler.EndSample();
+            if (!m_AsyncDownloadRequest.done)
+                m_AsyncDownloadRequest.WaitForCompletion();
 
             if (!m_AsyncDownloadRequest.hasError)
-                return m_AsyncDownloadRequest.GetData<float>().ToArray();
+            {
+                var reqData = m_AsyncDownloadRequest.GetData<float>().ToArray();
+                if (reqData.Length >= count)
+                { // if we have retrieved enough data
+                    Profiler.EndSample();
+                    return reqData;
+                }
+            }
         }
         #endif
 

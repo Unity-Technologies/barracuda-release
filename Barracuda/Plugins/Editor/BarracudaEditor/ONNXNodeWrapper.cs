@@ -21,6 +21,10 @@ namespace Barracuda
         }
         public string OperatorType { get { return m_ONNXNode.OpType; } }
         public bool IsConstant { get { return OperatorType == "Constant"; } }
+        public bool IsTerminatorForProductOfShape { get { return OperatorType == "Reshape"; } }
+
+        // Outputs
+        public string[] Outputs { get { return m_ONNXNode.Output.ToArray(); }}
 
         // Inputs
         public int InputCount { get { return m_ONNXNode.Input.Count;  } }
@@ -30,16 +34,22 @@ namespace Barracuda
         public string Input2 { get { return GetRequiredInput(2); } }
         public string Input3 { get { return GetRequiredInput(3); } }
         public string Input4 { get { return GetRequiredInput(4); } }
+        public string Input5 { get { return GetRequiredInput(5); } }
+        public string Input6 { get { return GetRequiredInput(6); } }
         public string Input0Optional { get { return InputCount > 0 ? GetRequiredInput(0) : ""; } }
         public string Input1Optional { get { return InputCount > 1 ? GetRequiredInput(1) : ""; } }
         public string Input2Optional { get { return InputCount > 2 ? GetRequiredInput(2) : ""; } }
         public string Input3Optional { get { return InputCount > 3 ? GetRequiredInput(3) : ""; } }
         public string Input4Optional { get { return InputCount > 4 ? GetRequiredInput(4) : ""; } }
+        public string Input5Optional { get { return InputCount > 5 ? GetRequiredInput(5) : ""; } }
+        public string Input6Optional { get { return InputCount > 6 ? GetRequiredInput(6) : ""; } }
         public bool IsInput0Const { get { return IsInputConst(0); } }
         public bool IsInput1Const { get { return IsInputConst(1); } }
         public bool IsInput2Const { get { return IsInputConst(2); } }
         public bool IsInput3Const { get { return IsInputConst(3); } }
         public bool IsInput4Const { get { return IsInputConst(4); } }
+        public bool IsInput5Const { get { return IsInputConst(5); } }
+        public bool IsInput6Const { get { return IsInputConst(6); } }
         public bool AreAllInputsConst { get {
             for (var i = 0; i < InputCount; ++i)
                 if (!IsInputConst(i))
@@ -48,12 +58,21 @@ namespace Barracuda
         } }
 
         public int Input0Features { get { return m_ONNXModelTensors.variables[Input0].features; } }
+        public int Input1Features { get { return m_ONNXModelTensors.variables[Input1].features; } }
+        public int Input2Features { get { return m_ONNXModelTensors.variables[Input2].features; } }
+        public int Input3Features { get { return m_ONNXModelTensors.variables[Input3].features; } }
+        public int Input4Features { get { return m_ONNXModelTensors.variables[Input4].features; } }
+        public int Input5Features { get { return m_ONNXModelTensors.variables[Input5].features; } }
+        public int Input6Features { get { return m_ONNXModelTensors.variables[Input6].features; } }
         public int Input0Rank { get { return m_ONNXModelTensors.variables[Input0].rank; } }
+        public VariableTensor.Layout Input0Layout { get { return m_ONNXModelTensors.variables[Input0].layout; } }
         public Tensor Input0Constant(string onnxLayout, string name = "X") { return GetRequiredInputAsConstant(Input0, onnxLayout, name); }
         public Tensor Input1Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input1, onnxLayout, name); }
         public Tensor Input2Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input2, onnxLayout, name); }
         public Tensor Input3Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input3, onnxLayout, name); }
         public Tensor Input4Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input4, onnxLayout, name); }
+        public Tensor Input5Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input5, onnxLayout, name); }
+        public Tensor Input6Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input6, onnxLayout, name); }
         public Tensor Input1ConstantOptional(Tensor defaultValue, string onnxLayout, string name) { try { return GetRequiredInputAsConstant(Input1, onnxLayout, name); } catch (Exception) { return defaultValue; } }
         public Tensor Input2ConstantOptional(Tensor defaultValue, string onnxLayout, string name) { try { return GetRequiredInputAsConstant(Input2, onnxLayout, name); } catch (Exception) { return defaultValue; } }
         public Tensor Input3ConstantOptional(Tensor defaultValue, string onnxLayout, string name) { try { return GetRequiredInputAsConstant(Input3, onnxLayout, name); } catch (Exception) { return defaultValue; } }
@@ -62,6 +81,10 @@ namespace Barracuda
         public Tensor Input2ConstantOptional(TensorShape shape, float defaultValue, string onnxLayout, string name) { try { return GetRequiredInputAsConstant(Input2, onnxLayout, name); } catch (Exception) { return DefaultTensor(shape, defaultValue); } }
         public Tensor Input3ConstantOptional(TensorShape shape, float defaultValue, string onnxLayout, string name) { try { return GetRequiredInputAsConstant(Input3, onnxLayout, name); } catch (Exception) { return DefaultTensor(shape, defaultValue); } }
         public Tensor Input4ConstantOptional(TensorShape shape, float defaultValue, string onnxLayout, string name) { try { return GetRequiredInputAsConstant(Input4, onnxLayout, name); } catch (Exception) { return DefaultTensor(shape, defaultValue); } }
+        public Tensor Input1ConstantOptional(float defaultValue, string onnxLayout, string name) { return Input1ConstantOptional(new TensorShape(1, 1), defaultValue, onnxLayout, name); }
+        public Tensor Input2ConstantOptional(float defaultValue, string onnxLayout, string name) { return Input2ConstantOptional(new TensorShape(1, 1), defaultValue, onnxLayout, name); }
+        public Tensor Input3ConstantOptional(float defaultValue, string onnxLayout, string name) { return Input3ConstantOptional(new TensorShape(1, 1), defaultValue, onnxLayout, name); }
+        public Tensor Input4ConstantOptional(float defaultValue, string onnxLayout, string name) { return Input4ConstantOptional(new TensorShape(1, 1), defaultValue, onnxLayout, name); }
 
         // Attributes
         public float Alpha { get { return GetRequiredFloat("alpha"); } }

@@ -67,10 +67,10 @@ internal class BarracudaBackendsFactory
 
     public static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs = null, string[] trimOutputs = null, bool verbose = false)
     {
-        return CreateWorker(type, model, additionalOutputs, trimOutputs, verbose, compareAgainstType:type);
+        return CreateWorker(type, model, additionalOutputs, trimOutputs, verbose, compareAgainstType:type, differenceAsError:false);
     }
 
-    public static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs, string[] trimOutputs, bool verbose, WorkerFactory.Type compareAgainstType)
+    public static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs, string[] trimOutputs, bool verbose, WorkerFactory.Type compareAgainstType, bool differenceAsError)
     {
         type = ResolveAutoType(type);
         compareAgainstType = ResolveAutoType(compareAgainstType);
@@ -100,7 +100,7 @@ internal class BarracudaBackendsFactory
 
         if (compare)
             ops = new CompareOps(ops,
-                CreateOps(compareAgainstType, allocator, verbose));
+                CreateOps(compareAgainstType, allocator, verbose), differenceAsError);
 
         if (verbose)
             ops = new VerboseOps(ops);

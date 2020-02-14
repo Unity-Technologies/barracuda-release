@@ -1,5 +1,31 @@
 # Release notes
 
+## [0.6.0] - 2020-02-14
+- Performance: more Conv2D optimizations.
+- API: introduced WaitForCompletion yield instruction  to simplify asyncronous download of execution results from GPU to CPU.
+- ONNX: added optimization pass for non-variable parts of the execution graph by turning them into constants.
+- ONNX: fail hard when layer of unknown type is encountered during the model import. Use "Treat Errors as Warnings" flag in asset Inspector, if wish to override this behavior.
+- ONNX: added optimization pass for Tensorflow models (exported with tf2onnx) that removes excessive Tranpose layers.
+- ONNX: added correction of input layouts when Tensorflow models (exported with tf2onnx) do not follow ONNX specification.
+- ONNX: added stripping of trailing ":0" symbols from Tensorflow models (exported with tf2onnx).
+- ONNX: added support of Shape op with non-constant inputs. Fixes some cases with Upsample opset=9.
+- ONNX: added basic LSTM op support. Requires _h/_c inputs to be passed directly. Tested only on ML Agents models.
+- ONNX: added support for GroupNormalization by implementing special path for Shape followed by Reshape layer.
+- ONNX: fixed multi-batch PyTorch models with BatchNormalization & InstanceNormalization layers by cutting excessive weights.
+- ONNX: show warnings if BatchNormalization & InstanceNormalization weights do not match feature count from the previous layer.
+- ONNX: fixed support for tensors with rank below 4 in Tranpose and Slice layers.
+- ONNX: fixed incorrect defaults for RandomNormal, RandomUniform, RandomNormalLike and RandomUniformLike layers.
+- ONNX: silence Squeeze warning when "seq_length" is used.
+- TF: added FusedBatchNormV2 and FusedBatchNormV3 support.
+- Compute: asynchronous GPU readback now is enabled for Unity 2018.2 or later. Made several small fixes too.
+- Compute: implemented fallback when asynchronous GPU readback is not supported, by waiting for 3 frames to pass.
+- Fix: found incorrect Profiler block termination in Compute backend.
+- Fix: dangling buffer assert when CPU array buffers are used with fast CPU backend.
+- Fix: enabled Google Protobuf for all platforms as ML Agents rely on this package. Fixes building ML Agents on non-desktop platforms.
+- UI: separated constants from layers in model inspector UI. Makes it easier to understand the model.
+- UI: made model warnings more visible, added icon.
+- Docs: detailed that not only copy, but shared tensor data access can happen when using ITensorData.Download() and ITensorData.SharedAccess().
+
 ## [0.5.0] - 2020-01-29
 - Performance: added small optimizations for Dense layers on GPU.
 - API: added worker.CopyOutput() instead of worker.Fetch(). The new name better reflects the functionality.

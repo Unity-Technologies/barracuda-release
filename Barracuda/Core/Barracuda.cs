@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using UnityEngine; // CustomYieldInstruction
 using UnityEngine.Assertions;
 
 namespace Barracuda {
@@ -166,19 +167,21 @@ public interface ITensorData : IDisposable
     /// <summary>
     /// Schedule an asynchronous download from device memory.
     /// `count` is the number of element to readback.
-    /// return `true` if the request was successfully scheduled.
+    /// returns `false` until data from device arrives to CPU and is ready for access.
     /// </summary>
     bool ScheduleAsyncDownload(int count);
     /// <summary>
-    /// Return a copy of the data. This is a blocking call.
-    /// `count` is the number of element to readback.
-    /// Prefer a call to ScheduleAsyncDownload() before.
+    /// Returns an array filled with the values of a tensor.
+    /// Depending on the implementation and underlying device this array might be a copy or direct reference to the tensor values.
+    /// This is a blocking call, unless data from device was requested via `ScheduleAsyncDownload` beforehand and has already arrived.
+    /// `count` is the number of elements to readback. `count` can be less or equal to the number of elements in a specific tensor.
     /// </summary>
     float[] Download(int count);
     /// <summary>
-    /// Return a copy of the full shared tensorData,
-    /// and an offset where this tensorData data is starting.
-    /// Prefer a call to ScheduleAsyncDownload() before.
+    /// Returns an array filled with the values of multiple tenors that share the same tensorData on device.
+    /// This function outputs `offset` from the beginning of the array to location of values for specific tensor. `offset` paramater is specified in float elements.
+    /// Depending on the implementation and underlying device this array might be a copy or direct reference to tensor values.
+    /// This is a blocking call, unless data from device was requested via `ScheduleAsyncDownload` beforehand and has already arrived.
     /// </summary>
     float[] SharedAccess(out int offset);
     /// <summary>
@@ -325,10 +328,11 @@ public class WorkerFactory
     /// `trimOutputs` are the outputs not discard even if they are specified by the model.
     /// `verbose` will log scheduling of layers execution to the console.
     /// `compareAgainstType` if different than `type` model will be run on those two backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// `differenceAsError` if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise.
     /// </summary>
-    public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, bool verbose, Type compareAgainstType)
+    public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, bool verbose, Type compareAgainstType, bool differenceAsError=false)
     {
-        return BarracudaBackendsFactory.CreateWorker(type, model, additionalOutputs, trimOutputs, verbose, compareAgainstType);
+        return BarracudaBackendsFactory.CreateWorker(type, model, additionalOutputs, trimOutputs, verbose, compareAgainstType, differenceAsError);
     }
 
     /// <summary>
@@ -387,10 +391,11 @@ public class WorkerFactory
     /// `model` is the associated model. See ModelLoader.cs.
     /// `verbose` will log scheduling of layers execution to the console.
     /// `compareAgainstType` if different than `type` model will be run on those two backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// `differenceAsError` if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise.
     /// </summary>
-    public static IWorker CreateWorker(Type type, Model model, bool verbose, Type compareAgainstType)
+    public static IWorker CreateWorker(Type type, Model model, bool verbose, Type compareAgainstType, bool differenceAsError=false)
     {
-        return CreateWorker(type, model, additionalOutputs:null, trimOutputs:null, verbose, compareAgainstType);
+        return CreateWorker(type, model, additionalOutputs:null, trimOutputs:null, verbose, compareAgainstType, differenceAsError);
     }
 
     /// <summary>
@@ -482,6 +487,36 @@ public class WorkerFactory
     public static Type ValidateType(Type type)
     {
         return BarracudaBackendsFactory.ValidateType(type);
+    }
+}
+
+/// <summary>
+/// Suspends the coroutine execution until worker has completed execution on a device and
+/// contents of the specified tensor are downloaded to the main CPU memory.
+/// `WaitForCompletion` is not necessary and should NOT be used, unless tensor contents are accessed on CPU!
+/// `WaitForCompletion` can only be used with a `yield` statement in coroutines.
+/// </summary>
+public class WaitForCompletion : CustomYieldInstruction
+{
+    private Tensor m_Tensor;
+
+    public override bool keepWaiting
+    {
+        get
+        {
+            bool cpuCacheIsReady = m_Tensor.PrepareCacheForAccess(blocking:false);
+            return !cpuCacheIsReady;
+        }
+    }
+
+    /// <summary>
+    /// Suspends the coroutine execution until worker has completed execution on a device and
+    /// contents of the specified tensor are downloaded to the main CPU memory.
+    /// `tensor` that will be downloaded once worker execution is finished.
+    /// </summary>
+    public WaitForCompletion(Tensor tensor)
+    {
+        m_Tensor = tensor;
     }
 }
 

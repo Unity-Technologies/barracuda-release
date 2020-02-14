@@ -55,7 +55,8 @@ public class TestSet
         if (rawTestSet != null)
             return null;
 
-        return jsonTestSet.outputs[idx].name;
+        string name = jsonTestSet.outputs[idx].name;
+        return name.EndsWith(":0") ? name.Remove(name.Length - 2) : name;
     }
 
     public int GetInputCount()
@@ -71,7 +72,8 @@ public class TestSet
         if (rawTestSet != null)
             return "";
 
-        return jsonTestSet.inputs[idx].name;
+        string name = jsonTestSet.inputs[idx].name;
+        return name.EndsWith(":0") ? name.Remove(name.Length - 2) : name;
     }
 
     public float[] GetInputData(int idx = 0)
@@ -154,6 +156,7 @@ public class TestSet
 
         var res = new Tensor(tensorShape, data);
         res.name = GetInputName(idx);
+        res.name = res.name.EndsWith(":0") ? res.name.Remove(res.name.Length - 2) : res.name;
 
         return res;
     }
@@ -175,6 +178,7 @@ public class TestSet
         var res = new Tensor(batchCount, shape[1], shape[2], shape[3],
             new SharedArrayTensorData(array, fromBatch * shape[1] * shape[2] * shape[3]));
         res.name = GetOutputName(idx);
+        res.name = res.name.EndsWith(":0") ? res.name.Remove(res.name.Length - 2) : res.name;
 
         return res;
     }

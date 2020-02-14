@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.Assertions;
-using UnityEngine.Profiling;
 using System;
 using System.Linq;
 using System.Collections.Generic;
@@ -151,19 +150,24 @@ public sealed class ComputeKernelLibrary
                 StrictAnd(K.kernelWidth == 3 && K.kernelHeight == 3 && stride[0] == 1 && stride[1] == 1 && h % 2 == 0 && w % 2 == 0),
                 (Application.platform == RuntimePlatform.Android) || (Application.platform == RuntimePlatform.IPhonePlayer) || (SystemInfo.graphicsDeviceVendor.Contains("Intel"))
             ),
+            new Entry("Conv2DKernelKxK_StrictC16K64_T8x8_R8x8",
+                Int3(IDivC(k, 8), IDivC(w*h, 8)),      BigO(X.channels) * 1.05f / 4,
+                stride[0] == 1 && stride[1] == 1 && k % 64 == 0 && X.channels % 16 == 0 && n == 1 && w%4 == 0 && ComputeInfo.supportsComputeSharedMemory,
+                (Application.platform == RuntimePlatform.PS4) || (Application.platform == RuntimePlatform.XboxOne)
+            ),
             new Entry("Conv2DKernel1x1_StrictC16K64_T16x16_R4x4",
-                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),                 BigO(X.channels) * 0.8f / 4,
+                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),    BigO(X.channels) * 0.8f / 4,
                 K.kernelWidth == 1 && K.kernelHeight == 1 &&
                 stride[0] == 1 && stride[1] == 1 &&
                 k % 64 == 0 && X.channels % 16 == 0 &&
                 ComputeInfo.supportsComputeSharedMemory
             ),
             new Entry("Conv2DKernelKxK_StrictC16K64_T16x16_R4x4",
-                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),                 BigO(X.channels) * 0.9f / 4,
+                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),    BigO(X.channels) * 0.9f / 4,
                 k % 64 == 0 && X.channels % 16 == 0 && ComputeInfo.supportsComputeSharedMemory
             ),
             new Entry("Conv2DKernelKxK_T16x16_R4x4",
-                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),                 BigO(X.channels) * 1.0f / 4,
+                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),    BigO(X.channels) * 1.0f / 4,
                 k >= 16 && c >= 16 && ComputeInfo.supportsComputeSharedMemory
             ),
 //            new Entry("Conv2DKernelKxK_T16x16_R4x4",
@@ -179,12 +183,12 @@ public sealed class ComputeKernelLibrary
                 K.kernelCount % 32 == 0 && X.channels % 32 == 0 && ComputeInfo.supportsComputeSharedMemory
             ),
             new Entry("Conv2D_RegisterBlock4x2",
-                Int3(K.kernelCount, w/4, h/2),                      BigO(O.batch * X.channels) / 2,
+                Int3(K.kernelCount, w/4, h/2),                      BigO(O.batch * X.channels) * 1.1f / 2,
                 StrictAnd(
                     w % 4 == 0 && h % 2 == 0)
             ),
             new Entry("Conv2D",
-                Int3(k, w, h),                          BigO(O.batch * X.channels)
+                Int3(k, w, h),                                             BigO(O.batch * X.channels)
             ),
         };
     }
@@ -519,7 +523,7 @@ public struct ComputeKernel
                 continue;
 
             // first time we encounter a kernel with device priority
-            if (!foundKernelWithDevicePriority && entryDevicePriority) 
+            if (!foundKernelWithDevicePriority && entryDevicePriority)
             {
                 bestScore = score;
                 bestEntry = entrees[i];
@@ -626,7 +630,7 @@ public class ComputeOps : ReferenceComputeOps
         SetTensor(fn_w, "B", B);
 
         fn_w.shader.SetInts("_Pad", pad);
-         
+
         var OW = Dispatch(fn_w, O.shape, Kw.kernelCount, IDivC(O.width, 2), IDivC(O.height, 2));
         return OW;
     }

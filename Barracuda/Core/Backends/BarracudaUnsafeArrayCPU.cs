@@ -3,7 +3,6 @@ using UnityEngine.Assertions;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using UnityEngine.Profiling;
 
 namespace Barracuda {
 
@@ -124,7 +123,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             var asSharedArray = X.tensorOnDevice as SharedArrayTensorData;
             var asArray = X.tensorOnDevice as ArrayTensorData;
             if (asSharedArray != null) X.CastOnDevice(new UnsafeArrayTensorData(asSharedArray)); // adopt unsafe array without copy
-            else if (asArray != null) X.CastOnDevice(new UnsafeArrayTensorData(asArray)); // adopt unsafe array without copy
+            else if (asArray != null) X.PinToDeviceAndDownloadFromIt(new UnsafeArrayTensorData(asArray)); // adopt unsafe array without copy
             else
                 X.PinToDeviceAndUploadToIt(new UnsafeArrayTensorData(X.shape)); // device is uncompatible, create new array and upload
         }
@@ -727,12 +726,6 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                     oPtr, O.flatHeight, O.flatWidth, 32, xTranspose, yTranspose);
             }
         }
-
-        Profiler.EndSample ();
-
-        //O.PrintDataPart(32, "O");
-        //Z.PrintDataPart(32, "Z");
-        //CompareOps.CheckSame(O, Z, "MatMul");
 
         return O;
     }

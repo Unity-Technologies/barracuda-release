@@ -39,22 +39,26 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
 public class NNModelEditor : Editor
 {
     private Model m_Model;
-    private List<string> m_Inputs;
-    private List<string> m_InputsDesc;
-    private List<string> m_Outputs;
-    private List<string> m_OutputsDesc;
-    private List<string> m_Memories;
-    private List<string> m_MemoriesDesc;
-    private List<string> m_Layers;
-    private List<string> m_LayersDesc;
-    private List<string> m_Warnings;
-    private List<string> m_WarningsDesc;
-    private string m_NumWeights;
+    private List<string> m_Inputs = new List<string>();
+    private List<string> m_InputsDesc = new List<string>();
+    private List<string> m_Outputs = new List<string>();
+    private List<string> m_OutputsDesc = new List<string>();
+    private List<string> m_Memories = new List<string>();
+    private List<string> m_MemoriesDesc = new List<string>();
+    private List<string> m_Layers = new List<string>();
+    private List<string> m_LayersDesc = new List<string>();
+    private List<string> m_Constants = new List<string>();
+    private List<string> m_ConstantsDesc = new List<string>();
+    private List<string> m_Warnings = new List<string>();
+    private List<string> m_WarningsDesc = new List<string>();
+    private string m_NumEmbeddedWeights;
+    private string m_NumConstantWeights;
     private Vector2 m_WarningsScrollPosition = Vector2.zero;
     private Vector2 m_InputsScrollPosition = Vector2.zero;
     private Vector2 m_OutputsScrollPosition = Vector2.zero;
     private Vector2 m_MemoriesScrollPosition = Vector2.zero;
     private Vector2 m_LayerScrollPosition = Vector2.zero;
+    private Vector2 m_ConstantScrollPosition = Vector2.zero;
     private const float k_Space = 5f;
 
     void OnEnable()
@@ -85,7 +89,19 @@ public class NNModelEditor : Editor
         }
         if (allKnownShapes)
         {
-            m_OutputsDesc = m_Model.outputs.Select(i => { TensorShape shape; bool sucess = ModelAnalyzer.TryGetOutputTensorShape(m_Model, inputShapes, i, out shape); return sucess ? $"shape: {shape.ToString()}" : "shape: (-1,-1,-1,-1)"; }).ToList();
+            m_OutputsDesc = m_Model.outputs.Select(i => {
+                string output = "(-1,-1,-1,-1)";
+                try
+                {
+                    TensorShape shape;
+                    if (ModelAnalyzer.TryGetOutputTensorShape(m_Model, inputShapes, i, out shape))
+                        output = shape.ToString();
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"Unexpected error while evaluating model output {i}. {e}");
+                }
+                return $"shape: {output}"; }).ToList();
         }
         else
         {
@@ -95,9 +111,16 @@ public class NNModelEditor : Editor
         m_Memories = m_Model.memories.Select(i => i.input).ToList();
         m_MemoriesDesc = m_Model.memories.Select(i => $"shape:{i.shape.ToString()} output:{i.output}").ToList();
 
-        m_Layers = m_Model.layers.Select(i => i.type.ToString()).ToList();
-        m_LayersDesc = m_Model.layers.Select(i => i.ToString()).ToList();
-        m_NumWeights = m_Model.layers.Sum(l => (long)l.weights.Length).ToString();
+        var layers = m_Model.layers.Where(i => i.type != Layer.Type.Load);
+        var constants = m_Model.layers.Where(i => i.type == Layer.Type.Load);
+
+        m_Layers        = layers.Select(i => i.type.ToString()).ToList();
+        m_LayersDesc    = layers.Select(i => i.ToString()).ToList();
+        m_Constants     = constants.Select(i => i.type.ToString()).ToList();
+        m_ConstantsDesc = constants.Select(i => i.ToString()).ToList();
+
+        m_NumEmbeddedWeights = layers.Sum(l => (long)l.weights.Length).ToString();
+        m_NumConstantWeights = constants.Sum(l => (long)l.weights.Length).ToString();
 
         m_Warnings = m_Model.Warnings.Select(i => i.LayerName).ToList();
         m_WarningsDesc = m_Model.Warnings.Select(i => i.Message).ToList();
@@ -113,17 +136,24 @@ public class NNModelEditor : Editor
         GUILayout.Label($"Version: {m_Model.IrVersion}");
         GUILayout.Label($"Producer Name: {m_Model.ProducerName}");
 
+        if(m_Warnings.Any())
+        { 
+            ListUIHelper($"Warnings {m_Warnings.Count.ToString()}", m_Warnings, m_WarningsDesc, ref m_WarningsScrollPosition);
+            EditorGUILayout.HelpBox("Model contains warnings. Behavior might be incorrect", MessageType.Warning, true);
+        }
         ListUIHelper($"Inputs ({m_Inputs.Count.ToString()})", m_Inputs, m_InputsDesc, ref m_InputsScrollPosition);
         ListUIHelper($"Outputs ({m_Outputs.Count.ToString()})", m_Outputs, m_OutputsDesc, ref m_OutputsScrollPosition);
         ListUIHelper($"Memories ({m_Memories.Count.ToString()})", m_Memories, m_MemoriesDesc, ref m_MemoriesScrollPosition);
-        ListUIHelper($"Layers ({m_Layers.Count.ToString()} using {m_NumWeights} weights)", m_Layers, m_LayersDesc, ref m_LayerScrollPosition);
-        ListUIHelper($"Warnings {m_Warnings.Count.ToString()}", m_Warnings, m_WarningsDesc, ref m_WarningsScrollPosition);
+        ListUIHelper($"Layers ({m_Layers.Count.ToString()} using {m_NumEmbeddedWeights} embedded weights)", m_Layers, m_LayersDesc, ref m_LayerScrollPosition);
+        ListUIHelper($"Constants ({m_Constants.Count.ToString()} using {m_NumConstantWeights} weights)", m_Constants, m_ConstantsDesc, ref m_ConstantScrollPosition);
     }
 
     private static void ListUIHelper(string sectionTitle, IReadOnlyList<string> names, IReadOnlyList<string> descriptions, ref Vector2 scrollPosition)
     {
         int n = names.Count();
         Debug.Assert(descriptions.Count == n);
+        if (descriptions.Count < n)
+            return;
 
         GUILayout.Space(k_Space);
         GUILayout.Label(sectionTitle, EditorStyles.boldLabel);

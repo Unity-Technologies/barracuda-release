@@ -333,6 +333,11 @@ known_patterns = {
     repr(['StridedSlice'])                                      : 'StridedSlice',
     repr(['Squeeze'])                                           : 'Squeeze',
     repr(['ExpandDims'])                                        : 'ExpandDims',
+
+    repr(['FusedBatchNorm'])                                    : 'FusedBatchNorm',
+    repr(['FusedBatchNormV2'])                                  : 'FusedBatchNorm',
+    repr(['FusedBatchNormV3'])                                  : 'FusedBatchNorm',
+
     # TODO: FusedResizeAndPadConv2D
 }
 
@@ -457,7 +462,16 @@ transform_patterns = {
         Struct(
             op    = 'BatchNormalization',
             input = [i for i in inputs] +
+                order_by([t.name for t in tensors], ['gamma', 'beta', 'mean', 'variance', 'epsilon']),
+        ),
+    'FusedBatchNorm' : lambda nodes, inputs, tensors, _:
+        Struct(
+            op    = 'FusedBatchNorm',
+            input = [i for i in inputs] +
                 order_by([t.name for t in tensors], ['gamma', 'beta', 'mean', 'variance']),
+            epsilon = get_attr(by_op(nodes, 'FusedBatchNorm') or
+                               by_op(nodes, 'FusedBatchNormV2') or 
+                               by_op(nodes, 'FusedBatchNormV3'), 'epsilon'),
         ),
     'InstanceNormalization_ByTensorName' : lambda nodes, inputs, tensors, _:
         Struct(
@@ -582,6 +596,7 @@ def get_attr(node, attr_name, default=None):
     return default
 
 def get_epsilon(layer):
+    print("EPSILON =", get_attr(layer, 'epsilon'))
     return get_attr(layer, 'epsilon', default=0.001) # default epsilon taken from tf.layers.batch_normalization
 
 def get_layer_rank(layer):

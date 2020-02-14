@@ -20,22 +20,22 @@ public static class TensorExtensions
             X[i] = i;
     }
 
-    static public void TestInit2(this Tensor X, int n = -1)
+    static public void TestInitCos(this Tensor X, int n = -1, float offset = 0.0f)
     {
         if (n < 0)
             n = X.length;
         n = Math.Min(n, X.length);
         for (int i = 0; i < n; ++i)
-            X[i] = 0.1f;
+            X[i] = Mathf.Cos(i + offset);
     }
 
-    static public void TestInitCos(this Tensor X, int n = -1)
+    static public void TestInitValue(this Tensor X, float value=0.1f, int n = -1)
     {
         if (n < 0)
             n = X.length;
         n = Math.Min(n, X.length);
         for (int i = 0; i < n; ++i)
-            X[i] = Mathf.Cos(i);
+            X[i] = value;
     }
 
     static public float[] AsFloats(this Tensor x)

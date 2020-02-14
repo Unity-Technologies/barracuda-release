@@ -88,7 +88,7 @@ public class ArrayTensorData : ITensorData
     public override string ToString()
     {
         return string.Format("(CPU array: {0} max: {1})",
-            GetHashCode(), m_Array.Length);
+            GetHashCode(), m_Array?.Length);
     }
 }
 

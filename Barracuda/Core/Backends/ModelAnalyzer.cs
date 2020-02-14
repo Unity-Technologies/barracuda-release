@@ -242,7 +242,6 @@ public class ModelAnalyzer
                     size = shapesByName[l.inputs[1]].ToArray();
 
                 Assert.AreEqual(size.Length, 4);
-                // pool size is treated as reshape coefficient here
                 O = X.Reshape(size);
             }
             else if (
@@ -441,12 +440,13 @@ public class ModelAnalyzer
     static public string[] FindBrokenLinks(Model model)
     {
         var globalInputsByName = model.inputs.ToDictionary(i => i.name, i => true);
+        var memoryInputsByName = model.memories.ToDictionary(i => i.input, i => true);
         var layersByName = model.layers.ToDictionary(i => i.name, i => i);
         var brokenLinks = new HashSet<string>();
 
         foreach (var layer in model.layers)
             foreach (var i in layer.inputs)
-                if (!layersByName.ContainsKey(i) && !globalInputsByName.ContainsKey(i))
+                if (!layersByName.ContainsKey(i) && !globalInputsByName.ContainsKey(i) && !memoryInputsByName.ContainsKey(i))
                     brokenLinks.Add(i);
         return brokenLinks.ToArray();
     }

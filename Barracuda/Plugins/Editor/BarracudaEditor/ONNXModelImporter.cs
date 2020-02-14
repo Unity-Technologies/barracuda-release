@@ -22,8 +22,14 @@ namespace Barracuda
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
-        public bool patchReshapeToSupportBatchSize = true;
-        public bool patchRemoveTrailingTFExportCharacters = false;
+        public bool forceArbitraryBatchSize = true;
+        public bool treatErrorsAsWarnings = false;
+        // TF2ONNX known issue: (as of 1.5.4)
+        // - Conv are framed with Transposes as long as the NCHW flag is not set
+        //      (note this seems that it's going to be fixed https://github.com/onnx/tensorflow-onnx/pull/796)
+        // - Tensorflow appends :0 to all node names
+        bool fixTF2ONNXExportIssues = false;
+
         private const string iconName = "ONNXModelIcon";
 
         private readonly Dictionary<string, ONNXTensor> m_OverrideGlobalInputs = new Dictionary<string, ONNXTensor>()
@@ -43,6 +49,8 @@ namespace Barracuda
         // Shortcuts
         private Dictionary<string, ONNXTensor> constantTensors { get { return m_ModelTensors.constants; } }
         private Dictionary<string, VariableTensor> variableTensors { get { return m_ModelTensors.variables; } }
+        private Dictionary<string, string> lstmInputs = new Dictionary<string, string>();
+        private Dictionary<string, string> lstmOutputs = new Dictionary<string, string>();
         private void Add(string opType, Action<ModelBuilder, ONNXNodeWrapper> opImportAction)
         {
             m_NodeImporters.Add(opType, opImportAction);
@@ -61,35 +69,95 @@ namespace Barracuda
             Add("Reshape", (net, node)  => {
                 long[] onnxShape;
                 if (node.InputCount > 1) // Reshape-5
+                {
                     onnxShape = node.Input1Constant(onnxLayout:"C", name:"shape").AsLongs();
+                    var onnxRank = onnxShape.Length;
+
+                    var shapeLike = variableTensors[node.Input1].productOfShape;
+                    if (!IsEmpty(shapeLike) &&
+                        variableTensors[shapeLike].rank == onnxRank &&
+                        ONNXLayout.CanSymbolicShapeBeUsedWithReshapeLike(onnxShape, node.Input0Features))
+                    {
+                        // special case of Shape followed by Reshape
+                        net.Reshape(node.Name, node.Input0, shapeLike);
+                        Output(node, rank:onnxShape.Length); // stop propagating productOfShape further
+                        return;
+                    }
+                }
                 else // Reshape-1
                     onnxShape = node.Shape;
 
                 if (node.IsInput0Const)
-                { // reshape constant source tensor and store it as the new constant
+                {
+                    // reshape constant source tensor and store it as the new constant
                     var reshapedTensor = constantTensors[node.Input0].Reshape(onnxShape);
                     Const(node, reshapedTensor);
                 }
                 else
                 {
                     var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "NCHW");
-                    if (patchReshapeToSupportBatchSize)
-                        symbolicShape[0] = 0; // force keep batch size
+                    bool containsNoVariableDimensions = Array.IndexOf(symbolicShape, -1) == -1;
+                    if (containsNoVariableDimensions && forceArbitraryBatchSize)
+                        symbolicShape[0] = -1; // force arbitrary batch size
                     net.Reshape(node.Name, node.Input0, symbolicShape);
+                    
+                    // Change temporary reverted
+                    //Output(node, symbolicShape[3], rank:symbolicShape.Length);
+                    //if (symbolicShape[3] == -1)
+                    //    Warn(net, node, $"Reshape with unknown feature count is not supported at the moment.");
                     Output(node, rank:symbolicShape.Length);
                 }
             });
             Add("Shape", (net, node)    => {
-                // @TODO: dynamic implementation that would return real shape during execution of the model
-                if (!node.IsInput0Const)
-                    throw new OnnxLayerImportException(
-                        $"Currently only constant inputs for node of type {node.OperatorType} are supported. Instead input of {node.Name} is pointing to non-constant node {node.Input0}.");
+                float[] shapeValuesAsFloats;
+                if (node.IsInput0Const)
+                {
+                    shapeValuesAsFloats = constantTensors[node.Input0].shape.Select(x => (float)x).ToArray();
+                }
+                else
+                {
+                    switch (node.Input0Rank)
+                    {
+                        default:
+                        case 4: // NCHW
+                        case 3: // NCW
+                        case 2: // NC
+                            // @TODO: dynamic implementation that would return real shape during execution of the model
+                            //
+                            // meanwhile at import time we assume -1 for the spatial dimensions
+                            // NOTE: this assumption works for common Upsample opset=9 case:
+                            //     Upsample.scales = (shape.hw * constant) / shape.hw
+                            // however this would not work for potential (opset=10) cases like:
+                            //     Resize.size = shape.hw + constant
+
+                            // stored in ONNX layout
+                            var shapeWithChannelsFirst = new[] { -1f, (float)node.Input0Features }; // NC
+                            var fillSpatialDimensionsWithUnknown = -1f;
+                            var numberOfSpatialDimensions = node.Input0Rank - 2;
+                            var shapeFollowedWithSpatialDimensions = Enumerable.Repeat(fillSpatialDimensionsWithUnknown, numberOfSpatialDimensions); // fill with -1
+                            shapeValuesAsFloats = shapeWithChannelsFirst.Concat(shapeFollowedWithSpatialDimensions).ToArray();
+                            break;
+                        case 1: // C
+                            shapeValuesAsFloats = new[] {(float)node.Input0Features};
+                            break;
+                        case 0: // scalar
+                            shapeValuesAsFloats = new[] {0f};
+                            break;
+                    }
+                }
+
+                var shapeLength = shapeValuesAsFloats.Length;
+                Debug.Assert(shapeLength == node.Input0Rank);
 
                 var shapeTensor = new ONNXTensor(
-                    data:new Tensor(4, 1, new[] { -1f, (float)node.Input0Rank, -1f, -1f }),
-                    onnxShape:new [] { 4L });
+                    // NOTE: stored in single rank ONNX layout
+                    // with data in the 1st dimension
+                    // thus `shapeLength` specifies the length of the 1st dimension
+                    data:new Tensor(shapeLength, 0, shapeValuesAsFloats),
+                    onnxShape:new [] { (long)shapeLength });
+
                 Const(node, shapeTensor);
-                Output(node, rank:1);
+                Output(node, features:shapeLength, productOfShape:node.Input0);
             });
             Add("Unsqueeze", (net, node) => {
                 if (node.IsInput0Const)
@@ -201,6 +269,11 @@ namespace Barracuda
                     onnxSteps[axis]  = steps[i];
                 }
 
+                // indices, not shape so need to 0 pad to transpose correctly (and not 1 pad like TensorShape)
+                Array.Resize(ref onnxStarts, 4);
+                Array.Resize(ref onnxEnds, 4);
+                Array.Resize(ref onnxSteps, 4);
+
                 if (node.IsInput0Const)
                 {
                     var slicedTensor = constantTensors[node.Input0].Slice(
@@ -235,11 +308,101 @@ namespace Barracuda
             Add("OneHot", (net, node) => {
                 node.UnsupportedAttribute("axis", -1);
 
-                var defaultOffOn = new Tensor(1,1,1,2, new float[] {0, 1});
+                var defaultOffOn = new Tensor(2, 0, new float[] {0, 1});
 
                 var depth = (int)node.Input1Constant(onnxLayout:"C", name:"depth")[0];
                 var offon = node.Input2ConstantOptional(defaultOffOn, onnxLayout:"C", name:"values");
                 net.OneHot(node.Name, node.Input0, depth, (int)offon[1], (int)offon[0]);
+            });
+
+            // LSTM
+
+            //    - it = f(Xt*Wi + Ht_1*Ri + Wbi + Rbi)
+            //    - ft = f(Xt*Wf + Ht_1*Rf + Wbf + Rbf)
+            //    - ct = g(Xt*Wc + Ht_1*Rc + Wbc + Rbc), c means j in our formula
+            //    - Ct =   ft . Ct_  + it . ct
+            //    - ot = f(Xt*Wo + Ht_1*Ro + Wbo + Rbo)
+            //    - Ht =   ot . h(Ct)
+
+            Add("LSTM", (net, node) =>
+            {
+                var W = node.Input1Constant(onnxLayout: "RKC", name: "W");
+                var R = node.Input2Constant(onnxLayout: "RKC", name: "R");
+                var B = node.Input3Constant(onnxLayout: "RC", name: "B");
+
+                // gate order [iofj]
+
+                var ops = new ReferenceCPUOps();
+                var w_i = ops.StridedSlice(W, new[] {0,0,0,0}, new[] {W.batch,1,1,W.channels/4 }, new[] {1, 1, 1, 1});
+                var w_o = ops.StridedSlice(W, new[] {0,0,0,W.channels/4}, new[] {W.batch,1,1,2*W.channels/4 }, new[] {1, 1, 1, 1});
+                var w_f = ops.StridedSlice(W, new[] {0,0,0,2*W.channels/4}, new[] {W.batch,1,1,3*W.channels/4 }, new[] {1, 1, 1, 1});
+                var w_j = ops.StridedSlice(W, new[] {0,0,0,3*W.channels/4}, new[] {W.batch,1,1,4*W.channels/4 }, new[] {1, 1, 1, 1});
+
+                var r_i = ops.StridedSlice(R, new[] {0,0,0,0}, new[] {R.batch,1,1,R.channels/4 }, new[] {1, 1, 1, 1});
+                var r_o = ops.StridedSlice(R, new[] {0,0,0,R.channels/4}, new[] {R.batch,1,1,2*R.channels/4 }, new[] {1, 1, 1, 1});
+                var r_f = ops.StridedSlice(R, new[] {0,0,0,2*R.channels/4}, new[] {R.batch,1,1,3*R.channels/4 }, new[] {1, 1, 1, 1});
+                var r_j = ops.StridedSlice(R, new[] {0,0,0,3*R.channels/4}, new[] {R.batch,1,1,4*R.channels/4 }, new[] {1, 1, 1, 1});
+
+                var wb_i = ops.StridedSlice(B, new[] {0,0,0,0}, new[] {1,1,1,B.channels/8 }, new[] {1, 1, 1, 1});
+                var wb_o = ops.StridedSlice(B, new[] {0,0,0,B.channels/8}, new[] {1,1,1,2*B.channels/8 }, new[] {1, 1, 1, 1});
+                var wb_f = ops.StridedSlice(B, new[] {0,0,0,2*B.channels/8}, new[] {1,1,1,3*B.channels/8 }, new[] {1, 1, 1, 1});
+                var wb_j = ops.StridedSlice(B, new[] {0,0,0,3*B.channels/8}, new[] {1,1,1,4*B.channels/8 }, new[] {1, 1, 1, 1});
+
+                var rb_i = ops.StridedSlice(B, new[] {0,0,0,4*B.channels/8}, new[] {1,1,1,5*B.channels/8 }, new[] {1, 1, 1, 1});
+                var rb_o = ops.StridedSlice(B, new[] {0,0,0,5*B.channels/8}, new[] {1,1,1,6*B.channels/8 }, new[] {1, 1, 1, 1});
+                var rb_f = ops.StridedSlice(B, new[] {0,0,0,6*B.channels/8}, new[] {1,1,1,7*B.channels/8 }, new[] {1, 1, 1, 1});
+                var rb_j = ops.StridedSlice(B, new[] {0,0,0,7*B.channels/8}, new[] {1,1,1,8*B.channels/8 }, new[] {1, 1, 1, 1});
+
+
+                var memSize = r_i.flatHeight;
+
+                var baseLSTMName = ResolveLstmInputName(node);
+                var initial_h = $"{baseLSTMName}_h";
+                var initial_c = $"{baseLSTMName}_c";
+
+                var baseLSTMOutputName = ResolveLstmOutputName(node);
+                var output_h = $"{baseLSTMOutputName}_h";
+                var output_c = $"{baseLSTMOutputName}_c";
+
+
+                var i_mad_w = net.Dense($"{node.Name}_bc_i_mad_w", node.Input0, w_i, wb_i);
+                var i_mad_r = net.Dense($"{node.Name}_bc_i_mad_r", initial_h, r_i, rb_i);
+                var i_mad = net.Add($"{node.Name}_bc_i_mad", new [] {i_mad_w, i_mad_r});
+
+                var j_mad_w = net.Dense($"{node.Name}_bc_j_mad_w", node.Input0, w_j, wb_j);
+                var j_mad_r = net.Dense($"{node.Name}_bc_j_mad_r", initial_h, r_j, rb_j);
+                var j_mad = net.Add($"{node.Name}_bc_j_mad", new [] {j_mad_w, j_mad_r});
+
+                var f_mad_w = net.Dense($"{node.Name}_bc_f_mad_w", node.Input0, w_f, wb_f);
+                var f_mad_r = net.Dense($"{node.Name}_bc_f_mad_r", initial_h, r_f, rb_f);
+                var f_mad = net.Add($"{node.Name}_bc_f_mad", new [] {f_mad_w, f_mad_r});
+
+                var o_mad_w = net.Dense($"{node.Name}_bc_o_mad_w", node.Input0, w_o, wb_o);
+                var o_mad_r = net.Dense($"{node.Name}_bc_o_mad_r", initial_h, r_o, rb_o);
+                var o_mad = net.Add($"{node.Name}_bc_o_mad", new [] {o_mad_w, o_mad_r});
+
+                var i = net.Sigmoid($"{node.Name}_bc_i_sigmoid", i_mad);
+                var j = net.Tanh($"{node.Name}_bc_j_tanh", j_mad);
+                var f = net.Sigmoid($"{node.Name}_bc_f_sigmoid", f_mad);
+                var o = net.Sigmoid($"{node.Name}_bc_o_sigmoid", o_mad);
+
+                var state_c_mul = net.Mul($"{node.Name}_bc_state_c_mul", new[] {initial_c, f.name});
+                var i_j_mul = net.Mul($"{node.Name}_bc_i_j_mul", new[] {i, j});
+                var state_c = net.Add(output_c, new[] {state_c_mul, i_j_mul});
+                var state_c_tanh = net.Tanh($"{node.Name}_bc_state_c_tanh", state_c);
+                var state_h = net.Mul(output_h, new[] {o, state_c_tanh});
+
+                net.Identity(node.Outputs[0], state_h);
+                net.Identity(node.Outputs[1], state_h);
+                net.Identity(node.Outputs[2], state_c);
+
+                net.Memory(initial_c, state_c, new TensorShape(-1,1,1,memSize));
+                net.Memory(initial_h, state_h, new TensorShape(-1,1,1,memSize));
+
+                Output(node.Outputs[0], features:wb_o.channels, rank:2);
+                Output(node.Outputs[1], features:wb_o.channels, rank:2);
+                Output(node.Outputs[2], features:wb_o.channels, rank:2);
+
             });
 
             // Activation ops
@@ -266,7 +429,22 @@ namespace Barracuda
             Add("Ceil", (net, node)     => { net.Ceil(node.Name, node.Input0); });
             Add("Floor", (net, node)    => { net.Floor(node.Name, node.Input0); });
             Add("Round", (net, node)    => { net.Round(node.Name, node.Input0); });
-            Add("Clip", (net, node)     => { net.Clip(node.Name, node.Input0, node.MinOptional(float.MinValue),  node.MaxOptional(float.MaxValue)); });
+            Add("Clip", (net, node)     => {
+                float minValue = float.MinValue;
+                float maxValue = float.MaxValue;
+
+                if (node.InputCount > 1) // Clip-11
+                {
+                    minValue = node.Input1ConstantOptional(minValue, onnxLayout:"C", name:"min")[0];
+                    maxValue = node.Input2ConstantOptional(maxValue, onnxLayout:"C", name:"max")[0];
+                }
+                else
+                {
+                    minValue = node.MinOptional(minValue);
+                    maxValue = node.MaxOptional(maxValue);
+                }
+                net.Clip(node.Name, node.Input0, minValue, maxValue);
+            });
 
             // Broadcast ops
             Add("Add", (net, node)     => { net.Add(node.Name, node.Inputs); });
@@ -379,13 +557,59 @@ namespace Barracuda
             });
             Add("Transpose", (net, node) =>
             {
-                if (!node.IsInput0Const)
-                    throw new OnnxLayerImportException(
-                        $"Currently only constant inputs for node of type {node.OperatorType} are supported. Instead input of {node.Name} is pointing to non-constant node {node.Input0}.");
+                // From https://github.com/onnx/onnx/blob/master/docs/Operators.md#transpose
+                // By default, reverse the dimensions, otherwise permute the axes according to the values given.
+                var defaultPermutations = new[] {3, 2, 1, 0};
+                var permutations = node.GetOptionalIntArray("perm", defaultPermutations);
 
-                var permutations = node.GetOptionalIntArray("perm", new []{3, 2, 1, 0});
-                var transposedTensor = constantTensors[node.Input0].Permute(permutations);
-                Const(node, transposedTensor);
+                if (node.IsInput0Const)
+                {
+                    var transposedTensor = constantTensors[node.Input0].Permute(permutations);
+                    Const(node, transposedTensor);
+                }
+                else
+                {
+                    if (Enumerable.SequenceEqual(permutations, new[] {0, 3, 1, 2}) || // NHWC -> NCHW
+                        Enumerable.SequenceEqual(permutations, new[] {0, 2, 3, 1}) && // NCHW -> NHWC
+                        fixTF2ONNXExportIssues
+                        )
+                    {
+                        // @TODO: reorder uptream nodes and global input dimensions accordingly from NHWC -> NCHW
+                        net.Identity(node.Name, node.Input0);
+
+                        if (permutations[1] == 3)       // NHWC -> NCHW
+                            Output(node, layout:VariableTensor.Layout.ChannelsFirst);
+                        else if (permutations[1] == 2)  // NCHW -> NHWC
+                        {
+                            Output(node, layout:VariableTensor.Layout.ChannelsLast);
+                            PatchUpstreamInputLayoutFromIncorrectlyAssumedChannelsFirstToChannelsLast(net, node);
+                        }
+                        else
+                            Debug.Assert("Reached unexpected branch" == "");
+                    }
+                    else if (Enumerable.SequenceEqual(permutations, new[] {0, 2, 1}))       // NWC <-> NCW
+                    {
+                        // @TODO: reorder uptream nodes and global input dimensions accordingly from NHWC -> NCHW
+                        Warn(net, node, $"Use '--inputs-as-nchw' flag when exporting model from Tensorflow with tf2onnx");
+                        net.Identity(node.Name, node.Input0);
+
+                        // flip layout
+                        if (node.Input0Layout == VariableTensor.Layout.ChannelsLast)
+                            Output(node, layout:VariableTensor.Layout.ChannelsFirst);
+                        else
+                        {
+                            Output(node, layout:VariableTensor.Layout.ChannelsLast);
+                            PatchUpstreamInputLayoutFromIncorrectlyAssumedChannelsFirstToChannelsLast(net, node);
+                        }
+                    }
+                    else if (Enumerable.SequenceEqual(permutations, new[] {1, 0, 2})) // batch <-> seq_length
+                    {
+                        net.Identity(node.Name, node.Input0);
+                    }
+                    else
+                        throw new OnnxLayerImportException(
+                            $"Currently only constant inputs for node of type {node.OperatorType} are supported. Instead input of {node.Name} is pointing to non-constant node {node.Input0}.");
+                }
             });
 
             // Tensor ops
@@ -397,7 +621,7 @@ namespace Barracuda
                 var weights = node.Input1Constant(onnxLayout, name:"B");
                 var biases  = node.Input2ConstantOptional(Bias(weights.shape), 0.0f, onnxLayout:"C", name:"C");
                 // Change data layout from "channels first" to "channels last"
-                weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features);
+                weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features, node.Input0Layout);
                 net.Dense(node.Name, node.Input0, weights, biases);
                 Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
             });
@@ -405,7 +629,7 @@ namespace Barracuda
                 var weights = node.Input1Constant(onnxLayout:"CK", name:"B");
                 var biases  = node.DefaultTensor(Bias(weights.shape), 0.0f);
                 // Change data layout from "channels first" to "channels last"
-                weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features);
+                weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features, node.Input0Layout);
                 net.Dense(node.Name, node.Input0, weights, biases);
                 Output(node, features:weights.channels, rank:2); // MatMul forces flatten of the input to rank 2
             });
@@ -436,41 +660,55 @@ namespace Barracuda
                 var scale     = node.Input1ConstantOptional(variance.shape, 1.0f, onnxLayout:"C", name:"scale");
                 var bias      = node.Input2ConstantOptional(variance.shape, 0.0f, onnxLayout:"C", name:"B");
                 var mean      = node.Input3ConstantOptional(variance.shape, 0.0f, onnxLayout:"C", name:"mean");
-                var fusedData = FuseBatchNormWeights(scale, bias, mean, variance, node.EpsilonOptional());
+                if (variance.length != scale.length || scale.length != bias.length || bias.length != mean.length)
+                    Warn(net, node, $"Number of elements in all parameters for BatchNorm must be the same." +
+                        $"Parameter shapes are: {scale.shape}, {bias.shape}, {mean.shape}, {variance.shape}");
+                if (variance.channels != node.Input0Features && node.Input0Features > 0)
+                    Warn(net, node, $"Number of elements in BatchNorm must match features from the previous layer. Was expecting {node.Input0Features}, but got {variance.channels}.");
+                var fusedData = FuseBatchNormWeights(scale, bias, mean, variance, node.EpsilonOptional(), node.Input0Features);
                 net.ScaleBias(node.Name, node.Input0, fusedData.Item1, fusedData.Item2);
             });
             Add("InstanceNormalization", (net, node) => {
                 var scale     = node.Input1Constant(onnxLayout:"C", name:"scale");
                 var bias      = node.Input2ConstantOptional(scale.shape, 0.0f, onnxLayout:"C", name:"B");
+                if (scale.length != bias.length)
+                    Warn(net, node, $"Number of elements in all parameters for InstanceNorm must be the same." +
+                        $"Parameter shapes are: {scale.shape}, {bias.shape}");
+                if (scale.channels != node.Input0Features && node.Input0Features > 0)
+                {
+                    Warn(net, node, $"Number of elements in InstanceNorm must match features from the previous layer. Was expecting {node.Input0Features}, but got {scale.channels}.");
+                    scale = new Tensor(1, node.Input0Features, scale.readonlyArray);
+                    bias = new Tensor(1, node.Input0Features, bias.readonlyArray);
+                }
                 net.Normalization(node.Name, node.Input0, scale, bias, node.EpsilonOptional());
             });
             // random ops
             Add("RandomNormal", (net, node) => {
-                float mean     = node.GetOptionalFloat("mean",  1.0f);
-                float scale    = node.GetOptionalFloat("scale", 0.0f);
-                float seed     = node.GetOptionalFloat("seed",  0.0f);
-                int[] shape    = node.GetRequiredIntArray("shape");
-                net.RandomNormal(node.Name, mean, scale, seed, shape);
+                var shape = ONNXLayout.ConvertShapeToBarracuda(onnxShape:node.Shape, onnxLayout:"NCHW");
+                net.RandomNormal(node.Name, shape, node.MeanOptional(), node.ScaleOptional(), node.Seed);
+                Output(node, rank:node.Shape.Length);
             });
             Add("RandomNormalLike", (net, node) => {
-                float mean     = node.GetOptionalFloat("mean",  1.0f);
-                float scale    = node.GetOptionalFloat("scale", 0.0f);
-                float seed     = node.GetOptionalFloat("seed",  0.0f);
-                net.RandomNormal(node.Name, mean, scale, seed, node.Input0);
+                net.RandomNormal(node.Name, node.Input0, node.MeanOptional(), node.ScaleOptional(), node.Seed);
             });
             Add("RandomUniform", (net, node) => {
                 float high     = node.GetOptionalFloat("high",  1.0f);
                 float low      = node.GetOptionalFloat("low",   0.0f);
-                float seed     = node.GetOptionalFloat("seed",  0.0f);
-                int[] shape    = node.GetRequiredIntArray("shape");
-                net.RandomUniform(node.Name, low, high, seed, shape);
+                var shape = ONNXLayout.ConvertShapeToBarracuda(onnxShape:node.Shape, onnxLayout:"NCHW");
+                net.RandomUniform(node.Name, shape, low, high, node.Seed);
+                Output(node, rank:node.Shape.Length);
             });
             Add("RandomUniformLike", (net, node) => {
                 float high     = node.GetOptionalFloat("high",  1.0f);
                 float low      = node.GetOptionalFloat("low",   0.0f);
-                float seed     = node.GetOptionalFloat("seed",  0.0f);
-                net.RandomUniform(node.Name, low, high, seed, node.Input0);
+                net.RandomUniform(node.Name, node.Input0, low, high, node.Seed);
             });
+            Add("Multinomial", (net, node) => {
+                int samples    = node.GetOptionalInt("sample_size", 1);
+                net.Multinomial(node.Name, node.Input0, samples, node.Seed);
+            });
+
+            // Reduce ops
             Add("ReduceMax", (net, node)  => {
                 Reduce(net, node, Layer.Type.ReduceMax);
             });
@@ -494,8 +732,56 @@ namespace Barracuda
             Add("Dropout", (net, node)      => { net.Identity(node.Name, node.Input0); });
         }
 
+        private string ResolveLstmOutputName(ONNXNodeWrapper node)
+        {
+            var baseLSTMOutputName = "recurrent_out";
+            if (lstmOutputs.ContainsKey(node.Name))
+            {
+                var actualName = lstmOutputs[node.Name];
+                if (actualName.EndsWith(":0"))
+                    actualName = actualName.Substring(0, actualName.Length - 2);
+
+                if (actualName.EndsWith("_h") || actualName.EndsWith("_c"))
+                    baseLSTMOutputName = actualName.Substring(0, actualName.Length - 2);
+                else
+                    baseLSTMOutputName = actualName;
+            }
+
+            return baseLSTMOutputName;
+        }
+
+        private string ResolveLstmInputName(ONNXNodeWrapper node)
+        {
+            var baseLSTMName = "recurrent_in";
+            if (lstmInputs.ContainsKey(node.Name))
+            {
+                var actualName = lstmInputs[node.Name];
+                if (actualName.EndsWith(":0"))
+                    actualName = actualName.Substring(0, actualName.Length - 2);
+
+                if (actualName.EndsWith("_h") || actualName.EndsWith("_c"))
+                    baseLSTMName = actualName.Substring(0, actualName.Length - 2);
+                else
+                    baseLSTMName = actualName;
+            }
+
+            return baseLSTMName;
+        }
+
+        // TODO: move to commonly used utility funcs
+        internal static bool IsEmpty(object o)
+        {
+            if (o == null)
+                return true;
+
+            if (o is string)
+                return o as string == "";
+
+            return false;
+        }
+
         // Fuse training time BatchNorm tensors into Scale & Bias
-        internal static Tuple<Tensor, Tensor> FuseBatchNormWeights(Tensor gamma, Tensor beta, Tensor mean, Tensor variance, float epsilon)
+        internal static Tuple<Tensor, Tensor> FuseBatchNormWeights(Tensor gamma, Tensor beta, Tensor mean, Tensor variance, float epsilon, int maxElements = -1)
         {
             // https://github.com/Tencent/ncnn/blob/master/src/layer/batchnorm.cpp
             // float sqrt_var = sqrt(var_data[i]);
@@ -503,12 +789,15 @@ namespace Barracuda
             // b_data[i] = slope_data[i] / sqrt_var;
             // ...
             // ptr[i] = b * ptr[i] + a;
+            Debug.Assert(gamma.channels == gamma.length); // assert 1d tensor
             Debug.Assert(gamma.shape == beta.shape);
             Debug.Assert(gamma.shape == mean.shape);
             Debug.Assert(gamma.shape == variance.shape);
-            Tensor scale = new Tensor(gamma.shape);
-            Tensor bias = new Tensor(gamma.shape);
-            for (int i = 0; i < gamma.length; ++i)
+            if (maxElements <= 0 || gamma.length < maxElements) // clip to the smallest valid number of channels
+                maxElements = gamma.length;
+            Tensor scale = new Tensor(1, maxElements);
+            Tensor bias = new Tensor(1, maxElements);
+            for (int i = 0; i < maxElements; ++i)
             {
                 scale[i] = gamma[i] / Mathf.Sqrt(variance[i] + epsilon);
                 bias[i] = beta[i] - gamma[i] * mean[i] / Mathf.Sqrt(variance[i] + epsilon);
@@ -517,10 +806,12 @@ namespace Barracuda
         }
 
         // Transpose channels first to channels last data in MatMul/GEMM weight tensor
-        internal static Tensor SwapSpatialDimensionsAndFeaturesInMatMulWeights(Tensor weights, int featureCount)
+        internal static Tensor SwapSpatialDimensionsAndFeaturesInMatMulWeights(Tensor weights, int featureCount, VariableTensor.Layout layout)
         {
             Debug.Assert(featureCount <= weights.flatHeight);
-            if (featureCount != weights.flatHeight)
+
+            var weightsAssumeChannelsFirstLayout = (layout != VariableTensor.Layout.ChannelsLast);
+            if (featureCount != weights.flatHeight && weightsAssumeChannelsFirstLayout)
             {
                 var shape = weights.shape;
                 var implicitSpatialDimensionsInWeights = shape.flatHeight / featureCount;
@@ -534,6 +825,40 @@ namespace Barracuda
                 weights = weights.Reshape(shape);
             }
             return weights;
+        }
+
+        internal static void PatchUpstreamInputLayoutFromIncorrectlyAssumedChannelsFirstToChannelsLast(ModelBuilder net, ONNXNodeWrapper node)
+        {
+            var model = net.model;
+            var inputIndexByName = new Dictionary<string, int>();
+            for (var i = 0; i < model.inputs.Count; ++i)
+                inputIndexByName.Add(model.inputs[i].name, i);
+
+            int inputIndex = -1;
+            var upstream = ModelAnalyzer.FindUpstreamLayers(model, new[] {node.Name});
+            foreach (var layer in upstream)
+                foreach (var inputName in layer.inputs)
+                    if (inputIndexByName.TryGetValue(inputName, out inputIndex))
+                    {
+                        var inputDesc = model.inputs[inputIndex];
+                        if (inputDesc.shape.Length == 3 || inputDesc.shape.Length == 4)
+                        {
+                            // NOTE: although original input had NHWC layout
+                            // (most probably exported from Tensorflow without '--inputs-as-nchw' flag)
+                            // earlier when parsing inputs we made incorrect assumption that this input is NCHW
+                            // now we need to revert that assumption!
+
+                            // example (NCHW): -1,2,2,16 -> (incorrect) -1,2,16,2 -> (fix) -1,2,2,16
+                            // example  (NCW): -1,2,16   -> (incorrect) -1,1,16,2 -> (fix) -1,1,2,16
+                            inputDesc.shape = ONNXLayout.Permute(inputDesc.shape, new[] {0,1,3,2});
+                            model.inputs[inputIndex] = inputDesc;
+
+                            // @TODO: figure out, if there is any case where we would have to propogate fixed layout assumption downstream?
+                        }
+                        else if (inputDesc.shape.Length > 4)
+                            throw new OnnxLayerImportException(
+                                $"Currently only global inputs of rank 4 are supported, instead {inputName} has rank of {inputDesc.shape.Length}");
+                    }
         }
 
         internal static TensorShape Bias(TensorShape shape)
@@ -571,7 +896,6 @@ namespace Barracuda
         {
             node.UnsupportedAttribute("keepdims", 1);
 
-            // @TODO: extract into separate function and reuse for other Reduce ops
             var features = node.Input0Features;
             var rank = node.Input0Rank;
             object input = node.Input0;
@@ -590,7 +914,7 @@ namespace Barracuda
 
             net.Identity(node.Name, input);
         }
-        
+
         // ---------------------------------------------------------------------------------
         // Implementation
         private Texture2D m_IconTexture;
@@ -598,17 +922,101 @@ namespace Barracuda
         private readonly Dictionary<string, Action<ModelBuilder, ONNXNodeWrapper>> m_NodeImporters =
             new Dictionary<string, Action<ModelBuilder, ONNXNodeWrapper>>();
 
+
+        private string GetNodeName(NodeProto node)
+        {
+            return node.Output.Count > 0 ? node.Output[0] : node.Name;
+        }
+
+        private void BacktraceNodeInputs(Dictionary<string, NodeProto> nameToNode,
+            NodeProto[] startingNodes,
+            Action<NodeProto> regularNodeCallback,
+            Action<NodeProto> inputNodeCallback)
+        {
+            HashSet<NodeProto> nodesToCheck = new HashSet<NodeProto>(startingNodes);
+
+            while (nodesToCheck.Count > 0)
+            {
+                var el = nodesToCheck.First();
+                regularNodeCallback(el);
+                nodesToCheck.Remove(el);
+
+                if (el.Input.Count > 0)
+                {
+                    if (nameToNode.ContainsKey(el.Input[0]))
+                        nodesToCheck.Add(nameToNode[el.Input[0]]); // regular node
+                    else
+                        inputNodeCallback(el);
+                }
+            }
+        }
+
+        private HashSet<string> BuildNodeSkipList(GraphProto graph)
+        {
+            HashSet<string> res = new HashSet<string>();
+            var nameToNode = graph.Node.ToDictionary(i => GetNodeName(i), i => i);
+
+            var outputToLSTMNode = new Dictionary<string, string>();
+
+            // Skip all LSTM _h & _c inputs as they will be accessible directly via Model.memories
+            foreach (NodeProto onnxNode in graph.Node)
+            {
+                if (onnxNode.OpType == "LSTM")
+                {
+                    var lstmNodeName = GetNodeName(onnxNode);
+                    BacktraceNodeInputs(
+                        nameToNode,
+                        new[] {nameToNode[onnxNode.Input[5]], nameToNode[onnxNode.Input[6]]},
+                        el => { res.Add(GetNodeName(el)); },
+                        el => { lstmInputs[lstmNodeName] = el.Input[0]; res.Add(el.Input[0]);}
+                        );
+
+                    outputToLSTMNode[onnxNode.Output[1]] = lstmNodeName; // _h
+                    outputToLSTMNode[onnxNode.Output[2]] = lstmNodeName; // _c
+                }
+            }
+
+            // Also trace from outputs to LSTM nodes to figure out names of the output _h and _c nodes
+            foreach (var output in graph.Output)
+            {
+                if (!nameToNode.ContainsKey(output.Name))
+                    continue;
+                
+                // As LSTM has 3 outputs and backtracing is done only via output[0]
+                // then output[1] and output[2] will be treated as leaf input nodes
+                BacktraceNodeInputs(
+                    nameToNode,
+                    new[] {nameToNode[output.Name]},
+                    el => {  },
+                    el =>
+                    {
+                        var inputName = el.Input[0];
+                        if (outputToLSTMNode.ContainsKey(inputName))
+                        {
+                            lstmOutputs[outputToLSTMNode[inputName]] = output.Name;
+                        }
+                    }
+                );
+            }
+
+            return res;
+        }
+
         private Model ConvertOnnxModel(ModelProto onnxModel)
         {
             var model = new Model();
             var modelBuilder = new ModelBuilder(model);
+
+            // Builds list of nodes that should not be included into final Barracuda Model, mostly for LSTMs
+            var nodesToSkip = BuildNodeSkipList(onnxModel.Graph);
 
             // Convert graph inputs & outputs
             var initializersByName = onnxModel.Graph.Initializer.ToDictionary(i => i.Name, i => true);
             foreach (ValueInfoProto i in onnxModel.Graph.Input)
             {
                 // skip input tensors that have initializer data, they are constant tensors not global inputs
-                if (initializersByName.ContainsKey(i.Name))
+                // also skip nodes that should be trimmed
+                if (initializersByName.ContainsKey(i.Name) || nodesToSkip.Contains(i.Name))
                     continue;
 
                 if (m_OverrideGlobalInputs.ContainsKey(i.Name))
@@ -623,8 +1031,6 @@ namespace Barracuda
             foreach (ValueInfoProto o in onnxModel.Graph.Output)
                 modelBuilder.Output(o.Name);
 
-            // TODO: process model (recurrent nodes) memories
-
             // Read constants from initializer list
             foreach (TensorProto initializer in onnxModel.Graph.Initializer)
                 Const(initializer.Name, new ONNXTensor(initializer));
@@ -632,6 +1038,9 @@ namespace Barracuda
             // Convert graph nodes
             foreach (NodeProto onnxNode in onnxModel.Graph.Node)
             {
+                if (nodesToSkip.Contains(GetNodeName(onnxNode)))
+                    continue;
+
                 var node = new ONNXNodeWrapper(onnxNode, m_ModelTensors, model.Warnings);
                 var nodeId = node.Name;
                 var opType = node.OperatorType;
@@ -663,8 +1072,10 @@ namespace Barracuda
                     {
                         // We support the layer but something went wrong while importing it
                         // We log the problem and insert an identity layer
-                        string message = $"Unexpected error while parsing layer {nodeId} of type {opType}.\n{e.Message}\n\nJson: {onnxNode}\n{e.StackTrace}\n";
-                        Warn(model, nodeId, message);
+                        string message = $"Unexpected error while parsing layer {nodeId} of type {opType}.";
+                        Err(model, nodeId, message,
+                            extendedMessage:"Will replace it by an Identity layer.",
+                            debugMessage:$"{e.Message}\n\nJson: {onnxNode}\n{e.StackTrace}\n");
                         injectDummy = true;
                     }
                 }
@@ -672,8 +1083,8 @@ namespace Barracuda
                 {
                     //We don't support this type of layer
                     //We log the problem and insert an identity layer
-                    string message = $"Unknown type encountered while parsing layer {nodeId} of type {opType}. We replace by an identity layer.";
-                    Warn(model, nodeId, message);
+                    string message = $"Unknown type {opType} encountered while parsing layer {nodeId}.";
+                    Err(model, nodeId, message, extendedMessage:"Will replace it by an Identity layer.");
                     injectDummy = true;
                 }
 
@@ -681,7 +1092,13 @@ namespace Barracuda
                 {
                     var originalLayerHadInputs = (node.InputCount > 0);
                     if (originalLayerHadInputs)
-                        modelBuilder.Identity(nodeId, node.Input0);
+                    {
+                        var originalLayerHadConstantInput = node.IsInput0Const;
+                        if (originalLayerHadConstantInput)
+                            Const(nodeId, constantTensors[node.Input0]); // copy constant
+                        else
+                            modelBuilder.Identity(nodeId, node.Input0);
+                    }
                     else // if errorneous layer had no inputs, inject dummy constant which does not require any inputs
                         modelBuilder.Const(nodeId, new Tensor());
                 }
@@ -713,28 +1130,46 @@ namespace Barracuda
             model.IrVersion = $"{irVersion}";
 
             // strip :0 at the end of string name for TF import
-            if (patchRemoveTrailingTFExportCharacters)
-            {
-                model.inputs   = model.inputs.Select(i   => { i.name = i.name.EndsWith(":0") ? i.name.Remove(i.name.Length-2) : i.name;
-                                                              return i; }).ToList();
-                model.outputs  = model.outputs.Select(o  => { o = o.EndsWith(":0") ? o.Remove(o.Length-2) : o;
-                                                             return o; }).ToList();
-                model.memories = model.memories.Select(m => { m.input  = m.input.EndsWith(":0")  ? m.input.Remove(m.input.Length-2)   : m.input;
-                                                              m.output = m.output.EndsWith(":0") ? m.output.Remove(m.output.Length-2) : m.output;
-                                                              return m; }).ToList();
-                model.layers   = model.layers.Select(l   => { l.name = l.name.EndsWith(":0") ? l.name.Remove(l.name.Length-2) : l.name;
-                                                              for(int i = 0; i < l.datasets.Length; i++)
-                                                              {
-                                                                l.datasets[i].name = l.datasets[i].name.EndsWith(":0") ? l.datasets[i].name.Remove(l.datasets[i].name.Length-2) : l.datasets[i].name;
-                                                              }
-                                                              for(int i = 0; i < l.inputs.Length; i++)
-                                                              {
-                                                                l.inputs[i] = l.inputs[i].EndsWith(":0") ? l.inputs[i].Remove(l.inputs[i].Length-2) : l.inputs[i];
-                                                              }
-                                                              return l; }).ToList();
-            }
+            if (fixTF2ONNXExportIssues)
+                model = TrimTensorflowNames(model);
 
             return model;
+        }
+
+        static private Model TrimTensorflowNames(Model model)
+        {
+            model.inputs   = model.inputs.Select(i   => {
+                i.name = TrimTensorflowName(i.name);
+                return i;
+            }).ToList();
+
+            model.outputs  = model.outputs.Select(o  => {
+                return TrimTensorflowName(o);
+            }).ToList();
+
+            model.memories = model.memories.Select(m => {
+                m.input  = TrimTensorflowName(m.input);
+                m.output = TrimTensorflowName(m.output);
+                return m;
+            }).ToList();
+
+            model.layers   = model.layers.Select(l   => {
+                l.name = TrimTensorflowName(l.name);
+                for(int i = 0; i < l.datasets.Length; i++)
+                    l.datasets[i].name = TrimTensorflowName(l.datasets[i].name);
+                for(int i = 0; i < l.inputs.Length; i++)
+                    l.inputs[i] = TrimTensorflowName(l.inputs[i]);
+                return l;
+            }).ToList();
+
+            return model;
+        }
+
+        static private string TrimTensorflowName(string name)
+        {
+            if (name.EndsWith(":0"))
+                return name.Remove(name.Length-2);
+            return name;
         }
 
         private ONNXTensor BakeNodeIntoConstant(Action<ModelBuilder, ONNXNodeWrapper> opImportAction, ONNXNodeWrapper node)
@@ -775,6 +1210,10 @@ namespace Barracuda
             using (var readStream = new FileStream(ctx.assetPath, FileMode.Open))
             using (var inputStream = new CodedInputStream(readStream))
                 onnxModel.MergeFrom(inputStream);
+
+            fixTF2ONNXExportIssues = (onnxModel.ProducerName == "tf2onnx");
+            if (fixTF2ONNXExportIssues)
+                D.Log("Hot fix for known tf2onnx issues");
 
             var model = ConvertOnnxModel(onnxModel);
             D.Log($"ONNX v{model.IrVersion}. Producer: {model.ProducerName}. Asset path: {ctx.assetPath}");
@@ -823,13 +1262,15 @@ namespace Barracuda
             m_ModelTensors.AddConstant(name, onnxTensor);
         }
 
-        private void Output(ONNXNodeWrapper node, int features = -1, int rank = -1)
+        private void Output(ONNXNodeWrapper node, int features = -1, int rank = -1,
+            VariableTensor.Layout layout = VariableTensor.Layout.Unknown)
         {
-            Output(node.Name, features, rank);
+            Output(node.Name, features, rank, layout);
         }
-        private void Output(string name, int features = -1, int rank = -1)
+        private void Output(string name, int features = -1, int rank = -1,
+            VariableTensor.Layout layout = VariableTensor.Layout.Unknown)
         {
-            m_ModelTensors.AddVariable(name, features, rank);
+            m_ModelTensors.AddVariable(name, features, rank, layout);
         }
         private void Output(string name, ONNXTensor onnxTensor)
         {
@@ -839,6 +1280,12 @@ namespace Barracuda
         {
             m_ModelTensors.AddVariable(name, onnxShape, onnxLayout);
         }
+
+        private void Output(ONNXNodeWrapper node, int features, string productOfShape)
+        {
+            m_ModelTensors.AddVariable(node.Name, features, productOfShape);
+        }
+
 
         // Logging helpers
         private static void Warn(ModelBuilder builder, ONNXNodeWrapper node, string message)
@@ -851,6 +1298,23 @@ namespace Barracuda
             model.Warnings.Add(new Model.ImporterWarning(layerName,message));
             Debug.LogWarning(message);
         }
+
+        private void Err(Model model, string layerName, string message, string extendedMessage = "", string debugMessage = "")
+        {
+            if (treatErrorsAsWarnings)
+            {
+                model.Warnings.Add(new Model.ImporterWarning(layerName,$"{message} {extendedMessage}"));
+                Debug.LogWarning($"{message} {extendedMessage}\n{debugMessage}");
+            }
+            else
+                throw new OnnxImportException($"{message}\n{debugMessage}");
+        }
+
+    }
+
+    public class OnnxImportException : Exception
+    {
+        public OnnxImportException(string message) : base(message) { }
     }
 
     public class OnnxLayerImportException : Exception

@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEngine.Assertions;
-using UnityEngine.Profiling;
 using System;
 using System.Linq;
 using System.Collections.Generic;

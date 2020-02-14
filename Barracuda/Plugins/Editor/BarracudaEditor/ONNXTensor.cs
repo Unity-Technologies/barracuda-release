@@ -231,7 +231,6 @@ namespace Barracuda
             Debug.Assert(m_Shape.All(v => v > 0));
             var permutations = ONNXLayout.AxisPermutationsForMappingONNXLayoutToBarracuda(rank, onnxLayout);
             Debug.Assert(rank <= permutations.Length);
-            Debug.Assert(rank == permutations.Count(v => v >= 0));
 
             var outTensor = Permute(m_Data, permutations);
             Profiler.EndSample();
@@ -240,8 +239,12 @@ namespace Barracuda
 
         internal static Tensor Permute(Tensor inTensor, int[] permutations) // TODO: unify Permute() arguments
         {
-            // See: https://stackoverflow.com/a/32034565
+            var padPermutationsToBarracudaRank = 4 - permutations.Length;
+            if (padPermutationsToBarracudaRank > 0)
+                permutations = permutations.Concat(Enumerable.Range(permutations.Length, padPermutationsToBarracudaRank)).ToArray();
+            Debug.Assert(permutations.Length == 4);
 
+            // See: https://stackoverflow.com/a/32034565
             Profiler.BeginSample("ONNXTensor.Permute");
             var outTensor = new Tensor(ONNXLayout.Permute(inTensor.shape.ToArray(), permutations));
             Debug.Assert(outTensor.length == inTensor.length);
@@ -308,8 +311,17 @@ namespace Barracuda
     // Description of the layer's output
     public struct VariableTensor
     {
+        public enum Layout
+        {
+            Unknown = 0,
+            NCHW = 1, ChannelsFirst = NCHW,
+            NHWC = 2, ChannelsLast = NHWC,
+        };
+
         public int features;
         public int rank;
+        public string productOfShape;
+        public Layout layout;
     }
 
     // Keeps track of constant and variable tensors of the model
@@ -327,13 +339,31 @@ namespace Barracuda
             AddVariable(name, onnxTensor);
         }
 
-        public void AddVariable(string nodeId, int features = -1, int rank = -1)
+        public void AddVariable(string nodeId, int features, string productOfShape,
+            VariableTensor.Layout layout = VariableTensor.Layout.Unknown)
         {
-            variables[nodeId] = new VariableTensor { features = features, rank = rank };
+            variables[nodeId] = new VariableTensor {
+                features = features,
+                rank = 1,
+                productOfShape = productOfShape,
+                layout = VariableTensor.Layout.Unknown };
+        }
+        public void AddVariable(string nodeId, int features = -1, int rank = -1,
+            VariableTensor.Layout layout = VariableTensor.Layout.Unknown)
+        {
+            variables[nodeId] = new VariableTensor {
+                features = features,
+                rank = rank,
+                layout = layout,
+                productOfShape = null };
         }
         public void AddVariable(string nodeId, ONNXTensor onnxTensor)
         {
-            variables[nodeId] = new VariableTensor { features = -1, rank = onnxTensor.rank };
+            variables[nodeId] = new VariableTensor {
+                features = -1,
+                rank = onnxTensor.rank,
+                layout = VariableTensor.Layout.Unknown,
+                productOfShape = null };
         }
         public void AddVariable(string nodeId, long[] onnxShape, string onnxLayout)
         {
@@ -342,8 +372,17 @@ namespace Barracuda
             var barracudaChannelIndex = permuatations.Length - 1;
             var onnxChannelIndex = permuatations[barracudaChannelIndex];
             var channels = (onnxLayout != "?" && onnxChannelIndex >= 0) ? (int)onnxShape[onnxChannelIndex]: -1;
+            var layout = VariableTensor.Layout.Unknown;
+            if (onnxLayout == "NCHW")
+                layout = VariableTensor.Layout.NCHW;
+            else if (onnxLayout == "NHWC")
+                layout = VariableTensor.Layout.NHWC;
 
-            variables[nodeId] = new VariableTensor { features = channels, rank = onnxRank };
+            variables[nodeId] = new VariableTensor {
+                features = channels,
+                rank = onnxRank,
+                layout = layout,
+                productOfShape = null };
         }
 
         public void CompleteUninitializedFields(ONNXNodeWrapper node)
@@ -362,6 +401,16 @@ namespace Barracuda
                     output.rank = constants[node.Name].rank;
                 else if (variables.ContainsKey(node.Input0Optional))
                     output.rank = variables[node.Input0Optional].rank;
+            }
+            if (output.layout == VariableTensor.Layout.Unknown)
+            {
+                if (variables.ContainsKey(node.Input0Optional))
+                    output.layout = variables[node.Input0Optional].layout;
+            }
+            if (!node.IsTerminatorForProductOfShape && output.productOfShape == null)
+            {
+                if (variables.ContainsKey(node.Input0Optional))
+                    output.productOfShape = variables[node.Input0Optional].productOfShape;
             }
 
             variables[node.Name] = output;

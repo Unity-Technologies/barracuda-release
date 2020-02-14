@@ -38,10 +38,10 @@ void Border2D(uint3 dispatchThreadID : SV_DispatchThreadID)
     for (uint n = 0; n < O.batch; ++n)
     {
         float v = _Beta;
-        
+
         if (!paddedTexel)
             v = X.Get(n, readY, readX, c);
-        
+
         O.Set(n, y, x, c, v);
     }
 }

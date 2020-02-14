@@ -707,8 +707,9 @@ public class Tensor : IDisposable
     public bool PrepareCacheForAccess(bool blocking = true)
     {
         // non-blocking, schedule download for later
-        if (!blocking && m_TensorOnDevice != null)
-            return m_TensorOnDevice.ScheduleAsyncDownload(length);
+        if (!blocking && m_TensorOnDevice != null && m_Cache == null)
+            if (!m_TensorOnDevice.ScheduleAsyncDownload(length))
+                return false;
 
         // blocking, have to get data now!
         if (m_Cache == null)

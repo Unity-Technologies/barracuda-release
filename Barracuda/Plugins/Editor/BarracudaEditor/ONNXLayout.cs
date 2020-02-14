@@ -25,9 +25,13 @@ namespace Barracuda
     {
         public static int[] AxisPermutationsForMappingONNXLayoutToBarracuda(int onnxRank, string onnxLayout="NCHW")
         {
+            // R dimensions is currently unused and is coming from `sequence` dimension in recurrent networks
             // Input tensors:           NCHW -> NHWC, NCW -> N1WC, NC -> N11C, C -> 111C
             // Convolution kernels:     KCHW -> HWCK, KCW -> 1WCK
             // Transpose convolutions:  CKHW -> HWCK, CKW -> 1WCK
+            // LSTM weights:            RCK  -> C11K
+            // LSTM weights:            RKC  -> C11K
+            // LSTM biases:             RC   -> 111C
             // GemmTransposeB, MatMul:  CK   -> C11K
             // Gemm weights             KC   -> C11K
 
@@ -70,8 +74,7 @@ namespace Barracuda
                         return new int[] {2, 3, 1, 0};
                     case 3:
                         return new int[] {_, 2, 1, 0};
-                    case 2:
-                    case 1:
+                    default:
                         throw new OnnxLayerImportException($"MCHW layout requires kernel weight tensor of rank 3 or higher, but got {onnxRank}");
                 }
             else if (onnxLayout == "CMHW" || onnxLayout == "CKHW") // -> HWCK
@@ -81,7 +84,7 @@ namespace Barracuda
                         return new int[] {2, 3, 0, 1};
                     case 3:
                         return new int[] {_, 2, 0, 1};
-                    case 1:
+                    default:
                         throw new OnnxLayerImportException($"CMHW layout requires kernel weight tensor of rank 3 or higher, but got {onnxRank}");
                 }
             else if (onnxLayout == "CHWM" || onnxLayout == "CHWK") // -> HWCK
@@ -91,39 +94,46 @@ namespace Barracuda
                         return new int[] {1, 2, 0, 3};
                     case 3:
                         return new int[] {_, 1, 0, 2};
-                    case 1:
+                    default:
                         throw new OnnxLayerImportException($"CHWM layout requires kernel weight tensor of rank 3 or higher, but got {onnxRank}");
                 }
-            else if (onnxLayout == "CM" || onnxLayout == "CK") // -> C__K
+            else if (onnxLayout == "CM" || onnxLayout == "CK" || onnxLayout == "RCK") // -> C__K
                 switch (onnxRank)
                 {
                     case 2:
                         return new int[] {0, _, _, 1};
-                    case 4:
                     case 3:
-                    case 1:
-                        throw new OnnxLayerImportException($"CM layout requires weight tensor of rank 2, but got {onnxRank}");
+                        return new int[] {1, _, _, 2};
+                    default:
+                        throw new OnnxLayerImportException($"CM layout requires weight tensor of rank 2 or 3(LSTM), but got {onnxRank}");
                 }
-            else if (onnxLayout == "MC" || onnxLayout == "KC") // -> C__K
+            else if (onnxLayout == "MC" || onnxLayout == "KC" || onnxLayout == "RKC") // -> C__K
                 switch (onnxRank)
                 {
                     case 2:
                         return new int[] {1, _, _, 0};
-                    case 4:
                     case 3:
-                    case 1:
-                        throw new OnnxLayerImportException($"MC layout requires weight tensor of rank 2, but got {onnxRank}");
+                        return new int[] {2, _, _, 1};
+                    default:
+                        throw new OnnxLayerImportException($"MC layout requires weight tensor of rank 2 or 3(LSTM), but got {onnxRank}");
+                }
+            else if (onnxLayout == "RC") // -> ___C
+                switch (onnxRank)
+                {
+                    case 2:
+                        return new int[] {_, _, _, 1};
+                    default:
+                        throw new OnnxLayerImportException($"RC layout requires tensor of rank 2, but got {onnxRank}");
                 }
             else if (onnxLayout == "C") // -> ___C
                 switch (onnxRank)
                 {
                     case 1:
                         return new int[] {_, _, _, 0};
-                    case 4:
-                    case 3:
-                    case 2:
+                    default:
                         throw new OnnxLayerImportException($"C layout requires tensor of rank 1, but got {onnxRank}");
                 }
+            
             else if (onnxLayout == "?")
                 switch (onnxRank)
                 {
@@ -203,6 +213,19 @@ namespace Barracuda
             var permutedShape = Permute(onnxShape, onnxLayout);
             Debug.Assert(permutedShape.Length == 4);
             return Enumerable.Repeat(1, 4 - permutedShape.Length).Concat(permutedShape).ToArray();
+        }
+
+        internal static bool CanSymbolicShapeBeUsedWithReshapeLike(long[] onnxShape, int featureCount)
+        {
+            // If symbolic shape matches [-1, featureCount, -1, ... -1] OR [featureCount]
+            // original tensor can be used as a source for ReshapeLike() layer
+
+            var channelsDimension = (onnxShape.Length == 1) ? 0: 1; // C dimension in ONNX layout
+
+            var expectedPattern = Enumerable.Repeat(-1L, onnxShape.Length).ToArray();
+            expectedPattern[channelsDimension] = featureCount;
+
+            return onnxShape.SequenceEqual(expectedPattern);
         }
     }
 }
