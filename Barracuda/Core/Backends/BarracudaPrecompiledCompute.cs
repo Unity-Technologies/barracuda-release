@@ -230,7 +230,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
-        if (m_Compiled.kernel.shader == null)
+        if (m_Compiled.kernel.shader == null ||
+            m_Compiled.kernel.func.kernelName == "Conv2DWinograd_2x2_3x3") // currently Winograd requires 2 dispatches and can not be supported by Precompiled path
             return base.Conv2D(X, K, B, stride, pad);
 
         Assert.AreEqual(X.channels, K.kernelDepth);

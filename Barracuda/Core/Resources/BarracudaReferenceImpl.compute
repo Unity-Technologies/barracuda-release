@@ -1163,6 +1163,7 @@ void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
 	    O.Set(n, 1, 0, c, mean2 - mean * mean);
     }
 }
+
 [numthreads(32,1,1)]
 void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -1176,40 +1177,62 @@ void InstanceNorm(uint3 dispatchThreadID : SV_DispatchThreadID)
     float gamma = W.Get(0, 0, 0, c);
     float beta = B.Get(0, 0, 0, c);
 
+    // There are 2 sources of numerical errors when computing Variance over large number of elements:
+    // 1) summing N floating point numbers in sequence has a worst-case error that grows proportional to N
+    // 2) because SumSq and (Sum×Sum)/N can be very similar numbers, cancellation can lead to the precision of the result
+    //    to be much less than the inherent precision of the floating-point arithmetic used to perform the computation.
+    //    This is particularly bad if the standard deviation is small relative to the mean!
+    // Below algorithm is improved by adopting the method of the assumed mean and Neumaier compensated summation
+    // see: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+    // see: https://en.wikipedia.org/wiki/Kahan_summation_algorithm
+
     for (uint n = 0; n < O.batch; ++n)
     {
-        uint x, y;
-        // calc mean
-        float acc = 0;
-        for (y = 0; y < O.height; ++y)
-            for (x = 0; x < O.width; ++x)
-                acc += X.Get(n, y, x, c);
-        float mean = acc / (O.width * O.height);
-
-        // calc variance
-        acc = 0;
-        for (y = 0; y < O.height; ++y)
-            for (x = 0; x < O.width; ++x)
+        uint i;
+        uint count = O.height * O.width;
+    
+        // estimate mean, result is approximate due to litimited floating point precision
+        // however it is good enough for the following calculation of variance over the shifted data
+        float approximateMean = X.Get(n, 0, c);
+        {
+            float sum = 0;
+            for (i = 0; i < count; ++i)
             {
-                float delta = X.Get(n, y, x, c) - mean;
-                acc += delta * delta;
+                float delta = X.Get(n, i, c) - approximateMean;
+                sum += delta;
             }
-        float var = acc / (O.width * O.height);
+            approximateMean += sum / count;
+        }
 
-        // normalization factor
-        float invNormFactor = 1 / sqrt(var + _Epsilon);
+        // compute mean & variance
+        // to improve precision, variance over shifted data is cacluated: Var(X - K) = Var(X)
+        // estimated mean is used instead of 1st element to make reference impl more stable in respect to the order of the elements
+        // see: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+        // K   <- approximateMean
+        // Ex  <- sum
+        // Ex2 <- sumSq
 
-        float scale = gamma * invNormFactor;
-        float bias = beta - gamma * mean * invNormFactor;
+        float sum = 0, sumSq = 0;
+        float correction = 0, correctionSq = 0;
+        for (i = 0; i < count; ++i)
+        {
+            float delta = X.Get(n, i, c) - approximateMean;
+            sum = neumaierAdd(sum, delta, correction);
+            sumSq = neumaierAdd(sumSq, delta * delta, correctionSq);
+        }
+        sum += correction;
+        sumSq += correctionSq;
+
+        float mean = approximateMean + sum / count;
+        float var = (sumSq - (sum * sum) / count) / count;
 
         // apply normalization
-        for (y = 0; y < O.height; ++y)
-            for (x = 0; x < O.width; ++x)
-            {
-                float v = X.Get(n, y, x, c);
-                v = v * scale + bias;
-                O.Set(n, y, x, c, v);
-            }
+        for (uint j = 0; j < count; ++j)
+        {
+            float v = X.Get(n, j, c);
+            v = gamma * (v - mean) / sqrt(var + _Epsilon) + beta;
+            O.Set(n, j, c, v);
+        }
     }
 }
 
@@ -1225,8 +1248,9 @@ static const float3x4 Winograd_GT = transpose(Winograd_G);
 static const float2x4 Winograd_AT = float2x4(float4(1, 1, 1, 0), float4(0, 1, -1, 1));
 static const float4x2 Winograd_A = transpose(Winograd_AT);
 
+
 [numthreads(64, 1, 1)]
-void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID: SV_GroupThreadID, uint3 groupID: SV_GroupID)
+void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     DISPATCH_ARGS(K.kernelCount, O.width, O.height);
     TENSOR_ARGS4(X, K, B, O);
@@ -1235,7 +1259,7 @@ void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 
     if (k >= K.channels) return;
     
     uint2 index = 2 * dispatchThreadID.yz;
-    
+
     uint2 pad = uint2(_Pad[0], _Pad[1]);
     uint2 XDim = uint2(X.width, X.height);
     
@@ -1263,7 +1287,7 @@ void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 
             d[3][1] = any(index.xy + uint2(1, 3) >= XDim + pad) || any(index.xy + uint2(1, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(1, 3) - pad, c);
             d[3][2] = any(index.xy + uint2(2, 3) >= XDim + pad) || any(index.xy + uint2(2, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(2, 3) - pad, c);
             d[3][3] = any(index.xy + uint2(3, 3) >= XDim + pad) || any(index.xy + uint2(3, 3) < pad) ? 0.0 : X.Get(n, index.xy + uint2(3, 3) - pad, c);
-    
+
             float3x3 g;
             g[0][0] = K.Get(0, 0, c, k);
             g[0][1] = K.Get(0, 1, c, k);
@@ -1283,10 +1307,14 @@ void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 
         }
     
         // 4 writes per thread
-        O.Set(n, index.y + 0, index.x + 0, k, acc[0][0]);
-        O.Set(n, index.y + 1, index.x + 0, k, acc[1][0]);
-        O.Set(n, index.y + 0, index.x + 1, k, acc[0][1]);
-        O.Set(n, index.y + 1, index.x + 1, k, acc[1][1]);
+        if (index.y < O.height && index.x < O.width)
+            O.Set(n, index.y + 0, index.x + 0, k, acc[0][0]);
+        if (index.y + 1 < O.height && index.x < O.width)
+            O.Set(n, index.y + 1, index.x + 0, k, acc[1][0]);
+        if (index.y < O.height && index.x + 1 < O.width)
+            O.Set(n, index.y + 0, index.x + 1, k, acc[0][1]);
+        if (index.y + 1 < O.height && index.x + 1 < O.width)
+            O.Set(n, index.y + 1, index.x + 1, k, acc[1][1]);
     }
 }
 

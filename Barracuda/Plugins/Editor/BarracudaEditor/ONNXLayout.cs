@@ -196,7 +196,7 @@ namespace Barracuda
         public static TensorShape ConvertShapeToBarracuda(long[] onnxShape, string onnxLayout)
         {
             var shape = ConvertSymbolicShapeToBarracuda(onnxShape, onnxLayout);
-            if (shape.Any(s => s <= 0))
+            if (shape.Any(s => s < 0))
                 throw new OnnxLayerImportException($"Expected ONNX shape with all dimensions known, instead got {string.Join(", ",shape)}");
             return new TensorShape(shape);
         }

@@ -698,6 +698,27 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return (v + div - 1) / div;
     }
 
+
+    Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad)
+    {
+        Assert.AreEqual(X.channels, K.kernelDepth);
+        Assert.AreEqual(K.kernelCount, B.flatWidth);
+        Assert.AreEqual(B.flatWidth, B.length);
+        Assert.AreEqual(stride.Length, 2);
+        Assert.AreEqual(pad.Length, 4);
+
+        var fn = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
+
+        SetTensor(fn, "X", X);
+        SetTensor(fn, "K", K);
+        SetTensor(fn, "B", B);
+
+        fn.shader.SetInts("_Pad", pad);
+
+        var OW = Dispatch(fn, O.shape, K.kernelCount, IDivC(O.width, 2), IDivC(O.height, 2));
+        return OW;
+    }
+
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -708,17 +729,10 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        bool useWinograd = K.kernelWidth == 3 && K.kernelHeight == 3 && stride[0] == 1 && stride[1] == 1 && O.width % 2 == 0 && O.height % 2 == 0;
+        bool useWinograd = (K.kernelWidth == 3) && (K.kernelHeight == 3) && (stride[0] == 1) && (stride[1] == 1) && ((O.height % 2) == 0) && ((O.width % 2) == 0);
         if( useWinograd )
         {
-            var fnw = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
-            SetTensor(fnw, "X", X);
-            SetTensor(fnw, "K", K);
-            SetTensor(fnw, "B", B);
-            fnw.shader.SetInts("_Pad", pad);
-
-            var ow = Dispatch(fnw, O, K.kernelCount, IDivC(O.width,2), IDivC(O.height,2));
-            return ow;
+            return Conv2DWinograd(X, K, B, new Tensor(O), stride, pad);
         }
 
         var fn = new ComputeFunc(m_Kernels, "Conv2D");

@@ -104,6 +104,12 @@ namespace Barracuda
         {
             var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "?");
             var reshapedData = m_Data.Reshape(symbolicShape);
+            for (var i = 0; i < onnxShape.Length; ++i)
+            {
+                if (onnxShape[i] < 0)
+                    onnxShape[i] = reshapedData.shape[i];
+                Debug.Assert(onnxShape[i] == reshapedData.shape[i]);
+            }
             return new ONNXTensor(reshapedData, onnxShape);
         }
 

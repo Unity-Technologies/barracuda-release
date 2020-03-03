@@ -18,7 +18,7 @@ namespace Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(3, new[] { "onnx" })]
+    [ScriptedImporter(4, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
@@ -269,11 +269,6 @@ namespace Barracuda
                     onnxSteps[axis]  = steps[i];
                 }
 
-                // indices, not shape so need to 0 pad to transpose correctly (and not 1 pad like TensorShape)
-                Array.Resize(ref onnxStarts, 4);
-                Array.Resize(ref onnxEnds, 4);
-                Array.Resize(ref onnxSteps, 4);
-
                 if (node.IsInput0Const)
                 {
                     var slicedTensor = constantTensors[node.Input0].Slice(
@@ -284,6 +279,12 @@ namespace Barracuda
                 }
                 else
                 {
+                    // pad slicing indices to Barracuda format, 4 dimensions are always expected
+                    // since values are indices will pad with 0 (in case of TensorShape padding would be 1)
+                    Array.Resize(ref onnxStarts, 4);
+                    Array.Resize(ref onnxEnds, 4);
+                    Array.Resize(ref onnxSteps, 4);
+
                     net.StridedSlice(node.Name, node.Input0,
                         starts:ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxStarts, onnxLayout:"NCHW"),
                         ends:ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxEnds, onnxLayout:"NCHW"),

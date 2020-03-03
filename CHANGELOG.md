@@ -1,5 +1,17 @@
 # Release notes
 
+## [0.6.1] - 2020-03-03
+- Performance: improved inference time for 'Tiny Yolo v2' model on Mali-G71 from 600ms to 190ms.
+- Compute: significantly improved precision of InstanceNormalization by using Kahan/Neumaier summation and assumean mean algorithms when calculating variance.
+- Fix: convolution performance and occasional result regression by temporarily disabling 64 element-per-thread version in convolutional kernel. This optimized kernel will come back in a latter release.
+- Fix: convolutional Winograd kernel crash on iOS devices.
+- Fix: convolutional Winograd kernel assert and potentially incorrect results when used with ComputePrecompiled backend.
+- ONNX: fixed regression in Upsample opset=9.
+- ONNX: fixed incorrect asserts when Reshape node contains -1 in shape definition.
+- Rewrote CPU reference implementation of InstanceNormalization to use double precision.
+- Tests: added opset=9 models
+
+
 ## [0.6.0] - 2020-02-14
 - Performance: more Conv2D optimizations.
 - API: introduced WaitForCompletion yield instruction  to simplify asyncronous download of execution results from GPU to CPU.

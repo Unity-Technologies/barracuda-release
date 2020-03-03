@@ -363,11 +363,24 @@ struct SharedTensor : Tensor
 #define DISPATCH_ARGS(threadGroupsX, threadGroupsY, threadGroupsZ)
 
 
-// @TODO: move into more appropriate file
+// @TODO: move all code below into a separate and appropriately named file(s)
+//
 #define FLT_MAX 3.402823466e+38F
 #define FLT_EPSILON 1e-6
 
 float fastfma(float a, float b, float c)
 {
     return dot(float2(a,c), float2(b, 1));
+}
+
+// Neumaier's improved Kahan–Babuška algorithm for compensated summation
+// see: https://en.wikipedia.org/wiki/Kahan_summation_algorithm
+float neumaierAdd(float sum, float value, inout float floatingPointAccuracyCompensation)
+{
+    float newSum = sum + value;
+    if (abs(sum) >= abs(value))
+        floatingPointAccuracyCompensation += (sum - newSum) + value;
+    else
+        floatingPointAccuracyCompensation += (value - newSum) + sum;
+    return newSum;
 }

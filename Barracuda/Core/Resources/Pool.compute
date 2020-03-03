@@ -160,8 +160,6 @@ void GlobalAvgPool2D(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-
-
 #undef GROUP_SIZE
 #define GROUP_SIZE BARRACUDA_MAX_THREAD_COUNT
 
@@ -176,23 +174,40 @@ void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID, uint3
 
     uint c = dispatchThreadID.x;
 
+    // There are 2 sources of numerical errors when computing Variance over large number of elements:
+    // 1) summing N floating point numbers in sequence has a worst-case error that grows proportional to N
+    // 2) because SumSq and (Sum×Sum)/N can be very similar numbers, cancellation can lead to the precision of the result
+    //    to be much less than the inherent precision of the floating-point arithmetic used to perform the computation.
+    //    This is particularly bad if the standard deviation is small relative to the mean!
+    // Below algorithm is improved by adopting the method of the assumed mean and Neumaier compensated summation
+
+    uint count = (X.height * X.width);
     for (uint n = 0; n < X.batch; ++n)
     {
         uint tid = groupThreadID.y;
-        uint q = (X.height * X.width) / GROUP_SIZE;
-        uint r = (X.height * X.width) % GROUP_SIZE;
+        uint q = count / GROUP_SIZE;
+        uint r = count % GROUP_SIZE;
 
-        float mean = 0;
-        float mean2 = 0;
+        // to improve precision, variance over shifted data is cacluated: Var(X - K) = Var(X)
+
+        float sum = 0, sumSq = 0;
+        float correction = 0, correctionSq = 0;
+        float approximateMean = X.Get(n, 0, c);
+        // the 1st element is used as K, the closer K is to the mean value the more accurate the result will be,
+        // but just choosing a value inside the samples range will guarantee the desired stability.
+        // see: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+        // K   <- approximateMean
+        // Ex  <- sum
+        // Ex2 <- sumSq
 
         for (uint j = 0; j < q; j++)
         {
-            float v = X.Get(n, tid + GROUP_SIZE * j, c);
+            float delta = X.Get(n, tid + GROUP_SIZE * j, c) - approximateMean;
 
             // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
             // Squential addressing with none divergent branching
-            AvgVariancePool2D_SharedMean[groupThreadID.x][tid] = v;
-            AvgVariancePool2D_SharedVariance[groupThreadID.x][tid] = v * v;
+            AvgVariancePool2D_SharedMean[groupThreadID.x][tid] = delta;
+            AvgVariancePool2D_SharedVariance[groupThreadID.x][tid] = delta * delta;
 
             GroupMemoryBarrierWithGroupSync();
 
@@ -206,8 +221,8 @@ void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID, uint3
                 GroupMemoryBarrierWithGroupSync();
             }
 
-            mean = mean + AvgVariancePool2D_SharedMean[groupThreadID.x][0];
-            mean2 = mean2 + AvgVariancePool2D_SharedVariance[groupThreadID.x][0];
+            sum = neumaierAdd(sum, AvgVariancePool2D_SharedMean[groupThreadID.x][0], correction);
+            sumSq = neumaierAdd(sumSq, AvgVariancePool2D_SharedVariance[groupThreadID.x][0], correctionSq);
         }
 
 
@@ -216,15 +231,17 @@ void GlobalAvgVariancePool2D(uint3 dispatchThreadID : SV_DispatchThreadID, uint3
         {
             for (uint j = 0; j < r; j++)
             {
-                float v = X.Get(n, q * GROUP_SIZE + j, c);
-                mean += v;
-                mean2 += v * v;
+                float delta = X.Get(n, q * GROUP_SIZE + j, c) - approximateMean;
+
+                sum = neumaierAdd(sum, delta, correction);
+                sumSq = neumaierAdd(sumSq, delta * delta, correctionSq);
             }
-            mean /= (X.height * X.width);
-            mean2 /= (X.height * X.width);
+
+            float mean = approximateMean + sum / count;
+            float var = (sumSq - (sum * sum) / count) / count;
 
             O.Set(n, 0, 0, c, mean);
-            O.Set(n, 1, 0, c, mean2 - mean * mean);
+            O.Set(n, 1, 0, c, var);
         }
 
     }

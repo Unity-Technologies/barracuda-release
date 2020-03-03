@@ -819,67 +819,34 @@ public class ReferenceCPUOps : IOps
                 float beta = B[0, 0, 0, c];//B.array[c + B.offset];
 
                 // calc mean
-                float accum = 0.0f;
+                double sum = 0;
                 for (int b = bBegin; b < bEnd; ++b)
                     for (int y = 0; y < height; ++y)
                         for (int x = 0; x < width; ++x)
                         {
-                            float v = X[b, y, x, c
-                                //b * X.height * X.width * X.channels +
-                                //y * X.width * X.channels +
-                                //x * X.channels +
-                                //c +
-                                //X.offset
-                            ];
-                            accum += v;
+                            double v = X[b, y, x, c];
+                            sum += v;
                         }
-                float mean = accum / (float)(width * height);
+                double mean = sum / (width * height);
 
                 // calc variance
-                accum = 0.0f;
+                sum = 0;
                 for (int b = bBegin; b < bEnd; ++b)
                     for (int y = 0; y < height; ++y)
                         for (int x = 0; x < width; ++x)
                         {
-                            float v = X[b, y, x, c
-                                //b * X.height * X.width * X.channels +
-                                //y * X.width * X.channels +
-                                //x * X.channels +
-                                //c +
-                                //X.offset
-                            ];
-                            accum += (v - mean) * (v - mean);
+                            double v = X[b, y, x, c];
+                            sum += (v - mean) * (v - mean);
                         }
-                float var = accum / (float)(width * height);
-
-                // calc normalization factor
-                float invNormFactor = 1f / Mathf.Sqrt(var + epsilon);
-
-                var scale = gamma * invNormFactor;
-                var bias = beta - gamma * mean * invNormFactor;
+                double var = sum / (width * height);
 
                 // apply normalization
                 for (int b = bBegin; b < bEnd; ++b)
                     for (int y = 0; y < height; ++y)
                         for (int x = 0; x < width; ++x)
                         {
-                            float v = X[b, y, x, c
-                                //b * X.height * X.width * X.channels +
-                                //y * X.width * X.channels +
-                                //x * X.channels +
-                                //c +
-                                //X.offset
-                            ];
-
-                            v = v * scale + bias;
-
-                            O[b, y, x, c
-                                //b * O.height * O.width * O.channels +
-                                //y * O.width * O.channels +
-                                //x * O.channels +
-                                //c +
-                                //O.offset
-                            ] = v;
+                            float v = X[b, y, x, c];
+                            O[b, y, x, c] = (float)(gamma * (v - mean) / Math.Sqrt(var + epsilon) + beta);
                         }
             }
         return O;

@@ -5,7 +5,6 @@
 #pragma kernel Conv2DKernelKxK_T16x16_R4x4 BLOCK_SIZE=4                                             SUFFIX=KernelKxK_T16x16_R
 #pragma kernel Conv2DKernelKxK_StrictC16K64_T16x16_R4x4 BLOCK_SIZE=4 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC16K64_T16x16_R
 #pragma kernel Conv2DKernel1x1_StrictC16K64_T16x16_R4x4 BLOCK_SIZE=4 KERNEL_1x1=1 STRICT_CHANNELS=1 SUFFIX=Kernel1x1_StrictC16K64_T16x16_R
-#pragma kernel Conv2DKernelKxK_StrictC16K64_T8x8_R8x8 BLOCK_SIZE=8                                  SUFFIX=KernelKxK_StrictC16K64_T8x8_R
 
 #pragma kernel DepthwiseConv2D
 
@@ -573,13 +572,17 @@ void Conv2D(uint3 dispatchThreadID : SV_DispatchThreadID)
             for (uint dx = 0; dx < K.GetKernelWidth(); ++dx)
             {
                 uint2 pos = uint2(x, y) * _Stride.xy + uint2(dx, dy);
-                // @TODO: investigate
-                // WARNING: had to move both y check into the loop (as opposed to checking y in parent loop) - due to potential bug in Metal compiler
-                if (any(pos < leftCorner)) continue;
-                if (any(pos >= rightCorner)) continue;
 
                 for (uint c = 0; c < X.channels; ++c)
-                    acc = fastfma(X.Get(n, pos.y - leftCorner.y, pos.x - leftCorner.x, c),  K.Get(dy, dx, c, k), acc);
+                {
+                    float v = 0;
+
+                    // WARNING: Mali-G71 performance drops 4x if this branching includes storing accumulator
+                    if (!any(pos < leftCorner) && !any(pos >= rightCorner))
+                        v = X.Get(n, pos.y - leftCorner.y, pos.x - leftCorner.x, c);
+                    //acc = fastfma(v,  K.Get(dy, dx, c, k), acc);
+                    acc += v * K.Get(dy, dx, c, k);
+                }
             }
         }
 
@@ -1058,9 +1061,13 @@ void Conv2DWinograd_2x2_3x3(uint3 dispatchThreadID : SV_DispatchThreadID)
         }
 
         // 4 writes per thread
-        O.Set(n, index.y + 0, index.x + 0, k, acc[0][0]);
-        O.Set(n, index.y + 1, index.x + 0, k, acc[1][0]);
-        O.Set(n, index.y + 0, index.x + 1, k, acc[0][1]);
-        O.Set(n, index.y + 1, index.x + 1, k, acc[1][1]);
+        if(index.y < O.height && index.x < O.width)
+            O.Set(n, index.y + 0, index.x + 0, k, acc[0][0]);
+        if (index.y + 1 < O.height && index.x < O.width)
+            O.Set(n, index.y + 1, index.x + 0, k, acc[1][0]);
+        if (index.y < O.height && index.x + 1 < O.width)
+            O.Set(n, index.y + 0, index.x + 1, k, acc[0][1]);
+        if (index.y + 1 < O.height && index.x + 1 < O.width)
+            O.Set(n, index.y + 1, index.x + 1, k, acc[1][1]);
     }
 }
