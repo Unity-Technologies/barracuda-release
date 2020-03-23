@@ -13,12 +13,12 @@ namespace Barracuda
     public class ONNXNodeWrapper
     {
         // Layer identification (name and op)
-        public string Name {
-            get {
-                // prefer node.output over the node.name
-                return (m_ONNXNode.Output[0].Length > 0) ? m_ONNXNode.Output[0] : m_ONNXNode.Name;
-            }
+        public static string GetName(NodeProto node)
+        {
+            // prefer node.output over the node.name
+            return node.Output.Count > 0 ? node.Output[0] : node.Name;
         }
+        public string Name { get { return GetName(m_ONNXNode); } }
         public string OperatorType { get { return m_ONNXNode.OpType; } }
         public bool IsConstant { get { return OperatorType == "Constant"; } }
         public bool IsTerminatorForProductOfShape { get { return OperatorType == "Reshape"; } }
@@ -106,8 +106,8 @@ namespace Barracuda
         public int[] OutputPadding { get { return GetOptionalIntArray("output_padding", new[] {0,0}); } }
         internal bool SupportsAutoPad { get { return OperatorType != "Pad"; } }
         internal bool SupportsSpatialOnlyPads { get { return OperatorType != "Pad"; } }
-        public int[] Pads { get { return GetPads(); } }
-        public float[] Scales { get { return GetScales(); } }
+        public int[] Pads { get { return ConvertPadsToBarracuda(); } }
+        public float[] Scales { get { return ConvertScalesToBarracuda(); } }
         public float AlphaOptional(float defaultValue) { return GetOptionalFloat("alpha", defaultValue); }
         public float BetaOptional(float defaultValue) { return GetOptionalFloat("beta", defaultValue); }
         public float GammaOptional(float defaultValue) { return GetOptionalFloat("gamma", defaultValue); }
@@ -297,7 +297,7 @@ namespace Barracuda
         }
 
         // Complex attribute helpers
-        private int[] GetPads()
+        private int[] ConvertPadsToBarracuda()
         {
             var noPadding = new[] {0,0,0,0};
             if (SupportsAutoPad)
@@ -317,62 +317,111 @@ namespace Barracuda
                 else {} // TODO: Assert NOTSET
             }
 
-            // NOTE: ONNX has pad layout of [z, y, x ...] while Barracuda is opposite [x, y, z ...]
             var pads = GetOptionalIntArray("pads", noPadding);
+            if (pads.Length % 2 != 0)
+                throw new OnnxLayerImportException(
+                    $"Attribute pads of unsupported length {pads.Length} in {Name} ot fype {OperatorType}.");
+
+            var starts = pads.Take(pads.Length / 2).ToArray();
+            var ends = pads.Skip(pads.Length / 2).ToArray();
+
             if (SupportsSpatialOnlyPads)
             {
                 // See: https://github.com/onnx/onnx/blob/master/docs/Operators.md#AveragePool
                 // Padding for the beginning and ending along each spatial axis, it can take any value greater than or equal to 0.
                 // The value represent the number of pixels added to the beginning and end part of the corresponding axis.
-                // `pads` format should be as follow [x1_begin, x2_begin...x1_end, x2_end,...],
-                // where xi_begin the number of pixels added at the beginning of axis `i` and xi_end,
-                // the number of pixels added at the end of axis `i`.
+            }
+            else
+            {
+                // Padding containts non-spatial dimensions including N and C
 
-                switch (pads.Length)
-                {
-                    case 2: return new [] { pads[0], 0, pads[1], 0 }; // 1D WW => W_W_
-                    case 4: return new [] { pads[1], pads[0], pads[3], pads[2] }; // 2D HWHW => WHWH
-                    case 6: Warn("3D pads are not supported yet!");
-                        return new [] { pads[2], pads[1], pads[0], pads[3], pads[4], pads[5] }; // TODO: 3D DHWDHW => WHDWHD
-                    default:
-                        throw new OnnxLayerImportException(
-                            $"Attribute pads of unsupported length {pads.Length} in {Name} ot fype {OperatorType}.");
-                }
+                // See: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Pad
+                // `pads` should be a 1D tensor of shape [2 * input_rank].
+
+                Debug.Assert(starts.Length == ends.Length);
+
+                if ((starts.Length < 2) ||
+                    (starts[0] != 0)    || (starts[1] != 0) ||     // N
+                    (  ends[0] != 0)    || (  ends[1] != 0))       // C
+                    Warn("Only spatial (H and W) padding is currently supported." +
+                        " Non spatial padding (N and C) will be ignored and default to 0.");
+
+                // Skip non-spatial dimensions N, C (NCHW layout)
+                starts = starts.Skip(2).ToArray();
+                ends = ends.Skip(2).ToArray();
             }
 
             // See: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Pad
-            // `pads` should be a 1D tensor of shape [2 * input_rank].
-            // `pads` format should be: [x1_begin, x2_begin,...,x1_end, x2_end,...],
-            // where xi_begin is the number of pad values added at the beginning of axis `i` and xi_end,
-            // the number of pad values added at the end of axis `i
+            // ONNX `pads` format should be as follow [x1_begin, x2_begin...x1_end, x2_end,...],
+            // where xi_begin the number of pixels added at the beginning of axis `i` and xi_end,
+            // the number of pixels added at the end of axis `i`.
 
-            Debug.Assert(pads.Length % 2 == 0);
-            long[] onnxStarts = new long[pads.Length / 2];//TODO make the semantic diff between Permute(int[] and Permute(long[] more clear.
-            long[] onnxEnds = new long[pads.Length / 2];
-            for(int i=0; i < onnxStarts.Length; ++i)
+            // Convert ONNX pad layout of [z, y, x ..., z', y', x'] to Barracuda layout [x, y, z ..., x', y', z']
+            // where x  is x1_begin, y is x2_begin ...
+            //       x' is x1_end, y' is x2_end ...
+
+            Debug.Assert(starts.Length == ends.Length);
+            switch (starts.Length)
             {
-                onnxStarts[i] = (long)pads[i];
-                onnxEnds[i] = (long)pads[i + onnxStarts.Length];
+                case 0: return new [] { 0, 0, 0, 0 };
+                case 1: return new [] { starts[0], 0,
+                                          ends[0], 0 };                 // 1D W => W_
+                case 2: return new [] { starts[1], starts[0],
+                                          ends[1],   ends[0] };         // 2D HW => WH
+                case 3: Warn("3D pads are not supported yet!");
+                    return new [] { starts[2], starts[1], starts[0],
+                                      ends[2],   ends[1],   ends[0] };  // 3D DHW => WHD
+                default:
+                    throw new OnnxLayerImportException(
+                        $"Attribute pads of unsupported length {pads.Length} in {Name} ot fype {OperatorType}.");
             }
-            var starts = ONNXLayout.Permute(onnxStarts, "NCHW");
-            var ends = ONNXLayout.Permute(onnxEnds, "NCHW");
-            if ((starts[0] != 0) || (starts[3] != 0) || (ends[0] != 0) || (ends[3] != 0))
-                Warn($"Unsupported padding, only H and W padding are supported. Value will be ignored and defaulted to 0.");
-
-            return new int[] { starts[2], starts[1], ends[2], ends[1] };
         }
 
-        private float[] GetScales()
+        private float[] ConvertScalesToBarracuda()
         {
-            var scales = GetOptionalFloatArray("scales", new float[0]);
-            if (scales.Length > 0)
-                return scales;
-            return new[] {
-                1, // N
-                1, // C
-                GetRequiredFloat("height_scale"),
-                GetRequiredFloat("width_scale")
-            };
+            float[] scales;
+            if (InputCount > 2) // Resize-11
+            {
+                Debug.Assert(OperatorType == "Resize");
+                scales = Input2Constant(onnxLayout:"C", name:"scales").AsFloats();
+            }
+            else if (InputCount > 1) // Resize-10, Upsample-9
+            {
+                scales = Input1Constant(onnxLayout:"C", name:"scales").AsFloats();
+            }
+            else
+            {
+                Debug.Assert(OperatorType == "Upsample");
+                scales = GetOptionalFloatArray("scales", new float[0]); // Upsample-7
+                if (scales?.Length == 0) // Upsample-1
+                {
+                    scales = new[] { 1, // N
+                                     1, // C
+                                     GetRequiredFloat("height_scale"),
+                                     GetRequiredFloat("width_scale") };
+                }
+            }
+            Debug.Assert(scales != null);
+
+            if ((scales.Length < 2) ||
+                (scales[0] != 1)    || (scales[1] != 1))
+                Warn("Only spatial (H and W) padding is currently supported." +
+                    " Non spatial scales (N and C) will be ignored and default to 1.");
+
+            // Skip non-spatial dimensions N, C (NCHW layout)
+            scales = scales.Skip(2).ToArray();
+
+            switch (scales.Length)
+            {
+                case 0: return new [] { 1f, 1f };
+                case 1: return new [] { scales[0], 1 };                 // 1D W => W_
+                case 2: return new [] { scales[1], scales[0] };         // 2D HW => WH
+                case 3: Warn("3D pads are not supported yet!");
+                    return new [] { scales[2], scales[1], scales[0] };  // 3D DHW => WHD
+                default:
+                    throw new OnnxLayerImportException(
+                        $"Attribute pads of unsupported length {scales.Length} in {Name} ot fype {OperatorType}.");
+            }
         }
 
         public Tensor DefaultTensor(TensorShape tensorShape, float defaultValue)

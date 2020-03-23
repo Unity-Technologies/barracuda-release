@@ -12,8 +12,10 @@ namespace Barracuda
         /// <summary>
         /// Create a model builder helper to construct the underlying Model.
         /// </summary>
-        public ModelBuilder(Model model)
+        public ModelBuilder(Model model = null)
         {
+            if (model == null)
+                model = new Model();
             m_Model = model;
         }
 
@@ -71,12 +73,12 @@ namespace Barracuda
         /// <summary>
         /// Add memory to the model
         /// </summary>
-        public Model.Memory Memory(object stateIn, object stateOut, TensorShape shape)
+        public Model.Memory Memory(object input, object output, TensorShape shape)
         {
             m_Model.memories.Add(new Model.Memory {
                 shape = shape,
-                input = ResolveInput(stateIn),
-                output = ResolveInput(stateOut)});
+                input = ResolveInput(input),
+                output = ResolveInput(output)});
 
             return m_Model.memories.Last();
         }
@@ -420,7 +422,7 @@ namespace Barracuda
         /// <summary>
         /// Concatenate a list of tensors into a single tensor. All input tensors must have the same shape, except for the axis to concatenate on.
         /// </summary>
-        public Layer Concat(string name, object[] inputs, int axis)
+        public Layer Concat(string name, object[] inputs, int axis = -1)
         {
             Layer layer = new Layer(name, Layer.Type.Concat);
             layer.axis = axis;
@@ -1036,7 +1038,7 @@ namespace Barracuda
         /// <summary>
         /// Computes a reduce operation (max/min/mean/prod/sum) of the input tensor's element along the provided axis
         /// </summary>
-        public Layer Reduce(Layer.Type type, string name, object input, int axis)
+        public Layer Reduce(Layer.Type type, string name, object input, int axis = -1)
         {
             Layer layer = new Layer(name, type);
             layer.inputs = new[] { ResolveInput(input) };
@@ -1053,7 +1055,7 @@ namespace Barracuda
         ///     axis == 2: gatheredData[b, y, x, c] = data[b, y, indices[x], c]
         ///     axis == 3: gatheredData[b, y, x, c] = data[b, y, x, indices[c]]
         /// </summary>
-        public Layer Gather(string name, object input, object indices, int axis)
+        public Layer Gather(string name, object input, object indices, int axis = -1)
         {
             object[] inputs = new[] { input, indices };
 

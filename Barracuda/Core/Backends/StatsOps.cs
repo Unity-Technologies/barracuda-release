@@ -477,6 +477,12 @@ public class StatsOps : IOps
         Elementwise(O);
         return O;
     }
+    Tensor IOps.Copy(Tensor x)
+    {
+        var O = m_Ops.Copy(x);
+        Elementwise(O);
+        return O;
+    }
 
     Tensor IOps.Prepare(Tensor X)
     {

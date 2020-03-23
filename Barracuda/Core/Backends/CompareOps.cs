@@ -542,6 +542,13 @@ public class CompareOps : IOps
         CheckSame(m_DifferenceAsError, Y, Z, Layer.Type.Tile);
         return Y;
     }
+    Tensor IOps.Copy(Tensor x)
+    {
+        var Y = m_Ops1.Copy(x);
+        var Z = m_Ops2.Copy(x);
+        CheckSame(m_DifferenceAsError, Y, Z, "Copy");
+        return Y;
+    }
 
     Tensor IOps.Prepare(Tensor X)
     {

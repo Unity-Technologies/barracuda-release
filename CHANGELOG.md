@@ -1,5 +1,24 @@
 # Release notes
 
+## [0.6.2] - 2020-03-23
+- Fix: Prevent deallocation of the user-owned input tensor when passed to Identity or Reshape layer at the beginning of the model. As a side effect of this change Reshape layer now always makes copy of tensor data, this will be optimised in the future.
+- Fix: Tensor constructor with ComputeBuffer argument accepts correct stride value now.
+- Performance: automatically remove no-operation layers from the model (Identity, Linear activation and Flatten).
+- ONNX: Automatically remove unused constants and layers.
+- ONNX: Fixed constant folding of Transpose node to work properly with input tensor of any rank. Previously would fail, if tensor rank was different than 4.
+- ONNX: Made Pads and Scales arguments more fault tolerant and support default values.
+- ONNX: Keep ML-Agents metadata in the model. ML-Agents metadata is stored as unreferenced constants.
+- API: ModelBuilder: default axis to -1 for simplicity of use.
+- API: ModelBuilder: added default constructor that automatically creates new Model.
+- API: Implemented RecurrentState automatic batch size detection based on the model information by passing -1 value as `batchSize` argument in the constructor.
+- API: Throw exception when incorrect arguments are passed.
+- API: Validate model integrity in `WorkerFactory.Create(...)`.
+- UI: Fixed weight totals in the Inspector. Previously shared weights would be counted multiple time blowing up the totals.
+- UI: Improved readability by increasing layers' estate when model has no constants and displaying large numbers with separators in the Inspector.
+- Tests: Added variety of tests to test Public APIs.
+- Cosmetic changes to error and log messages.
+
+
 ## [0.6.1] - 2020-03-03
 - Performance: improved inference time for 'Tiny Yolo v2' model on Mali-G71 from 600ms to 190ms.
 - Compute: significantly improved precision of InstanceNormalization by using Kahan/Neumaier summation and assumean mean algorithms when calculating variance.

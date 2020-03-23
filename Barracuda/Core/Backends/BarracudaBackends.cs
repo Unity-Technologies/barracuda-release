@@ -94,6 +94,8 @@ public interface IOps
     Tensor Tile(Tensor x, int[] repeats);
     Tensor Gather(Tensor[] tensors, int axis);
 
+    Tensor Copy(Tensor x);
+
     /// <summary>
     /// Prepares tensor for use
     /// </summary>

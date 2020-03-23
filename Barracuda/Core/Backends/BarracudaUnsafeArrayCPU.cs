@@ -3,6 +3,7 @@ using UnityEngine.Assertions;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Security;
 
 namespace Barracuda {
 
@@ -123,7 +124,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             var asSharedArray = X.tensorOnDevice as SharedArrayTensorData;
             var asArray = X.tensorOnDevice as ArrayTensorData;
             if (asSharedArray != null) X.CastOnDevice(new UnsafeArrayTensorData(asSharedArray)); // adopt unsafe array without copy
-            else if (asArray != null) X.PinToDeviceAndDownloadFromIt(new UnsafeArrayTensorData(asArray)); // adopt unsafe array without copy
+            else if (asArray != null) X.PinToDeviceAndDownloadFromIt(new UnsafeArrayTensorData(asArray)); // @TODO: investigate why CastOnDevice here breaks CachingTensorAllocator,
+                                                                                                          // if recurrent network uses Concat on memories and passes it to the output
+                                                                                                          // see ExecuteWithRecurrentStateAndCheckResults_ConcatMemoriesIntoSeparateOutput for repro case
             else
                 X.PinToDeviceAndUploadToIt(new UnsafeArrayTensorData(X.shape)); // device is uncompatible, create new array and upload
         }
@@ -1006,6 +1009,14 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DSymmetricInnerLoopDelegate);
+    }
+
+    protected override Tensor CopyAndReshape(Tensor X, TensorShape shape)
+    {
+        Assert.AreEqual(X.length, shape.length);
+        var O = NewTensor(shape);
+        Buffer.BlockCopy(Pin(X).array, Pin(X).offset, Pin(O).array, Pin(O).offset, X.length * sizeof(float));
+        return O;
     }
 
     public override Tensor Prepare(Tensor X)

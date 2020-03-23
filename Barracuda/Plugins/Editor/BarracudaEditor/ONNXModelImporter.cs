@@ -18,7 +18,7 @@ namespace Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(4, new[] { "onnx" })]
+    [ScriptedImporter(5, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
@@ -495,32 +495,11 @@ namespace Barracuda
             Add("GlobalMaxPool",     (net, node) => { net.GlobalMaxPool2D(node.Name, node.Input0); });
             Add("Upsample", (net, node) => {
                 node.UnsupportedAttribute("mode", "nearest");
-
-                float[] scales;
-                if (node.InputCount > 1)
-                    scales = node.Input1Constant(onnxLayout:"C", name:"scales").AsFloats();
-                else
-                    scales = node.Scales;
-
-                if (scales.Length < 2 || scales.Length > 5)
-                    throw new OnnxLayerImportException(
-                        $"Input scales of unsupported length {scales.Length} in {node.Name} ot fype {node.OperatorType}.");
-
-                if ((scales[0] != 1) || (scales[1] != 1))
-                    Warn(net, node, $"Unsupported scaling, only H and W scaling are supported. Value will be ignored and defaulted to 1.");
-
-                // skip NC from onnx NCHW layout
-                scales = scales.Skip(2).ToArray();
-
-                if (scales.Length == 1) // append default H, if 1D
-                    scales = new[] {1f, scales[0]};
-
-                Resize2D(net, node, scales);
+                Resize2D(net, node, node.Scales);
             });
             Add("Resize", (net, node) => {
                 node.UnsupportedAttribute("mode", "nearest");
 
-                float[] scales;
                 if (node.InputCount > 2) // Resize-11
                 {
                     node.UnsupportedAttribute("coordinate_transformation_mode", "half_pixel");
@@ -537,24 +516,9 @@ namespace Barracuda
 
                     // TODO: cropping via roi input
                     // TODO: support sizes
-                    scales = node.Input2Constant(onnxLayout:"C", name:"scales").AsFloats();
-                }
-                else // Resize-10
-                {
-                    scales = node.Input1Constant(onnxLayout:"C", name:"scales").AsFloats();
                 }
 
-                if (scales.Length < 2 || scales.Length > 5)
-                    throw new OnnxLayerImportException(
-                        $"Input scales of unsupported length {scales.Length} in {node.Name} ot fype {node.OperatorType}.");
-
-                if ((scales[0] != 1) || (scales[1] != 1))
-                    Warn(net, node, $"Unsupported scaling, only H and W scaling are supported. Value will be ignored and defaulted to 1.");
-
-                // skip NC from onnx NCHW layout
-                scales = scales.Skip(2).ToArray();
-
-                Resize2D(net, node, scales);
+                Resize2D(net, node, node.Scales);
             });
             Add("Transpose", (net, node) =>
             {
@@ -923,84 +887,38 @@ namespace Barracuda
         private readonly Dictionary<string, Action<ModelBuilder, ONNXNodeWrapper>> m_NodeImporters =
             new Dictionary<string, Action<ModelBuilder, ONNXNodeWrapper>>();
 
-
-        private string GetNodeName(NodeProto node)
+        public override void OnImportAsset(AssetImportContext ctx)
         {
-            return node.Output.Count > 0 ? node.Output[0] : node.Name;
-        }
+            var onnxModel = new ModelProto();
+            using (var readStream = new FileStream(ctx.assetPath, FileMode.Open))
+            using (var inputStream = new CodedInputStream(readStream))
+                onnxModel.MergeFrom(inputStream);
 
-        private void BacktraceNodeInputs(Dictionary<string, NodeProto> nameToNode,
-            NodeProto[] startingNodes,
-            Action<NodeProto> regularNodeCallback,
-            Action<NodeProto> inputNodeCallback)
-        {
-            HashSet<NodeProto> nodesToCheck = new HashSet<NodeProto>(startingNodes);
+            fixTF2ONNXExportIssues = (onnxModel.ProducerName == "tf2onnx");
+            if (fixTF2ONNXExportIssues)
+                D.Log("Hot fix for known tf2onnx issues");
 
-            while (nodesToCheck.Count > 0)
+            var model = ConvertOnnxModel(onnxModel);
+            D.Log($"ONNX v{model.IrVersion}. Producer: {model.ProducerName}. Asset path: {ctx.assetPath}");
+            D.Log($"Barracuda model: {model}");
+
+            NNModelData assetData = ScriptableObject.CreateInstance<NNModelData>();
+            using (var memoryStream = new MemoryStream())
+            using (var writer = new BinaryWriter(memoryStream))
             {
-                var el = nodesToCheck.First();
-                regularNodeCallback(el);
-                nodesToCheck.Remove(el);
-
-                if (el.Input.Count > 0)
-                {
-                    if (nameToNode.ContainsKey(el.Input[0]))
-                        nodesToCheck.Add(nameToNode[el.Input[0]]); // regular node
-                    else
-                        inputNodeCallback(el);
-                }
+                ModelWriter.Save(writer, model);
+                assetData.Value = memoryStream.ToArray();
             }
-        }
+            assetData.name = "Data";
+            assetData.hideFlags = HideFlags.HideInHierarchy;
 
-        private HashSet<string> BuildNodeSkipList(GraphProto graph)
-        {
-            HashSet<string> res = new HashSet<string>();
-            var nameToNode = graph.Node.ToDictionary(i => GetNodeName(i), i => i);
+            NNModel asset = ScriptableObject.CreateInstance<NNModel>();
+            asset.modelData = assetData;
 
-            var outputToLSTMNode = new Dictionary<string, string>();
+            ctx.AddObjectToAsset("main obj", asset, LoadIconTexture());
+            ctx.AddObjectToAsset("model data", assetData);
 
-            // Skip all LSTM _h & _c inputs as they will be accessible directly via Model.memories
-            foreach (NodeProto onnxNode in graph.Node)
-            {
-                if (onnxNode.OpType == "LSTM")
-                {
-                    var lstmNodeName = GetNodeName(onnxNode);
-                    BacktraceNodeInputs(
-                        nameToNode,
-                        new[] {nameToNode[onnxNode.Input[5]], nameToNode[onnxNode.Input[6]]},
-                        el => { res.Add(GetNodeName(el)); },
-                        el => { lstmInputs[lstmNodeName] = el.Input[0]; res.Add(el.Input[0]);}
-                        );
-
-                    outputToLSTMNode[onnxNode.Output[1]] = lstmNodeName; // _h
-                    outputToLSTMNode[onnxNode.Output[2]] = lstmNodeName; // _c
-                }
-            }
-
-            // Also trace from outputs to LSTM nodes to figure out names of the output _h and _c nodes
-            foreach (var output in graph.Output)
-            {
-                if (!nameToNode.ContainsKey(output.Name))
-                    continue;
-                
-                // As LSTM has 3 outputs and backtracing is done only via output[0]
-                // then output[1] and output[2] will be treated as leaf input nodes
-                BacktraceNodeInputs(
-                    nameToNode,
-                    new[] {nameToNode[output.Name]},
-                    el => {  },
-                    el =>
-                    {
-                        var inputName = el.Input[0];
-                        if (outputToLSTMNode.ContainsKey(inputName))
-                        {
-                            lstmOutputs[outputToLSTMNode[inputName]] = output.Name;
-                        }
-                    }
-                );
-            }
-
-            return res;
+            ctx.SetMainObject(asset);
         }
 
         private Model ConvertOnnxModel(ModelProto onnxModel)
@@ -1008,7 +926,7 @@ namespace Barracuda
             var model = new Model();
             var modelBuilder = new ModelBuilder(model);
 
-            // Builds list of nodes that should not be included into final Barracuda Model, mostly for LSTMs
+            // Builds list of nodes that should not be included into the final Barracuda Model, mostly for LSTMs
             var nodesToSkip = BuildNodeSkipList(onnxModel.Graph);
 
             // Convert graph inputs & outputs
@@ -1039,7 +957,7 @@ namespace Barracuda
             // Convert graph nodes
             foreach (NodeProto onnxNode in onnxModel.Graph.Node)
             {
-                if (nodesToSkip.Contains(GetNodeName(onnxNode)))
+                if (nodesToSkip.Contains(ONNXNodeWrapper.GetName(onnxNode)))
                     continue;
 
                 var node = new ONNXNodeWrapper(onnxNode, m_ModelTensors, model.Warnings);
@@ -1082,8 +1000,8 @@ namespace Barracuda
                 }
                 else
                 {
-                    //We don't support this type of layer
-                    //We log the problem and insert an identity layer
+                    // We don't support this type of layer
+                    // We log the problem and insert an identity layer
                     string message = $"Unknown type {opType} encountered while parsing layer {nodeId}.";
                     Err(model, nodeId, message, extendedMessage:"Will replace it by an Identity layer.");
                     injectDummy = true;
@@ -1108,19 +1026,23 @@ namespace Barracuda
             }
 
             // Convert constant tensors
-            int insertionIndex = 0;
+            var requiredConstants = new HashSet<string>(ModelAnalyzer.FindBrokenLinks(model));
+            // ML-Agents metadata is stored in otherwise unreferenced constants
+            var unreferencedConstantsContainMLAgentsMetadata = UnreferencedNodes(onnxModel.Graph);
+            requiredConstants.UnionWith(unreferencedConstantsContainMLAgentsMetadata); // keep ML-Agents metadata
+            int insertionIndex = 0; // insert constants at the beginning of the model
             foreach(var entry in constantTensors)
-                modelBuilder.Const(entry.Key, entry.Value.ToBarracuda(onnxLayout: "CONST"),
-                    insertionIndex++);
+                if (requiredConstants.Contains(entry.Key)) // skip if constant is unused
+                    modelBuilder.Const(entry.Key, entry.Value.ToBarracuda(onnxLayout: "CONST"),
+                        insertionIndex++);
 
-            // Model should not contain any broken links in the end
-            var unconnectedInputs = ModelAnalyzer.FindBrokenLinks(model);
-            Debug.Assert(unconnectedInputs.Length == 0);
-            if (unconnectedInputs.Length > 0)
-            {
-                var message = $"Broken links: {string.Join(", ", unconnectedInputs)}";
-                Warn(model, "", message);
-            }
+            model = Optimize(model, keepLayers:requiredConstants); // keep ML-Agents metadata
+
+            // strip :0 at the end of string name for TF import
+            if (fixTF2ONNXExportIssues)
+                model = TrimTensorflowNames(model);
+
+            Validate(model);
 
             // Parse meta data
             var irVersion = onnxModel.IrVersion; // legacy
@@ -1130,11 +1052,155 @@ namespace Barracuda
             model.IrSource = "ONNX";
             model.IrVersion = $"{irVersion}";
 
-            // strip :0 at the end of string name for TF import
-            if (fixTF2ONNXExportIssues)
-                model = TrimTensorflowNames(model);
-
             return model;
+        }
+
+        private ONNXTensor BakeNodeIntoConstant(Action<ModelBuilder, ONNXNodeWrapper> opImportAction, ONNXNodeWrapper node)
+        {
+            var model = new Model();
+            var net = new ModelBuilder(model);
+
+            // add all inputs as constants
+            Debug.Assert(node.AreAllInputsConst);
+            for (var i = 0; i < node.InputCount; ++i)
+            {
+                var assumeOnnxLayout = i == 0 ? "NCHW" : "CONST";
+                var input = node.Inputs[i];
+                net.Const(input,
+                    constantTensors[input].ToBarracuda(assumeOnnxLayout));
+            }
+
+            // add node that we are going to bake into the constant
+            opImportAction(net, node);
+
+            // bake
+            var noInputs = new Dictionary<string, Tensor>();
+
+            var useCPUforBaking = WorkerFactory.Device.CPU;
+            var worker = WorkerFactory.CreateWorker(model, useCPUforBaking);
+            var result = worker.ExecuteAndWaitForCompletion(noInputs);
+
+            // convert from Barracuda back into ONNX layout
+            var onnxData = ONNXTensor.Permute(result, new int[] { 0, 3, 1, 2 }); // NHWC -> NCHW
+            var onnxShape = onnxData.shape.ToArray().Select(x => (long)x).ToArray();
+            return new ONNXTensor(onnxData, onnxShape).SqueezeAll();
+        }
+
+        static private Model Optimize(Model model, HashSet<string> keepLayers = null)
+        {
+            // Strip unused layers
+            var unusedLayers = new HashSet<string>(ModelAnalyzer.FindUnusedLayers(model));
+            if (keepLayers != null) // Except explicitly specified for keeping
+                unusedLayers.ExceptWith(keepLayers);
+            model.layers = model.layers.Where(l => !unusedLayers.Contains(l.name)).ToList();
+            return model;
+        }
+
+        static private void Validate(Model model)
+        {
+            // Model should not contain any broken links in the end
+            var unconnectedInputs = ModelAnalyzer.FindBrokenLinks(model);
+            Debug.Assert(unconnectedInputs.Length == 0);
+            if (unconnectedInputs.Length > 0)
+            {
+                var message = $"Broken links: {string.Join(", ", unconnectedInputs)}";
+                Warn(model, "", message);
+            }
+        }
+
+        private HashSet<string> UnreferencedNodes(GraphProto graph)
+        {
+            var allNodes = new HashSet<string>();
+            var allInputs = new HashSet<string>();
+            foreach (var node in graph.Node)
+            {
+                allNodes.Add(ONNXNodeWrapper.GetName(node));
+                foreach (var input in node.Input)
+                    allInputs.Add(input);
+            }
+
+            // Remove all global output nodes
+            foreach (ValueInfoProto o in graph.Output)
+                allNodes.Remove(o.Name);
+
+            // Remove all nodes that are referenced by Inputs to get the set of unreferenced ones
+            var unreferencedNodes = allNodes;
+            unreferencedNodes.ExceptWith(allInputs);
+            return unreferencedNodes;
+        }
+
+        private void BacktraceNodeInputs(Dictionary<string, NodeProto> nameToNode,
+            NodeProto[] startingNodes,
+            Action<NodeProto> regularNodeCallback,
+            Action<NodeProto> inputNodeCallback)
+        {
+            HashSet<NodeProto> nodesToCheck = new HashSet<NodeProto>(startingNodes);
+
+            while (nodesToCheck.Count > 0)
+            {
+                var el = nodesToCheck.First();
+                regularNodeCallback(el);
+                nodesToCheck.Remove(el);
+
+                if (el.Input.Count > 0)
+                {
+                    if (nameToNode.ContainsKey(el.Input[0]))
+                        nodesToCheck.Add(nameToNode[el.Input[0]]); // regular node
+                    else
+                        inputNodeCallback(el);
+                }
+            }
+        }
+
+        private HashSet<string> BuildNodeSkipList(GraphProto graph)
+        {
+            HashSet<string> res = new HashSet<string>();
+            var nameToNode = graph.Node.ToDictionary(i => ONNXNodeWrapper.GetName(i), i => i);
+
+            var outputToLSTMNode = new Dictionary<string, string>();
+
+            // Skip all LSTM _h & _c inputs as they will be accessible directly via Model.memories
+            foreach (NodeProto onnxNode in graph.Node)
+            {
+                if (onnxNode.OpType == "LSTM")
+                {
+                    var lstmNodeName = ONNXNodeWrapper.GetName(onnxNode);
+                    BacktraceNodeInputs(
+                        nameToNode,
+                        new[] {nameToNode[onnxNode.Input[5]], nameToNode[onnxNode.Input[6]]},
+                        el => { res.Add(ONNXNodeWrapper.GetName(el)); },
+                        el => { lstmInputs[lstmNodeName] = el.Input[0]; res.Add(el.Input[0]);}
+                        );
+
+                    outputToLSTMNode[onnxNode.Output[1]] = lstmNodeName; // _h
+                    outputToLSTMNode[onnxNode.Output[2]] = lstmNodeName; // _c
+                }
+            }
+
+            // Also trace from outputs to LSTM nodes to figure out names of the output _h and _c nodes
+            foreach (var output in graph.Output)
+            {
+                if (!nameToNode.ContainsKey(output.Name))
+                    continue;
+                
+                // As LSTM has 3 outputs and backtracing is done only via output[0]
+                // then output[1] and output[2] will be treated as leaf input nodes
+                BacktraceNodeInputs(
+                    nameToNode,
+                    new[] {nameToNode[output.Name]},
+                    el => {  },
+                    el =>
+                    {
+                        var inputName = el.Input[0];
+                        if (outputToLSTMNode.ContainsKey(inputName))
+                        {
+                            lstmOutputs[outputToLSTMNode[inputName]] = output.Name;
+                        }
+                    }
+                );
+            }
+
+            return res;
         }
 
         static private Model TrimTensorflowNames(Model model)
@@ -1173,86 +1239,6 @@ namespace Barracuda
             return name;
         }
 
-        private ONNXTensor BakeNodeIntoConstant(Action<ModelBuilder, ONNXNodeWrapper> opImportAction, ONNXNodeWrapper node)
-        {
-            var model = new Model();
-            var net = new ModelBuilder(model);
-
-            // add all inputs as constants
-            Debug.Assert(node.AreAllInputsConst);
-            for (var i = 0; i < node.InputCount; ++i)
-            {
-                var assumeOnnxLayout = i == 0 ? "NCHW" : "CONST";
-                var input = node.Inputs[i];
-                net.Const(input,
-                    constantTensors[input].ToBarracuda(assumeOnnxLayout));
-            }
-
-            // add node that we are going to bake into the constant
-            opImportAction(net, node);
-
-            // bake
-            var noInputs = new Dictionary<string, Tensor>();
-
-            var useCPUforBaking = WorkerFactory.Device.CPU;
-            var worker = WorkerFactory.CreateWorker(model, useCPUforBaking);
-            var result = worker.ExecuteAndWaitForCompletion(noInputs);
-
-            // convert from Barracuda back into ONNX layout
-            var onnxData = ONNXTensor.Permute(result, new int[] { 0, 3, 1, 2 }); // NHWC -> NCHW
-            var onnxShape = onnxData.shape.ToArray().Select(x => (long)x).ToArray();
-            return new ONNXTensor(onnxData, onnxShape).SqueezeAll();
-        }
-
-        // Asset importer callback
-        public override void OnImportAsset(AssetImportContext ctx)
-        {
-            var onnxModel = new ModelProto();
-            using (var readStream = new FileStream(ctx.assetPath, FileMode.Open))
-            using (var inputStream = new CodedInputStream(readStream))
-                onnxModel.MergeFrom(inputStream);
-
-            fixTF2ONNXExportIssues = (onnxModel.ProducerName == "tf2onnx");
-            if (fixTF2ONNXExportIssues)
-                D.Log("Hot fix for known tf2onnx issues");
-
-            var model = ConvertOnnxModel(onnxModel);
-            D.Log($"ONNX v{model.IrVersion}. Producer: {model.ProducerName}. Asset path: {ctx.assetPath}");
-            D.Log($"Barracuda model: {model}");
-
-            NNModelData assetData = ScriptableObject.CreateInstance<NNModelData>();
-            using (var memoryStream = new MemoryStream())
-            using (var writer = new BinaryWriter(memoryStream))
-            {
-                ModelWriter.Save(writer, model);
-                assetData.Value = memoryStream.ToArray();
-            }
-            assetData.name = "Data";
-            assetData.hideFlags = HideFlags.HideInHierarchy;
-
-            NNModel asset = ScriptableObject.CreateInstance<NNModel>();
-            asset.modelData = assetData;
-
-            ctx.AddObjectToAsset("main obj", asset, LoadIconTexture());
-            ctx.AddObjectToAsset("model data", assetData);
-
-            ctx.SetMainObject(asset);
-        }
-
-        private Texture2D LoadIconTexture()
-        {
-            if (m_IconTexture == null)
-            {
-                string[] allCandidates = AssetDatabase.FindAssets(iconName);
-
-                if (allCandidates.Length > 0)
-                {
-                    m_IconTexture = AssetDatabase.LoadAssetAtPath(AssetDatabase.GUIDToAssetPath(allCandidates[0]), typeof(Texture2D)) as Texture2D;
-                }
-            }
-            return m_IconTexture;
-        }
-
         // Helpers to keep track of model tensors
         private void Const(ONNXNodeWrapper node, ONNXTensor onnxTensor)
         {
@@ -1287,6 +1273,20 @@ namespace Barracuda
             m_ModelTensors.AddVariable(node.Name, features, productOfShape);
         }
 
+        // Icon helper
+        private Texture2D LoadIconTexture()
+        {
+            if (m_IconTexture == null)
+            {
+                string[] allCandidates = AssetDatabase.FindAssets(iconName);
+
+                if (allCandidates.Length > 0)
+                {
+                    m_IconTexture = AssetDatabase.LoadAssetAtPath(AssetDatabase.GUIDToAssetPath(allCandidates[0]), typeof(Texture2D)) as Texture2D;
+                }
+            }
+            return m_IconTexture;
+        }
 
         // Logging helpers
         private static void Warn(ModelBuilder builder, ONNXNodeWrapper node, string message)

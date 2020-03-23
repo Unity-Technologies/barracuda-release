@@ -693,19 +693,20 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
 
-    static public int IDivC(int v, int div)
+    static protected int IDivC(int v, int div)
     {
         return (v + div - 1) / div;
     }
 
-
-    Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad)
+    private Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
+
+        var O = X.shape.ApplyKernel(K.shape, stride, pad);
 
         var fn = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
 
@@ -715,8 +716,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         fn.shader.SetInts("_Pad", pad);
 
-        var OW = Dispatch(fn, O.shape, K.kernelCount, IDivC(O.width, 2), IDivC(O.height, 2));
-        return OW;
+        return Dispatch(fn, O, K.kernelCount, IDivC(O.width, 2), IDivC(O.height, 2));
     }
 
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
@@ -732,7 +732,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         bool useWinograd = (K.kernelWidth == 3) && (K.kernelHeight == 3) && (stride[0] == 1) && (stride[1] == 1) && ((O.height % 2) == 0) && ((O.width % 2) == 0);
         if( useWinograd )
         {
-            return Conv2DWinograd(X, K, B, new Tensor(O), stride, pad);
+            return Conv2DWinograd(X, K, B, stride, pad);
         }
 
         var fn = new ComputeFunc(m_Kernels, "Conv2D");
@@ -1273,6 +1273,29 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor ReduceProd(Tensor X, int axis)
     {
     	return Reduce("ReduceProd", X, axis);
+    }
+    
+    protected override Tensor CopyAndReshape(Tensor X, TensorShape newShape)
+    {
+        var copyShape = X.shape;
+        Assert.AreEqual(copyShape.length, newShape.length);
+
+        var fn = new ComputeFunc(m_Kernels, "Copy");
+        SetTensor(fn, "X", X);
+
+        // NOTE: "Copy" kernel copies tensor data while preserving the shape
+        // However here in CopyAndReshape we want to both copy and change the shape,
+        // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
+        // but use shape identical to source when copying.
+
+        var O = NewTensor(newShape, "O");
+        fn.SetTensor("O", copyShape, Pin(O).buffer);
+
+        var offsets = new int[] { 0,0,0,0 };
+        fn.shader.SetInts("_Pad", offsets);
+        fn.Dispatch(X.channels, X.width, X.height);
+
+        return O;
     }
 
     public override Tensor Prepare(Tensor X)

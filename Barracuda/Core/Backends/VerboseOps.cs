@@ -534,6 +534,13 @@ public class VerboseOps : IOps
         O.PrintDataPart(32, Prefix + "Tile");
         return O;
     }
+    Tensor IOps.Copy(Tensor x)
+    {
+        var O = m_Ops.Copy(x);
+        D.Log("!(" + x.shape +" )");
+        O.PrintDataPart(32, "Copy");
+        return O;
+    }
 
     Tensor IOps.Prepare(Tensor X)
     {

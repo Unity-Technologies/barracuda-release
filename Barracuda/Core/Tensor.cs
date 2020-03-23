@@ -269,11 +269,19 @@ public class Tensor : IDisposable
     private ITensorAllocator m_TensorAllocator;
     private float[] m_Cache;
     private bool m_CacheIsDirty;
+    private bool m_Disposed = false;
 
+    #region Debug 
     /// <summary>
     /// Return this tensor name.
     /// </summary>
     public string name;
+    /// <summary>
+    /// Return if tensor was already disposed.
+    /// </summary>
+    internal bool disposed { get { return m_Disposed; } }
+    #endregion
+
     /// <summary>
     /// Return this tensor allocator, see interface `ITensorAllocator`.
     /// </summary>
@@ -433,9 +441,9 @@ public class Tensor : IDisposable
         name = n;
         shape = s;
         if (srcBuffer.count < s.length)
-            throw new ArgumentException($"Compute buffer {name} capacity is {srcBuffer.count} less than {s.length} required for shape {s}");
-        if (srcBuffer.stride == 4)
-            throw new ArgumentException($"Currently only compute buffers with stride of 4 are supported. Compute buffer {name} stride is {srcBuffer.stride} instead");
+            throw new ArgumentException($"Compute buffer `{name}` capacity is {srcBuffer.count} less than {s.length} required for shape {s}");
+        if (srcBuffer.stride != 4)
+            throw new ArgumentException($"Currently only compute buffers with stride of 4 are supported. Compute buffer `{name}` stride is {srcBuffer.stride} instead");
         m_TensorOnDevice = new ComputeTensorData(srcBuffer, shape, offset:0, name);
         m_TensorAllocator = null;
         m_Cache = null;
@@ -592,6 +600,7 @@ public class Tensor : IDisposable
     /// Allocate tensor on device if needed and update data.
     /// By default cached copy of the data will be discarded when doing so, set `forceInvalidateCache` to false to keep the cache.
     /// </summary>
+    // @TODO: rename to PinToUninitializedDevice(uninitializedDataOnDevice ...)
     public void PinToDeviceAndUploadToIt(ITensorData onDevice, bool forceInvalidateCache = true)
     {
         if (m_TensorOnDevice == onDevice && !m_CacheIsDirty)
@@ -611,6 +620,7 @@ public class Tensor : IDisposable
     /// Allocate tensor on device if needed and download data to cache.
     /// See also `PrepareCacheForAccess()`.
     /// </summary>
+    // @TODO: rename to PinToDevice(...)
     public void PinToDeviceAndDownloadFromIt(ITensorData onDevice)
     {
         if (m_TensorOnDevice == onDevice && !m_CacheIsDirty)
@@ -637,6 +647,7 @@ public class Tensor : IDisposable
     /// <summary>
     /// Cast a tensorData to this tensor, transferring ownership of on tensorData device memory to this tensor.
     /// </summary>
+    // @TODO: remove in favor of renamed PinToDevice(...), currently only used in UnsafeArrayCPU
     public void CastOnDevice(ITensorData onDevice)
     {
         if (m_TensorOnDevice == onDevice)
@@ -737,23 +748,36 @@ public class Tensor : IDisposable
     // 2) always copy data in Flatten()/Reshape(), remove from Tensor interface
     // 2) always copy data in Flatten()/Reshape(), implement ICloneable for GPU ITensorData
 
-    /// <summary>
-    /// Create a flattened copy of the current Tensor ie of shape [B,1,1,H*W*CH]
-    /// </summary>
-    public Tensor Flatten()
+    private Tensor ShallowCopy(TensorShape newShape, string newName)
     {
-        var newShape = shape.Flatten();
-
         Tensor copy;
         if (m_TensorAllocator != null)
             copy = m_TensorAllocator.Alloc(newShape, m_TensorOnDevice);
         else
             copy = new Tensor(newShape, m_TensorOnDevice);
 
-        copy.name = $"flatten of {name}";
+        copy.name = newName;
         copy.m_Cache = m_Cache;
         copy.m_CacheIsDirty = m_CacheIsDirty;
+
         return copy;
+    }
+
+    /// <summary>
+    /// Create a copy of the current Tensor, sharing data storage with original tensor.
+    /// </summary>
+    public Tensor ShallowCopy()
+    {
+        return ShallowCopy(shape, $"copy of {name}");
+    }
+
+    /// <summary>
+    /// Create a flattened copy of the current Tensor ie of shape [B,1,1,H*W*CH]
+    /// </summary>
+    public Tensor Flatten()
+    {
+        var newShape = shape.Flatten();
+        return ShallowCopy(newShape, $"flatten of {name}");
     }
 
     /// <summary>
@@ -763,34 +787,7 @@ public class Tensor : IDisposable
     public Tensor Reshape(TensorShape newShape)
     {
         Assert.AreEqual(shape.length, newShape.length);
-        Tensor copy;
-        if (m_TensorAllocator != null)
-            copy = m_TensorAllocator.Alloc(newShape, m_TensorOnDevice);
-        else
-            copy = new Tensor(newShape, m_TensorOnDevice);
-
-        copy.name = $"reshape of {name}";
-        copy.m_Cache = m_Cache;
-        copy.m_CacheIsDirty = m_CacheIsDirty;
-        return copy;
-    }
-
-    /// <summary>
-    /// Create a copy of the current Tensor, sharing data storage with original tensor.
-    /// </summary>
-    public Tensor ShallowCopy()
-    {
-        Tensor copy;
-        if (m_TensorAllocator != null)
-            copy = m_TensorAllocator.Alloc(shape, m_TensorOnDevice);
-        else
-            copy = new Tensor(shape, m_TensorOnDevice);
-
-        copy.name = $"copy of {name}";
-        copy.m_Cache = m_Cache;
-        copy.m_CacheIsDirty = m_CacheIsDirty;
-
-        return copy;
+        return ShallowCopy(newShape, $"reshape of {name}");
     }
 
     /// <summary>
@@ -859,6 +856,7 @@ public class Tensor : IDisposable
         m_TensorOnDevice = null;
         m_TensorAllocator = null;
         m_Disposing = false;
+        m_Disposed = true;
     }
 
 
@@ -971,9 +969,8 @@ public class Tensor : IDisposable
 
     public override string ToString()
     {
-        return $"({name} {shape}, alloc: {m_TensorAllocator?.GetType()}, onDevice:{m_TensorOnDevice})";
+        return $"(`{name}` {shape}, alloc: {m_TensorAllocator?.GetType()}, onDevice:{m_TensorOnDevice})";
     }
-
 }
 
 } // namespace Barracuda

@@ -152,7 +152,7 @@ namespace Barracuda
             throw new OnnxLayerImportException($"Unsupported combination of tensor layout {onnxLayout} and tensor rank {onnxRank}");
         }
 
-        public static int[] Permute(long[] shape, string onnxLayout)
+        public static int[] PermuteToBarracuda(long[] shape, string onnxLayout)
         {
             var onnxRank = shape.Length;
             var permutations = AxisPermutationsForMappingONNXLayoutToBarracuda(onnxRank, onnxLayout);
@@ -170,7 +170,17 @@ namespace Barracuda
             Debug.Assert(shape.Count(v => v > 1) <= permutations.Count(v => v >= 0));
             var output = new int[permutations.Length];
             for (var i = 0; i < permutations.Length; ++i)
-                output[i] = permutations[i] >= 0 ? (int)shape[permutations[i]] : 1;
+                output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+            return output;
+        }
+
+        public static long[] Permute(long[] shape, int[] permutations)
+        {
+            Debug.Assert(shape.Length <= permutations.Length);
+            Debug.Assert(shape.Count(v => v > 1) <= permutations.Count(v => v >= 0));
+            var output = new long[permutations.Length];
+            for (var i = 0; i < permutations.Length; ++i)
+                output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
             return output;
         }
 
@@ -210,7 +220,7 @@ namespace Barracuda
 
         public static int[] ConvertSymbolicShapeToBarracuda(long[] onnxShape, string onnxLayout)
         {
-            var permutedShape = Permute(onnxShape, onnxLayout);
+            var permutedShape = PermuteToBarracuda(onnxShape, onnxLayout);
             Debug.Assert(permutedShape.Length == 4);
             return Enumerable.Repeat(1, 4 - permutedShape.Length).Concat(permutedShape).ToArray();
         }

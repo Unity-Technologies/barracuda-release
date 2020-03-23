@@ -51,8 +51,9 @@ public class NNModelEditor : Editor
     private List<string> m_ConstantsDesc = new List<string>();
     private List<string> m_Warnings = new List<string>();
     private List<string> m_WarningsDesc = new List<string>();
-    private string m_NumEmbeddedWeights;
-    private string m_NumConstantWeights;
+    private long m_NumEmbeddedWeights;
+    private long m_NumConstantWeights;
+    private long m_TotalWeightsSizeInBytes;
     private Vector2 m_WarningsScrollPosition = Vector2.zero;
     private Vector2 m_InputsScrollPosition = Vector2.zero;
     private Vector2 m_OutputsScrollPosition = Vector2.zero;
@@ -119,8 +120,9 @@ public class NNModelEditor : Editor
         m_Constants     = constants.Select(i => i.type.ToString()).ToList();
         m_ConstantsDesc = constants.Select(i => i.ToString()).ToList();
 
-        m_NumEmbeddedWeights = layers.Sum(l => (long)l.weights.Length).ToString();
-        m_NumConstantWeights = constants.Sum(l => (long)l.weights.Length).ToString();
+        m_NumEmbeddedWeights = layers.Sum(l => (long)l.datasets.Sum(ds => (long)ds.length));
+        m_NumConstantWeights = constants.Sum(l => (long)l.datasets.Sum(ds => (long)ds.length));
+        m_TotalWeightsSizeInBytes = layers.Select(l => l.weights).Distinct().Sum(d => (long)d.Length) * sizeof(float);
 
         m_Warnings = m_Model.Warnings.Select(i => i.LayerName).ToList();
         m_WarningsDesc = m_Model.Warnings.Select(i => i.Message).ToList();
@@ -141,14 +143,17 @@ public class NNModelEditor : Editor
             ListUIHelper($"Warnings {m_Warnings.Count.ToString()}", m_Warnings, m_WarningsDesc, ref m_WarningsScrollPosition);
             EditorGUILayout.HelpBox("Model contains warnings. Behavior might be incorrect", MessageType.Warning, true);
         }
-        ListUIHelper($"Inputs ({m_Inputs.Count.ToString()})", m_Inputs, m_InputsDesc, ref m_InputsScrollPosition);
-        ListUIHelper($"Outputs ({m_Outputs.Count.ToString()})", m_Outputs, m_OutputsDesc, ref m_OutputsScrollPosition);
-        ListUIHelper($"Memories ({m_Memories.Count.ToString()})", m_Memories, m_MemoriesDesc, ref m_MemoriesScrollPosition);
-        ListUIHelper($"Layers ({m_Layers.Count.ToString()} using {m_NumEmbeddedWeights} embedded weights)", m_Layers, m_LayersDesc, ref m_LayerScrollPosition);
-        ListUIHelper($"Constants ({m_Constants.Count.ToString()} using {m_NumConstantWeights} weights)", m_Constants, m_ConstantsDesc, ref m_ConstantScrollPosition);
+        var constantWeightInfo = m_Constants.Count > 0 ? $" using {m_NumConstantWeights:n0} weights" : "";
+        ListUIHelper($"Inputs ({m_Inputs.Count})", m_Inputs, m_InputsDesc, ref m_InputsScrollPosition);
+        ListUIHelper($"Outputs ({m_Outputs.Count})", m_Outputs, m_OutputsDesc, ref m_OutputsScrollPosition);
+        ListUIHelper($"Memories ({m_Memories.Count})", m_Memories, m_MemoriesDesc, ref m_MemoriesScrollPosition);
+        ListUIHelper($"Layers ({m_Layers.Count} using {m_NumEmbeddedWeights:n0} embedded weights)", m_Layers, m_LayersDesc, ref m_LayerScrollPosition, m_Constants.Count == 0 ? 1.5f: 1f);
+        ListUIHelper($"Constants ({m_Constants.Count}{constantWeightInfo})", m_Constants, m_ConstantsDesc, ref m_ConstantScrollPosition);
+
+        GUILayout.Label($"Total weight size: {m_TotalWeightsSizeInBytes:n0} bytes");
     }
 
-    private static void ListUIHelper(string sectionTitle, IReadOnlyList<string> names, IReadOnlyList<string> descriptions, ref Vector2 scrollPosition)
+    private static void ListUIHelper(string sectionTitle, IReadOnlyList<string> names, IReadOnlyList<string> descriptions, ref Vector2 scrollPosition, float maxHeightMultiplier = 1f)
     {
         int n = names.Count();
         Debug.Assert(descriptions.Count == n);
@@ -157,7 +162,7 @@ public class NNModelEditor : Editor
 
         GUILayout.Space(k_Space);
         GUILayout.Label(sectionTitle, EditorStyles.boldLabel);
-        float height = Mathf.Min(n * 20f + 2f, 150f);
+        float height = Mathf.Min(n * 20f + 2f, 150f * maxHeightMultiplier);
         if (n == 0)
             return;
 

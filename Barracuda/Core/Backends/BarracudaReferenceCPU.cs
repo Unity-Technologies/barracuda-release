@@ -223,8 +223,8 @@ public class ReferenceCPUOps : IOps
     {
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
-        X = X.Flatten();
-        Y = Y.Flatten();
+        X = Flatten(X);
+        Y = Flatten(Y);
 
         if (xTranspose)
             X = Transpose(X);
@@ -1759,14 +1759,43 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
+    protected virtual Tensor CopyAndReshape(Tensor X, TensorShape shape)
+    {
+        Assert.AreEqual(X.length, shape.length);
+        var O = NewTensor(shape);
+        for (int i = 0; i < X.length; ++i)
+            O[i] = X[i];
+        return O;
+    }
+
+    public virtual Tensor Copy(Tensor X)
+    {
+        // make shallow copy and patch the shape, if already managed by allocator
+        if (X.allocator != null)
+            return X.ShallowCopy();
+
+        return CopyAndReshape(X, X.shape);
+    }
+
     public virtual Tensor Flatten(Tensor X)
     {
-        return X.Flatten();
+        // make shallow copy and patch the shape, if already managed by allocator
+        if (X.allocator != null)
+            return X.Flatten();
+
+        // otherwise deep copy
+        var newShape = X.shape.Flatten();
+        return CopyAndReshape(X, newShape);
     }
 
     public virtual Tensor Reshape(Tensor X, TensorShape newShape)
     {
-        return X.Reshape(newShape);
+        // shallow copy and patch the shape, if already managed by allocator
+        if (X.allocator != null)
+            return X.Reshape(newShape);
+
+        // otherwise deep copy
+        return CopyAndReshape(X, newShape);
     }
 
     public virtual Tensor Gather(Tensor[] tensors, int axis)
@@ -1799,7 +1828,7 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor Transpose(Tensor X)
     {
         Assert.IsTrue(X.dimensions <= 2);
-        X = X.Flatten();
+        X = Flatten(X);
 
         var O = NewTensor(X.flatWidth, X.flatHeight);
 

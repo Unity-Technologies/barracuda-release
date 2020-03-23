@@ -182,7 +182,7 @@ public class GenericWorker : IWorker
             if (l.type == Layer.Type.Nop)
             {
                 Profiler.BeginSample ("Barracuda.Nop");
-                X = X.ShallowCopy();
+                X = m_Ops.Copy(X);
             }
             // Load const
             else if (l.type == Layer.Type.Load)
@@ -683,7 +683,7 @@ public class GenericWorker : IWorker
                 }
                 else
                 {
-                    X = X.ShallowCopy();
+                    X = m_Ops.Copy(X);
                 }
             }
             else
@@ -775,6 +775,11 @@ public class GenericVars : IVars
     public virtual ITensorAllocator GetAllocator()
     {
         return m_Allocator;
+    }
+
+    protected virtual bool IsTensorOwnedByInternalAllocator(Tensor tensor)
+    {
+        return tensor.allocator == GetAllocator();
     }
 
     protected bool ValidateGlobalInputs(Model model, IDictionary<string, TensorShape> inputShapes)
@@ -901,7 +906,8 @@ public class GenericVars : IVars
                 m_LayerNameToKeepUntilId[key] < layerId &&
                 !m_ModelTensors.Contains(m_TensorsByName[key]))
             {
-                m_TensorsByName[key].Dispose();
+                if (IsTensorOwnedByInternalAllocator(m_TensorsByName[key]))
+                    m_TensorsByName[key].Dispose();
                 m_TensorsByName.Remove(key);
             }
         }
@@ -941,9 +947,7 @@ public class GenericVarsWithReuse : GenericVars
         if (m_Temporary == null)
             return;
 
-        if (m_Temporary.allocator != null)
-            m_Temporary.allocator.Release(m_Temporary, false);
-        else
+        if (IsTensorOwnedByInternalAllocator(m_Temporary))
             m_Temporary.Dispose();
         m_Temporary = null;
     }
@@ -1032,6 +1036,12 @@ public class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocat
     public override ITensorAllocator GetAllocator()
     {
         return this;
+    }
+    protected override bool IsTensorOwnedByInternalAllocator(Tensor tensor)
+    {
+        var allocator = tensor.allocator;
+        return allocator == m_TemporaryAllocator ||
+               allocator == m_StorageAllocator;
     }
 
     public virtual Tensor Alloc(TensorShape shape)

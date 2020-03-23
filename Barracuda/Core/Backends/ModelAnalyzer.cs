@@ -14,12 +14,16 @@ public class ModelAnalyzer
 {
     static public string GetDefaultInputName(Model model)
     {
-        if (model.inputs.Count == 1)
+        bool modelHasOnlyOneInput = model.inputs.Count == 1;
+        if (modelHasOnlyOneInput)
             return model.inputs[0].name;
 
-        var previousLayerNames = new HashSet<string>();
+        var memories = new HashSet<string>();
+        foreach (var m in model.memories)
+            memories.Add(m.input);
 
-        // find first unconnected layer
+        // find the first unconnected input as a default model input
+        var previousLayerNames = new HashSet<string>();
         foreach (var l in model.layers)
         {
             previousLayerNames.Add(l.name);
@@ -29,14 +33,14 @@ public class ModelAnalyzer
             if (layerDoesNotNeedInput)
                 continue;
 
-            if (l.inputs.Length != 1)
-                continue;
+            foreach (var inputName in l.inputs)
+            {
+                bool inputIsUnconnected = !previousLayerNames.Contains(inputName);
+                bool inputIsNotPartOfMemory = !memories.Contains(inputName);
 
-            // treat layer as default input layer
-            // if-and-only-if layer has only 1 input AND is not connected to any previous layer
-            var inputName = l.inputs[0];
-            if (!previousLayerNames.Contains(inputName))
-                return inputName;
+                if (inputIsUnconnected && inputIsNotPartOfMemory)
+                    return inputName;
+            }
         }
 
         return "";
@@ -437,40 +441,72 @@ public class ModelAnalyzer
         return maxTensorShape;
     }
 
-    static public string[] FindBrokenLinks(Model model)
+    static public string[] FindUnusedLayers(Model model)
     {
-        var globalInputsByName = model.inputs.ToDictionary(i => i.name, i => true);
-        var memoryInputsByName = model.memories.ToDictionary(i => i.input, i => true);
-        var layersByName = model.layers.ToDictionary(i => i.name, i => i);
-        var brokenLinks = new HashSet<string>();
-
+        var layerUsageByName = model.layers.ToDictionary(i => i.name, i => false);
         foreach (var layer in model.layers)
             foreach (var i in layer.inputs)
-                if (!layersByName.ContainsKey(i) && !globalInputsByName.ContainsKey(i) && !memoryInputsByName.ContainsKey(i))
-                    brokenLinks.Add(i);
+                layerUsageByName[i] = true;
+
+        foreach (var o in model.outputs)
+            layerUsageByName[o] = true;
+
+        foreach (var mem in model.memories)
+            layerUsageByName[mem.output] = true;
+
+        return layerUsageByName.Where(keyValue => !keyValue.Value).Select(keyValue => keyValue.Key).ToArray();
+    }
+
+    static public string[] FindBrokenLinks(Model model, HashSet<string> links)
+    {
+        var allVariables = new HashSet<string>(model.layers.Select(i => i.name));
+        var globalInputs = new HashSet<string>(model.inputs.Select(i => i.name));
+        var memoryInputs = new HashSet<string>(model.memories.Select(i => i.input));
+        allVariables.UnionWith(globalInputs);
+        allVariables.UnionWith(memoryInputs);
+
+        var brokenLinks = links;
+        brokenLinks.ExceptWith(allVariables);
         return brokenLinks.ToArray();
+    }
+
+    static public string[] FindBrokenLinks(Model model, string[] links)
+    {
+        return FindBrokenLinks(model, new HashSet<string>(links));
+    }
+
+    static public string[] FindBrokenLinks(Model model)
+    {
+        // check global outputs
+        var linksToInspect = new HashSet<string>(model.outputs);
+
+        // and all layers
+        foreach (var layer in model.layers)
+            foreach (var i in layer.inputs)
+                linksToInspect.Add(i);
+
+        return FindBrokenLinks(model, linksToInspect);
     }
 
     static public string[] FindUnconnectedInputs(Model model)
     {
         var unconnected = model.inputs.ToDictionary(i => i.name, i => true);
+
+        // check global outputs
+        foreach (var o in model.outputs)
+            unconnected.Remove(o);
+
+        // and all layers
         foreach (var layer in model.layers)
             foreach (var i in layer.inputs)
                 unconnected.Remove(i);
-        return unconnected.Keys.ToArray();
-    }
 
-    static public string[] FindUnconnectedOutputs(Model model, List<string> outputs)
-    {
-        var unconnected = outputs.ToDictionary(i => i, i => true);
-        foreach (var layer in model.layers)
-            unconnected.Remove(layer.name);
         return unconnected.Keys.ToArray();
     }
 
     static public string[] FindUnconnectedOutputs(Model model)
     {
-        return FindUnconnectedOutputs(model, model.outputs);
+        return FindBrokenLinks(model, model.outputs.ToArray());
     }
 }
 

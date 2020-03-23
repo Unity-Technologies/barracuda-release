@@ -199,33 +199,58 @@ public class RecurrentState : IDisposable
     private Model m_Model;
     private Tensor[] m_Memories;
 
+    int InferBatchSize(int batchSize, int newBatchSize, string memoryName)
+    {
+        if (batchSize < 0)
+            batchSize = newBatchSize;
+        else
+        {
+            Assert.IsTrue(batchSize != -1);
+            if (batchSize != newBatchSize)
+                throw new ArgumentException("Batch size for all memories of the model must be the same value. " +
+                    $"Expected batch size of {batchSize}, but got {newBatchSize} for memory `{memoryName}`");
+        }
+        return batchSize;
+    }
+
     /// <summary>
     /// Constructs recurrent state for a specific model
     /// `model` is the associated model.
-    /// `batchSize` has to match the batch dimension of the input tensor(s).
+    /// `batchSize` has to match the batch dimension of the input tensor(s). Specifying -1 will use batch size of the memory tensors as declared in the model.
     /// `grabFromInputs` optional dictionary of named tensors that can be used as a memory. If name of the tensor matches the memory, tensor will be removed from the dictionary and used as memory.
     /// </summary>
-    public RecurrentState(Model model, int batchSize = 1, Dictionary<string, Tensor> grabFromInputs = null)
+    public RecurrentState(Model model, int batchSize = -1, Dictionary<string, Tensor> grabFromInputs = null)
     {
-        m_BatchSize = batchSize;
+        bool overrideModelBatchSize = batchSize > 0;
+
         m_Model = model;
         m_Memories = new Tensor[m_Model.memories.Count];
 
         var index = 0;
         foreach (var memory in m_Model.memories)
         {
-            if (grabFromInputs != null && grabFromInputs.ContainsKey(memory.input))
+            var memoryName = memory.input;
+            if (grabFromInputs != null && grabFromInputs.ContainsKey(memoryName))
             {
-                m_Memories[index++] = grabFromInputs[memory.input];
-                grabFromInputs.Remove(memory.input);
+                // steal input from the inputs and use it as a memory
+                var inputTensorToBecomeMemory = grabFromInputs[memoryName];
+                m_Memories[index++] = inputTensorToBecomeMemory;
+                grabFromInputs.Remove(memoryName);
+
+                batchSize = InferBatchSize(batchSize, inputTensorToBecomeMemory.batch, memoryName);
             }
             else
             {
-                Assert.AreEqual(memory.shape.batch, 1);
-                var shape = new TensorShape(memory.shape.batch * batchSize, memory.shape.height, memory.shape.width, memory.shape.channels);
+                if (!overrideModelBatchSize)
+                    batchSize = InferBatchSize(batchSize, memory.shape.batch, memoryName);
+
+                // create memory tensor
+                var shape = new TensorShape(batchSize, memory.shape.height, memory.shape.width, memory.shape.channels);
                 m_Memories[index++] = new Tensor(shape);
             }
         }
+
+        m_BatchSize = batchSize;
     }
 
     ~RecurrentState()

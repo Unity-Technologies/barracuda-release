@@ -115,8 +115,10 @@ namespace Barracuda
 
         public ONNXTensor Permute(int[] permutations)
         {
+            // transpose both data & shape
             var transposedData = Permute(m_Data, permutations);
-            return new ONNXTensor(transposedData, transposedData.shape.ToArray().Select(i => (long)i).ToArray());
+            var transposedShape = ONNXLayout.Permute(m_Shape, permutations);
+            return new ONNXTensor(transposedData, transposedShape);
         }
 
         public ONNXTensor SqueezeAll()
