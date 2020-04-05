@@ -138,13 +138,15 @@ struct ReadonlyTensor : Tensor
 
     float SafeGet(uint b, uint2 pos, uint ch, uint2 pad, float def = 0)
     {
-        if (b >= batch || ch >= channels) return def;
+        bool cond =
+            (b >= batch || ch >= channels ||
+            any(pos < pad) ||
+            any(pos >= uint2(width, height) + pad));
 
-        if (any(pos < pad)) return def;
-        if (any(pos >= uint2(width, height) + pad)) return def;
-        pos -= pad;
-
-        return data[Index(b, pos.y, pos.x, ch)];
+        if (cond)
+            return def;
+        else
+            return Get(b, pos - pad, ch);
     }
     float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad, float def = 0)
     {
@@ -152,15 +154,20 @@ struct ReadonlyTensor : Tensor
     }
     float SafeGet(uint b, uint i, float def = 0)
     {
-        if (b >= batch || i >= height * width * channels) return def;
-        return Get(b,i);
+        if (b >= batch || i >= height * width * channels)
+            return def;
+        else
+            return Get(b,i);
     }
     float SafeGet(uint i, float def = 0)
     {
-        if (i >= batch * height * width * channels) return def;
-        return Get(i);
+        if (i >= batch * height * width * channels)
+            return def;
+        else
+            return Get(i);
     }
-    float MaskedGet(bool cond, uint i, float def=0)
+
+    float MaskedGet(bool cond, uint i, float def = 0)
     {
         if (cond)
             return Get(i);
@@ -209,30 +216,37 @@ struct ReadWriteTensor : Tensor
         return Get(b % GetFlatHeight(), i % GetFlatWidth());
     }
 
-    float SafeGet(uint b, uint2 pos, uint ch, uint2 pad)
+    float SafeGet(uint b, uint2 pos, uint ch, uint2 pad, float def = 0)
     {
-        if (b >= batch || ch >= channels) return 0;
+        bool cond =
+            (b >= batch || ch >= channels ||
+            any(pos < pad) ||
+            any(pos >= uint2(width, height) + pad));
 
-        if (any(pos < pad)) return 0;
-        if (any(pos >= uint2(width, height) + pad)) return 0;
-        pos -= pad;
+        if (cond)
+            return def;
+        else
+            return Get(b, pos - pad, ch);
+    }
+    float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad, float def = 0)
+    {
+        return SafeGet(b, uint2(w, h), ch, pad, def);
+    }
+    float SafeGet(uint b, uint i, float def = 0)
+    {
+        if (b >= batch || i >= height * width * channels)
+            return def;
+        else
+            return Get(b,i);
+    }
+    float SafeGet(uint i, float def = 0)
+    {
+        if (i >= batch * height * width * channels)
+            return def;
+        else
+            return Get(i);
+    }
 
-        return Get(b, pos.y, pos.x, ch);
-    }
-    float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad)
-    {
-        return SafeGet(b, uint2(w, h), ch, pad);
-    }
-    float SafeGet(uint b, uint i)
-    {
-        if (b >= batch || i >= height * width * channels) return 0;
-        return Get(b,i);
-    }
-    float SafeGet(uint i)
-    {
-        if (i >= batch * height * width * channels) return 0;
-        return Get(i);
-    }
     float MaskedGet(bool cond, uint i, float def=0)
     {
         if (cond)
@@ -310,30 +324,36 @@ struct SharedTensor : Tensor
         return data[i % GetFlatWidth()];
     }
 
-    float SafeGet(uint b, uint2 pos, uint ch, uint2 pad)
+    float SafeGet(uint b, uint2 pos, uint ch, uint2 pad, float def = 0)
     {
-        if (b >= batch || ch >= channels) return 0;
+        if (b >= batch || ch >= channels ||
+            any(pos < pad) ||
+            any(pos >= uint2(width, height) + pad))
+        {
+            return def;
+        }
+        else
+            return Get(b, pos - pad, ch);
+    }
+    float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad, float def = 0)
+    {
+        return SafeGet(b, uint2(w, h), ch, pad, def);
+    }
+    float SafeGet(uint b, uint i, float def = 0)
+    {
+        if (b >= batch || i >= height * width * channels)
+            return def;
+        else
+            return Get(b,i);
+    }
+    float SafeGet(uint i, float def = 0)
+    {
+        if (i >= batch * height * width * channels)
+            return def;
+        else
+            return Get(i);
+    }
 
-        if (any(pos < pad)) return 0;
-        if (any(pos >= uint2(width, height) + pad)) return 0;
-        pos -= pad;
-
-        return Get(b, pos, ch);
-    }
-    float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad)
-    {
-        return SafeGet(b, uint2(w, h), ch, pad);
-    }
-    float SafeGet(uint b, uint i)
-    {
-        if (b >= batch || i >= height * width * channels) return 0;
-        return Get(b,i);
-    }
-    float SafeGet(uint i)
-    {
-        if (i >= batch * height * width * channels) return 0;
-        return Get(i);
-    }
     float MaskedGet(bool cond, uint i, float def=0)
     {
         if (cond)

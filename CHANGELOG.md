@@ -1,5 +1,15 @@
 # Release notes
 
+## [0.6.3] - 2020-04-03
+- Performance: over 10x performance improvement for 'Tiny Yolo V2' model and over 5x improvement for 'Mobilenet' model when CPU side inference is used.
+- Performance: significantly improved speed of Convolutions on CPU by using fast Matrix Multiplication (powered by BLAS when available) and memory efficient version of Im2Col algorithm. Memory consumption stays constant regardless of kernel size!
+- Performance: significantly improved speed of Depthwise Convolution on CPU.
+- Performance: optimized Relu, Relu6, LeakyRelu, ScaleBias, AvgPool layers on CPU.
+- Fix/Performance: BLAS and Burst plugins are not stripped anymore when making IL2CPP builds.
+- Fix: no more occasional misleading shader warning "use of potentially uninitialized variable (ReadonlyTensor::SafeGet)"
+- Misc: Burst dependency bumped to 1.2.3.
+
+
 ## [0.6.2] - 2020-03-23
 - Fix: Prevent deallocation of the user-owned input tensor when passed to Identity or Reshape layer at the beginning of the model. As a side effect of this change Reshape layer now always makes copy of tensor data, this will be optimised in the future.
 - Fix: Tensor constructor with ComputeBuffer argument accepts correct stride value now.

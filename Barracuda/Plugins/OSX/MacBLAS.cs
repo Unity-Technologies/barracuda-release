@@ -4,6 +4,7 @@ using Barracuda;
 using UnityEngine;
 using UnityEngine.Scripting;
 
+[assembly: AlwaysLinkAssembly]
 
 [Preserve]
 public class MacBLAS : BLASPlugin
