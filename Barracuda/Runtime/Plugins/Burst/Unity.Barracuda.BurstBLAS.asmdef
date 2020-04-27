@@ -1,0 +1,11 @@
+{
+    "name": "Unity.Barracuda.BurstBLAS",
+    "references": [
+        "Unity.Barracuda",
+		"Unity.Burst"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true
+}

@@ -1,8 +1,6 @@
 <!---TODO:
 	Advanced topics
-	* worker.SetInput(): to prewarm data
 	* how to trim networks at runtime (multi brain models)
-	* loading model from url: var modelFromDiskOrInternet = ModelLoader.Load(url, verbose); // will download and cache model from url
 	* recurrent state
 --->
 
@@ -44,7 +42,7 @@ var model = ModelLoader.LoadFromStreamingAssets(modelName + ".nn");
 ### Create inference engine (Worker)
 Inference engine in Barracuda is called Worker. Worker is responsible for breaking down model into executable tasks and scheduling them on GPU or CPU.
 ```C#
-var worker = BarracudaWorkerFactory.CreateWorker(BarracudaWorkerFactory.Type.ComputePrecompiled, model)
+var worker = WorkerFactory.CreateWorker(WorkerFactory.Type.ComputePrecompiled, model)
 ```
 
 ### Execute the model
@@ -149,7 +147,7 @@ You can turn on verbose mode for different parts of Barracuda:
 ```C#
 bool verbose = true;
 var model = ModelLoader.LoadModel(onnxAsset, verbose); // verbose loader
-var worker = BarracudaWorkerFactory.CreateWorker(BarracudaWorkerFactory.Type.ComputePrecompiled, model, verbose); // verbose execution
+var worker = WorkerFactory.CreateWorker(WorkerFactory.Type.ComputePrecompiled, model, verbose); // verbose execution
 ```
 
 ## Converting TensorFlow models to Barracuda format
@@ -185,11 +183,6 @@ Convert constant graph to Barracuda:
 python tensorflow_to_barracuda.py Models/3DBall-tf-model.pb Destination/3DBall-bc.nn
 ```
 
-There is legacy converter from ONNX:
-```bash
-python onnx_to_barracuda.py Models/mnist/model.onnx Destination/mnist-bc.nn
-```
-
 If network has multiple outputs, but you need only particular ones during the inference, there is an optional `-trim` flag to remove unused outputs and calculations.
 For example:
 ```bash
@@ -202,6 +195,21 @@ You could pass `--print-supported-ops` to get approximate list of supported oper
 
 P.S. Python 3.5 or 3.6 is recommended
 P.P.S. We plan to migrate Tensorflow converter from Python to C# in the future.
+
+## Supported platforms
+
+*CPU inference*: *all Unity platforms are supported*.
+
+*GPU inference*: all Unity platforms are supported except OpenGL ES on Android/iOS (use Vulkan/Metal), OpenGL Core on Mac (use Metal), WebGL (use CPU inference).
+
+## Supported Neural architectures and Models
+
+- All ML-Agents models.
+- MobileNet v1/v2 image classifiers.
+- Tiny YOLO v2 object detector.
+- UNet type of models.
+- Fully convolutional models.
+- Fully dense models.
 
 ## Approximate list of ONNX operations supported by Barracuda
 

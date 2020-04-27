@@ -1,0 +1,13 @@
+{
+    "name": "Unity.Barracuda.iOSBLAS",
+    "references": [
+        "Unity.Barracuda"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [
+        "Editor",
+        "iOS"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true
+}

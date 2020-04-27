@@ -1,0 +1,389 @@
+#pragma kernel ScaleBias_NHWC      CHANNELS_FIRST=0
+#pragma kernel ScaleBias_NCHW      CHANNELS_FIRST=1
+#pragma kernel ScaleBias_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel ScaleBias_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel ScaleBias_CNyx2_NHWC CHANNELS_FIRST=0
+//#pragma kernel ScaleBias_CNyx2_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel ScaleBias_Flat_NHWC CHANNELS_FIRST=0
+#pragma kernel ScaleBias_Flat_NCHW CHANNELS_FIRST=1
+#pragma kernel ScaleBias_Loop_NHWC CHANNELS_FIRST=0
+#pragma kernel ScaleBias_Loop_NCHW CHANNELS_FIRST=1
+#pragma kernel InstanceNormTail_CNyx2_NHWC CHANNELS_FIRST=0
+//#pragma kernel InstanceNormTail_CNyx2_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel InstanceNormTail_Flat_NHWC CHANNELS_FIRST=0
+#pragma kernel InstanceNormTail_Flat_NCHW CHANNELS_FIRST=1
+#pragma kernel InstanceNormTail_Loop_NHWC CHANNELS_FIRST=0
+#pragma kernel InstanceNormTail_Loop_NCHW CHANNELS_FIRST=1
+#pragma kernel Upsample2D_NHWC CHANNELS_FIRST=0
+#pragma kernel Upsample2D_NCHW CHANNELS_FIRST=1
+#pragma kernel UpsampleBilinear2D_NHWC CHANNELS_FIRST=0
+#pragma kernel UpsampleBilinear2D_NCHW CHANNELS_FIRST=1
+#pragma kernel UpsampleBilinear2D_2x2_NHWC CHANNELS_FIRST=0
+#pragma kernel UpsampleBilinear2D_2x2_NCHW CHANNELS_FIRST=1
+#pragma kernel Copy_NHWC CHANNELS_FIRST=0
+#pragma kernel Copy_NCHW CHANNELS_FIRST=1
+#pragma kernel ReshapeFromNHWCModel_NCHW CHANNELS_FIRST=1
+
+#include "Tensor.cginc"
+
+TENSOR_DECL(X)
+TENSOR_DECL(W)
+TENSOR_DECL(S)
+TENSOR_DECL(B)
+TENSOR_DECL(WBK)
+TENSOR_DECL_RW(O)
+
+uint4 _Pool;
+uint4 _Pad;
+float _Epsilon;
+uint _LoopStride;
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void KERNEL_FUNC(ScaleBias)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    float bias = B.Get(0, 0, 0, c);
+    float scale = W.Get(0, 0, 0, c);
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = v * scale + bias;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((16,16,1), (16,8,1), (16,4,1))
+void KERNEL_FUNC(ScaleBias_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float bias = B.Get(0, 0, 0, c);
+    float scale = W.Get(0, 0, 0, c);
+
+    float v = X.Get(n, y, x, c);
+    v = v * scale + bias;
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
+void KERNEL_FUNC(ScaleBias_Flat)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.length, 1, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint i = dispatchThreadID.x;
+    if (i > O.GetLength()) return;
+
+    uint c = X.GetChannelFromIndex(i);
+    float bias = B.FastGet(c);
+    float scale = W.FastGet(c);
+
+    float v = X.FastGet(i);
+    v = v * scale + bias;
+    O.FastSet(i, v);
+}
+
+NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
+void KERNEL_FUNC(ScaleBias_Loop)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.length, 1, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint i = dispatchThreadID.x;
+    uint len = O.GetLength();
+
+    while (i < len)
+    {
+        uint c = X.GetChannelFromIndex(i);
+        float bias = B.FastGet(c);
+        float scale = W.FastGet(c);
+
+        float v = X.FastGet(i);
+        v = v * scale + bias;
+        O.FastSet(i, v);
+
+        i += _LoopStride;
+    }
+}
+
+NUMTHREADS((32,4,1), (32,2,1), (16,2,1))
+void KERNEL_FUNC(ScaleBias_CNyx2)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint c = dispatchThreadID.x;
+    uint i = dispatchThreadID.y * X.channels + c;
+
+    if (c >= X.channels) return;
+    if (i >= X.GetLength()) return;
+
+    float bias = B.FastGet(c);
+    float scale = W.FastGet(c);
+
+    float v = X.FastGet(i);
+    v = v * scale + bias;
+
+    O.FastSet(i, v);
+}
+
+NUMTHREADS((256, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(InstanceNormTail_Flat)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.length, 1, 1);
+    TENSOR_ARG(W);
+    TENSOR_SHARED2_ARGS4(X, S, B, WBK, O);
+
+    uint i = dispatchThreadID.x;
+    if (i > O.GetLength()) return;
+
+    uint c = X.GetChannelFromIndex(i);
+    uint b = i / (X.height * X.width * X.channels);
+
+    float mean = W.Get(b, 0, 0, c);
+    float variance = W.Get(b, 1, 0, c);
+
+    float scale = S.FastGet(c);
+    float bias = B.FastGet(c);
+
+    // normalization factor
+    float invNormFactor = 1 / sqrt(variance + _Epsilon);
+
+    float v = X.FastGet(i);
+    v = v * invNormFactor - mean * invNormFactor;
+    v = v * scale + bias;
+
+    O.FastSetWithActivation(i, v);
+}
+
+NUMTHREADS((256, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(InstanceNormTail_Loop)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.length, 1, 1);
+    TENSOR_ARG(W);
+    TENSOR_SHARED2_ARGS4(X, S, B, WBK, O);
+
+    uint i = dispatchThreadID.x;
+    uint len = O.GetLength();
+
+    while (i < len)
+    {
+        uint c = X.GetChannelFromIndex(i);
+        uint b = i / (X.height * X.width * X.channels);
+
+        float mean = W.Get(b, 0, 0, c);
+        float variance = W.Get(b, 1, 0, c);
+
+        float scale = S.FastGet(c);
+        float bias = B.FastGet(c);
+
+        // normalization factor
+        float invNormFactor = 1 / sqrt(variance + _Epsilon);
+
+        float v = X.FastGet(i);
+        v = v * invNormFactor - mean * invNormFactor;
+        v = v * scale + bias;
+
+        O.FastSetWithActivation(i, v);
+
+        i += _LoopStride;
+    }
+}
+
+NUMTHREADS((32, 4, 1), (32, 2, 1), (16, 2, 1))
+void KERNEL_FUNC(InstanceNormTail_CNyx2)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARG(W);
+    TENSOR_SHARED2_ARGS4(X, S, B, WBK, O);
+
+    uint c = dispatchThreadID.x;
+    uint i = dispatchThreadID.y * X.channels + c;
+    uint b = i / (X.height * X.width * X.channels);
+
+    if (c >= X.channels) return;
+    if (i >= X.GetLength()) return;
+
+    float mean = W.Get(b, 0, 0, c);
+    float variance = W.Get(b, 1, 0, c);
+
+    float scale = S.FastGet(c);
+    float bias = B.FastGet(c);
+
+    // normalization factor
+    float invNormFactor = 1 / sqrt(variance + _Epsilon);
+
+    float v = X.FastGet(i);
+    v = v * invNormFactor - mean * invNormFactor;
+    v = v * scale + bias;
+
+    O.FastSetWithActivation(i, v);
+}
+
+[numthreads(4,4,4)]
+void KERNEL_FUNC(UpsampleBilinear2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    float2 dstPos = float2(x, y);
+    float2 srcPos = (dstPos + 0.5) / _Pool.xy - 0.5;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float p00 = X.ClampGet(n, floor(srcPos) + float2(0, 0), c);
+        float p01 = X.ClampGet(n, floor(srcPos) + float2(0, 1), c);
+        float p10 = X.ClampGet(n, floor(srcPos) + float2(1, 0), c);
+        float p11 = X.ClampGet(n, floor(srcPos) + float2(1, 1), c);
+
+        float v =
+            p00 * (1-frac(srcPos.x)) * (1-frac(srcPos.y)) +
+            p01 * (1-frac(srcPos.x)) *    frac(srcPos.y)  +
+            p10 *    frac(srcPos.x)  * (1-frac(srcPos.y)) +
+            p11 *    frac(srcPos.x)  *    frac(srcPos.y);
+
+        O.Set(n, y, x, c, v);
+    }
+}
+
+
+//Only a part of LDS will be used. Size match NUMTHREADS to simplify shader code when storing to LDS.
+groupshared float UpsampleBilinear2D_2x2_Cache[8][8];
+NUMTHREADS((8,8,1), (8,8,1), (8,8,1))
+void KERNEL_FUNC(UpsampleBilinear2D_2x2)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+{
+    DISPATCH_ARGS(O.width, O.height, O.channels);
+    TENSOR_ARGS2(X, O);
+
+    int2 tg_SrcBasePos = groupID.xy * 4 - 1;
+    uint c = dispatchThreadID.z;
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
+
+    float2 srcLDSPos = (groupThreadID.xy + 0.5f) / 2.0f - 0.5f;
+    uint2 srcLDSBasePos = floor(srcLDSPos) + uint2(1,1);
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        //store inputs to LDS
+        UpsampleBilinear2D_2x2_Cache[groupThreadID.x][groupThreadID.y] = X.ClampGet(n, tg_SrcBasePos + groupThreadID.xy, c);
+        GroupMemoryBarrierWithGroupSync();
+
+        //read inputs from LDS
+        float p00 = UpsampleBilinear2D_2x2_Cache[srcLDSBasePos.x+0][srcLDSBasePos.y+0];
+        float p01 = UpsampleBilinear2D_2x2_Cache[srcLDSBasePos.x+0][srcLDSBasePos.y+1];
+        float p10 = UpsampleBilinear2D_2x2_Cache[srcLDSBasePos.x+1][srcLDSBasePos.y+0];
+        float p11 = UpsampleBilinear2D_2x2_Cache[srcLDSBasePos.x+1][srcLDSBasePos.y+1];
+
+        float v =
+            p00 * (1-frac(srcLDSPos.x)) * (1-frac(srcLDSPos.y)) +
+            p01 * (1-frac(srcLDSPos.x)) *    frac(srcLDSPos.y)  +
+            p10 *    frac(srcLDSPos.x)  * (1-frac(srcLDSPos.y)) +
+            p11 *    frac(srcLDSPos.x)  *    frac(srcLDSPos.y);
+
+        if ((c < O.channels) && (x < O.width) && (y < O.height))
+            O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void KERNEL_FUNC(Upsample2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    // NOTE: dispatched over X (not O)
+    DISPATCH_ARGS(X.channels, X.width, X.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= X.channels) return;
+    if (x >= X.width) return;
+    if (y >= X.height) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+
+        for (uint dy = 0; dy < _Pool.y; ++dy)
+            for (uint dx = 0; dx < _Pool.x; ++dx)
+            {
+                uint oy = y * _Pool.y + dy;
+                uint ox = x * _Pool.x + dx;
+                O.Set(n, oy, ox, c, v);
+            }
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void KERNEL_FUNC(Copy)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    // NOTE: dispatched over X (not O)
+    DISPATCH_ARGS(X.channels, X.width, X.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
+    if (c >= X.channels) return;    if (x >= X.width) return;       if (y >= X.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        O.Set(n + _Pad[0], y + _Pad[1], x + _Pad[2], c + _Pad[3], v);
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void ReshapeFromNHWCModel_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        //find the memory offset of target item in HWC format
+        uint index_NHWC = O.IndexHWC(n,y,x,c);
+        //from this offset find indices of item in HWC format before the reshape
+        uint c_NHWC = index_NHWC % X.channels;
+        uint x_NHWC = (index_NHWC / X.channels) % X.width;
+        uint y_NHWC = (index_NHWC / (X.channels * X.width)) % X.height;
+        uint b_NHWC = (index_NHWC / (X.channels * X.width * X.height)) % X.batch;
+
+        //finally copy item
+        float v = X.Get(b_NHWC, y_NHWC, x_NHWC, c_NHWC);
+        O.Set(n, y, x, c, v);
+    }
+}

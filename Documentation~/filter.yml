@@ -1,0 +1,5 @@
+apiRules:
+  - exclude:
+      # Exclude types from Onnx.* namespace
+      uidRegex: ^Onnx\..*$
+      type: Type

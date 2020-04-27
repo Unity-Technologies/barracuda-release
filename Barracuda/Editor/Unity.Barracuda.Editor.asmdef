@@ -1,0 +1,8 @@
+{
+    "name": "Unity.Barracuda.Editor",
+    "references": ["Unity.Barracuda"],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": []
+}

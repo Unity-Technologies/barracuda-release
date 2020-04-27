@@ -1,5 +1,30 @@
 # Release notes
 
+## [0.7.0] - 2020-04-27
+- API/Breaking change: Barracuda namespace renamed to Unity.Barracuda.
+- API/Breaking change: Barracuda assembly renamed to Unity.Barracuda. IMPORTANT: You have to update asmdef files that reference Barracuda in your project!
+- API: Added 3D LUT support to TensorToRenderTexture.
+- ONNX: ImageScaler layer support (internally maps to ScaleBias).
+- ONNX: Added support for Double, Int8, Int16, UInt8, UInt16, UInt32, UInt64 and Bool data types. Now all ONNX specified data types except `string` should be supported.
+- ONNX: Fixed case when model input is directly passed to Activation layer.
+- ONNX: Fixed support for empty null tensors.
+- Performance: Reduced temporary memory allocations for CPU inference path.
+- Performance: Preparation work to run GPU inference path in NCHW (aka channels-first) layout. NCHW offers more performant layout for number of desktop GPUs. No changes are necessary from client API perspective.
+- Performance: InstanceNorm optimizations.
+- Performance: VarianceMean, AveragePooling optimizations.
+- Performance: Relu, Tanh, Sigmoid, Relu6, Swish activations are automatically fused into other layers whenever possible.
+- Performance: Neg, Sqrt, Exp, Log elementwise operations are automatically fused into other layers whenever possible.
+- Performance: Added GPU implementation for StridedSlice.
+- Performance: ConvTranspose improvements.
+- Performance: Inspector UI now loads much faster for large models in the Editor.
+- Misc: Added bilinear Upsample support.
+- Misc: Added support for dynamic Upsample.
+- Misc: Adjusted file structure layout to comply with Unity Package guidelines.
+- Misc: Fixed license for 3rd party libraries.
+- Misc: Removed ONNX python tools and docker wrapper from the Barracuda distribution. Please use ONNX C# importer by placing ONNX models directly into Assets folders.
+- Importer: Bumped .nn & .onnx importer version numbers.
+
+
 ## [0.6.3] - 2020-04-03
 - Performance: over 10x performance improvement for 'Tiny Yolo V2' model and over 5x improvement for 'Mobilenet' model when CPU side inference is used.
 - Performance: significantly improved speed of Convolutions on CPU by using fast Matrix Multiplication (powered by BLAS when available) and memory efficient version of Im2Col algorithm. Memory consumption stays constant regardless of kernel size!
