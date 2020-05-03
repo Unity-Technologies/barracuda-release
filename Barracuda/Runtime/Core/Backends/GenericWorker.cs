@@ -243,6 +243,31 @@ public class GenericWorker : IWorker
                 }
                 X = m_Ops.Upsample2D(X, scale, bilinear);
             }
+            else if (l.type == Layer.Type.Resample2D)
+            {
+                Profiler.BeginSample("Barracuda.Resample2D");
+                // pool size is treated as resample size here
+                var size = l.pool;
+                // axis is treated as upsample point/bilinear flag
+                var bilinear = l.axis > 0;
+                if (inputs.Length > 1)
+                {
+                    var sizeTensor = inputs[1];
+                    Assert.AreEqual(size.flatHeight, 4);
+                    Assert.AreEqual(size.flatWidth, 1);
+                    size = new int[] {(int)sizeTensor[2], (int)sizeTensor[1]};
+                }
+                X = m_Ops.Resample2D(X, size, bilinear);
+            }
+            else if (l.type == Layer.Type.DepthToSpace)
+            {
+                Profiler.BeginSample("Barracuda.DepthToSpace");
+                // pool size is treated as blocksize
+                var blocksize = l.pool;
+                // axis is treated as mode enum
+                var mode = (Layer.DepthToSpaceMode) l.axis;
+                X = m_Ops.DepthToSpace(X, blocksize, mode);
+            }
             else if (l.type == Layer.Type.MaxPool2D)
             {
                 Profiler.BeginSample ("Barracuda.MaxPool2D");
@@ -561,6 +586,18 @@ public class GenericWorker : IWorker
 
                 var newShape = X.shape.Reshape(size);
                 X = m_Ops.Reshape(X, newShape);
+            }
+            else if (l.type == Layer.Type.Expand)
+            {
+                Profiler.BeginSample("Barracuda.Expand");
+
+                // pool size is treated as new shape
+                var newShape = l.pool;
+
+                Assert.IsNotNull(newShape);
+                Assert.AreEqual(newShape.Length, 4);
+
+                X = m_Ops.Expand(X, new TensorShape(newShape));
             }
             else if (l.type == Layer.Type.Transpose)
             {

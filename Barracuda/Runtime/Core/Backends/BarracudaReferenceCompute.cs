@@ -903,6 +903,35 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
+    public override Tensor Resample2D(Tensor X, int[] size, bool bilinear)
+    {
+        Assert.AreEqual(size.Length, 2);
+
+        var O = new TensorShape(X.batch, size[1], size[0], X.channels);
+
+        var fn = new ComputeFunc(m_Kernels, bilinear ? "ResampleBilinear2D" : "Resample2D");
+
+        SetTensor(fn, "X", X);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
+    }
+
+    public override Tensor DepthToSpace(Tensor X, int[] blocksize, Layer.DepthToSpaceMode mode)
+    {
+        Assert.AreEqual(blocksize.Length, 2);
+        Assert.AreEqual(X.channels % (blocksize[0] * blocksize[1]), 0);
+
+        var O = new TensorShape(X.batch, X.height * blocksize[1], X.width * blocksize[0], X.channels / (blocksize[0] * blocksize[1]));
+
+        var fn = new ComputeFunc(m_Kernels, "DepthToSpace_" + mode);
+
+        SetTensor(fn, "X", X);
+
+        fn.shader.SetInts("_Pool", blocksize);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
+    }
+
     protected virtual Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
         Assert.AreEqual(pad.Length, 4);
@@ -1265,6 +1294,19 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Axis", axis);
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
+    }
+
+    public override Tensor Expand(Tensor X, TensorShape newShape)
+    {
+        Assert.IsTrue(newShape.batch == X.batch || X.batch == 1);
+        Assert.IsTrue(newShape.height == X.height || X.height == 1);
+        Assert.IsTrue(newShape.width == X.width || X.width == 1);
+        Assert.IsTrue(newShape.channels == X.channels || X.channels == 1);
+
+        var fn = new ComputeFunc(m_Kernels, "Expand");
+        SetTensor(fn, "X", X);
+
+        return Dispatch(fn, newShape, newShape.channels, newShape.width, newShape.height);
     }
 
     public virtual Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)

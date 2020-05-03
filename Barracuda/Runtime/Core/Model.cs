@@ -82,6 +82,10 @@ public class Layer
         Squeeze = 203,              // TODO: NOT IMPLEMENTED
         Unsqueeze = 204,            // TODO: NOT IMPLEMENTED
         Gather = 205,
+        DepthToSpace = 206,
+        SpaceToDepth = 207,         // TODO: NOT IMPLEMENTED
+        Expand = 208,
+        Resample2D = 209,
 
         Concat = 210,
         StridedSlice = 211,
@@ -158,6 +162,12 @@ public class Layer
         Valid = 0,
         SameUpper = -1,
         SameLower = -2,
+    }
+
+    public enum DepthToSpaceMode
+    {
+        DCR,
+        CRD
     }
 
     public struct DataSet

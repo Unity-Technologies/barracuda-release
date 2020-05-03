@@ -98,12 +98,25 @@ public class StatsOps : IOps, IModelCompiler
         m_Alu += m * n * k * 2L;
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
         return O;
-    }
+        }
     Tensor IOps.Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
         var O = m_Ops.Upsample2D(X, scale, bilinear);
         m_Alu += (long)O.length * (bilinear ? 8 : 1);
         m_Mem += (long)X.length * (bilinear ? 4 : 1) + (long)O.length;
+        return O;
+    }
+    Tensor IOps.Resample2D(Tensor X, int[] size, bool bilinear)
+    {
+        var O = m_Ops.Resample2D(X, size, bilinear);
+        m_Alu += (long)O.length * (bilinear ? 8 : 1);
+        m_Mem += (long)X.length * (bilinear ? 4 : 1) + (long)O.length;
+        return O;
+    }
+    Tensor IOps.DepthToSpace(Tensor X, int[] scale, Layer.DepthToSpaceMode mode)
+    {
+        var O = m_Ops.DepthToSpace(X, scale, mode);
+        m_Mem += (long)X.length + (long)O.length;
         return O;
     }
     Tensor IOps.MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
@@ -460,6 +473,12 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Reshape(Tensor X, TensorShape shape)
     {
         return m_Ops.Reshape(X, shape);
+    }
+    Tensor IOps.Expand(Tensor X, TensorShape shape)
+    {
+        var O = m_Ops.Expand(X, shape);
+        m_Mem += (long)X.length + (long)O.length;
+        return O;
     }
     Tensor IOps.Transpose(Tensor X)
     {

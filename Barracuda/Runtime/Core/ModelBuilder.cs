@@ -382,6 +382,47 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Resample2D scales the input tensor to the given resolution.
+        /// `bilinear` allows to choose between nearest neighbour or bilinear sampling.
+        /// </summary>
+        public Layer Resample2D(string name, object input, Int32[] size, bool bilinear)
+        {
+            Layer layer = new Layer(name, Layer.Type.Resample2D);
+            layer.pool = size;
+            layer.axis = bilinear ? 1 : -1;
+            layer.inputs = new[] { ResolveInput(input) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// DepthToSpace rearranges (permutes) data from depth into blocks of
+        /// spatial data. This is the reverse transformation of SpaceToDepth.
+        /// More specifically, this op outputs a copy of the input tensor where
+        /// values from the depth dimension are moved in spatial blocks to the
+        /// height and width dimensions. By default, mode = DCR. In the DCR mode,
+        /// elements along the depth dimension from the input tensor are rearranged
+        /// in the following order: depth, column, and then row.
+        /// In the CRD mode, elements along the depth dimension from the input
+        /// tensor are rearranged in the following order: column, row, and depth.
+        /// </summary>
+        public Layer DepthToSpace(string name, object source, int blocksize, string mode)
+        {
+            Layer layer = new Layer(name, Layer.Type.DepthToSpace);
+
+            layer.pool = new int[] { blocksize, blocksize };
+            layer.axis = (int)(Layer.DepthToSpaceMode)Enum.Parse(typeof(Layer.DepthToSpaceMode), mode);
+            layer.inputs = new[] { ResolveInput(source) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+
+        /// <summary>
         /// Apply symbolic shape to input tensor. Symbolic shape can have up to one dimension specified as unknown (value -1).
         /// </summary>
         public Layer Reshape(string name, object input, int[] shape)
@@ -412,6 +453,22 @@ namespace Unity.Barracuda
 
             Layer layer = new Layer(name, Layer.Type.Reshape);
             layer.inputs = new [] {ResolveInput(input), ResolveInput(shapeLike)};
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Broadcast the input tensor following the given shape and similar to
+        /// numpy.array(input) * numpy.ones(shape). Two corresponding dimension
+        /// must have the same value, or the input dimension is 1.
+        /// </summary>
+        public Layer Expand(string name, object input, int[] shape)
+        {
+            Layer layer = new Layer(name, Layer.Type.Expand);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.pool = shape;
 
             m_Model.layers.Add(layer);
 

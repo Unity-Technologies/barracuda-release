@@ -85,6 +85,20 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Upsample2D);
         return Y;
     }
+    Tensor IOps.Resample2D(Tensor X, int[] size, bool bilinear)
+    {
+        var Y = m_Ops1.Resample2D(X, size, bilinear);
+        var Z = m_Ops2.Resample2D(X, size, bilinear);
+        CheckSame(Y, Z, Layer.Type.Resample2D);
+        return Y;
+    }
+    Tensor IOps.DepthToSpace(Tensor X, int[] scale, Layer.DepthToSpaceMode mode)
+    {
+        var Y = m_Ops1.DepthToSpace(X, scale, mode);
+        var Z = m_Ops2.DepthToSpace(X, scale, mode);
+        CheckSame(Y, Z, Layer.Type.DepthToSpace);
+        return Y;
+    }
     Tensor IOps.MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         var Y = m_Ops1.MaxPool2D(X, pool, stride, pad);
@@ -527,6 +541,13 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Reshape(X, shape);
         var Z = m_Ops2.Reshape(X, shape);
         CheckSame(Y, Z, Layer.Type.Reshape);
+        return Y;
+    }
+    Tensor IOps.Expand(Tensor X, TensorShape shape)
+    {
+        var Y = m_Ops1.Expand(X, shape);
+        var Z = m_Ops2.Expand(X, shape);
+        CheckSame(Y, Z, Layer.Type.Expand);
         return Y;
     }
     Tensor IOps.Transpose(Tensor X)
