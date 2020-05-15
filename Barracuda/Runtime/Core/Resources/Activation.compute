@@ -1,7 +1,17 @@
+#pragma kernel Abs_Flat
+#pragma kernel Abs_FlatStrict
+#pragma kernel Abs_Loop
 #pragma kernel Neg_Flat
 #pragma kernel Neg_FlatStrict
 #pragma kernel Neg_Loop
+#pragma kernel Ceil_Flat
+#pragma kernel Ceil_FlatStrict
+#pragma kernel Ceil_Loop
+#pragma kernel Floor_Flat
+#pragma kernel Floor_FlatStrict
+#pragma kernel Floor_Loop
 #pragma kernel Reciprocal_Flat
+#pragma kernel Reciprocal_FlatStrict
 #pragma kernel Reciprocal_Loop
 #pragma kernel Relu_Flat
 #pragma kernel Relu_FlatStrict
@@ -9,9 +19,8 @@
 #pragma kernel Relu6_Flat
 #pragma kernel Relu6_FlatStrict
 #pragma kernel Relu6_Loop
-#pragma kernel PRelu_Flat
-#pragma kernel PRelu_Loop
 #pragma kernel Selu_Flat
+#pragma kernel Selu_FlatStrict
 #pragma kernel Selu_Loop
 #pragma kernel Tanh_Flat
 #pragma kernel Tanh_FlatStrict
@@ -35,6 +44,7 @@
 #pragma kernel Log_FlatStrict
 #pragma kernel Log_Loop
 #pragma kernel Sqrt_Flat
+#pragma kernel Sqrt_FlatStrict
 #pragma kernel Sqrt_Loop
 #pragma kernel Pow_Flat
 #pragma kernel Pow_FlatStrict
@@ -43,7 +53,11 @@
 #pragma kernel LogicalNot_FlatStrict
 #pragma kernel LogicalNot_Loop
 #pragma kernel Clip_Flat
+#pragma kernel Clip_FlatStrict
 #pragma kernel Clip_Loop
+
+#pragma kernel PRelu_Flat
+#pragma kernel PRelu_Loop
 
 /*
 Relu_Flat (NEW) vs Relu_Nyxc+Relu_CNyx+Relu
@@ -249,7 +263,7 @@ float selu(float v)
 
 float sigmoid(float v)
 {
-    return 1.f / (1.f + exp(-v));
+    return rcp(1.f + exp(-v));
 }
 
 float elu(float v)
@@ -288,7 +302,10 @@ float activation_clip(float v)
 }
 
 
+ACTIVATION(Abs, abs)
 ACTIVATION(Neg, neg)
+ACTIVATION(Ceil, ceil)
+ACTIVATION(Floor, floor)
 ACTIVATION(Reciprocal, rcp)
 ACTIVATION(Relu, relu)
 ACTIVATION(Relu6, relu6)

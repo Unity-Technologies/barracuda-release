@@ -140,6 +140,39 @@ public class ModelAnalyzer
                 }
             }
             else if (
+                l.type == Layer.Type.Resample2D)
+            {
+                if(inputShapes.Count > 1)
+                {
+                    O = null;
+                }
+                else
+                {
+                    // pool is treated as resample size here
+                    var size = l.pool;
+                    Assert.IsNotNull(size);
+                    Assert.AreEqual(size.Length, 2);
+                    O = new TensorShape(X.batch, size[1], size[0], X.channels);
+                }
+            }
+            else if (
+                l.type == Layer.Type.DepthToSpace)
+            {
+                    // pool size is treated as blocksize here
+                    Assert.IsNotNull(l.pool);
+                    Assert.AreEqual(l.pool.Length, 2);
+                    Assert.AreEqual(X.channels % (l.pool[0] * l.pool[1]), 0);
+                    O = new TensorShape(X.batch, X.height * l.pool[1], X.width * l.pool[0], X.channels / (l.pool[0] * l.pool[1]));
+            }
+            else if (
+                l.type == Layer.Type.SpaceToDepth)
+            {
+                // pool size is treated as blocksize here
+                Assert.IsNotNull(l.pool);
+                Assert.AreEqual(l.pool.Length, 2);
+                O = new TensorShape(X.batch, X.height / l.pool[1], X.width / l.pool[0], X.channels * (l.pool[0] * l.pool[1]));
+            }
+            else if (
                 l.type == Layer.Type.MaxPool2D ||
                 l.type == Layer.Type.AvgPool2D)
             {
@@ -283,6 +316,17 @@ public class ModelAnalyzer
 
                 Assert.AreEqual(size.Length, 4);
                 O = X.Reshape(size);
+            }
+            else if (
+                l.type == Layer.Type.Expand)
+            {
+                // pool size is treated as new shape
+                var newShape = l.pool;
+
+                Assert.IsNotNull(newShape);
+                Assert.AreEqual(newShape.Length, 4);
+
+                O = new TensorShape(newShape);
             }
             else if (
                 l.type == Layer.Type.Transpose)

@@ -47,12 +47,49 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         public CompiledInstruction[] instructions;
 
         // most layers are made up of 1 instruction
-        public ComputeKernel kernel { get { return instructions[0].kernel; } }
+        public ComputeKernel kernel { get { return (instructions == null) ? new ComputeKernel() : instructions[0].kernel; } }
     }
 
     private int m_CachedModelHash;
     private Dictionary<Layer, CompiledLayer> m_CompiledLayers = new Dictionary<Layer, CompiledLayer>();
     private CompiledLayer m_Compiled;
+
+    private Dictionary<string, ComputeBuffer> m_CachedModelBuffers = new Dictionary<string, ComputeBuffer>();
+
+    public ComputeBuffer NewComputeBuffer(string name, int count, int stride)
+    {
+        if(!m_CachedModelBuffers.ContainsKey(name))
+            m_CachedModelBuffers[name] = new ComputeBuffer(count, stride);
+        if(m_CachedModelBuffers[name].count != count || m_CachedModelBuffers[name].stride != stride)
+        {
+            m_CachedModelBuffers[name].Dispose();
+            m_CachedModelBuffers[name] = new ComputeBuffer(count, stride);
+        }
+
+        return m_CachedModelBuffers[name];
+    }
+
+    public override void ResetAllocator(bool keepCachedMemory = true)
+    {
+        if (!keepCachedMemory)
+        {
+            foreach (var buf in m_CachedModelBuffers)
+                buf.Value.Dispose();
+            m_CachedModelBuffers.Clear();
+
+            foreach (var l in m_CompiledLayers)
+                foreach (var i in l.Value.instructions)
+                {
+                    if (i.tensors == null)
+                        continue;
+                    foreach (var t in i.tensors)
+                        t.Dispose();
+                }
+            m_CompiledLayers.Clear();
+        }
+
+        base.ResetAllocator(keepCachedMemory);
+    }
 
     protected int CalcModelWithInputsHashCode(Model model, IDictionary<string, TensorShape> inputShapes)
     {
@@ -144,9 +181,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 weights[Kshape.Index(3, 3, c, k)] = v33;
             }
 
-        Buffer.BlockCopy(weights, Kshape.length, l.weights, (int)B.offset, B.length);
+        Buffer.BlockCopy(l.weights, (int)B.offset * sizeof(float), weights, Kshape.length * sizeof(float), B.length * sizeof(float));
 
-        ComputeBuffer buffer = new ComputeBuffer(Kshape.length + Bshape.length, sizeof(float));
+        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", Kshape.length + Bshape.length, sizeof(float));
         buffer.SetData(weights);
         var Kw = new Tensor(Kshape, new SharedComputeTensorData(buffer, Kshape, 0));
         var Bw = new Tensor(Bshape, new SharedComputeTensorData(buffer, Bshape, Kshape.length));
@@ -170,9 +207,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                             weights[K.shape.Index(y, x, c, k)] = v;
                         }
 
-        Buffer.BlockCopy(weights, K.length, l.weights, (int)B.offset, B.length);
+        Buffer.BlockCopy(l.weights, (int)B.offset * sizeof(float), weights, K.length * sizeof(float), B.length * sizeof(float));
 
-        ComputeBuffer buffer = new ComputeBuffer(K.length + B.length, sizeof(float));
+        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", K.length + B.length, sizeof(float));
         buffer.SetData(weights);
         var Kw = new Tensor(K.shape, new SharedComputeTensorData(buffer, K.shape, 0));
         var Bw = new Tensor(B.shape, new SharedComputeTensorData(buffer, B.shape, K.length));
@@ -185,19 +222,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var modelHash = CalcModelWithInputsHashCode(model, inputShapes);
         if (modelHash == m_CachedModelHash)
             return;
-
         m_CachedModelHash = modelHash;
-        foreach (var l in m_CompiledLayers)
-        {
-            foreach (var i in l.Value.instructions)
-            {
-                if(i.tensors.Length == 0)
-                    continue;
-                foreach (var t in i.tensors)
-                    t.Dispose();
-            }
-        }
-        m_CompiledLayers.Clear();
+
+        ResetAllocator(false);
 
         IDictionary<string, TensorShape?> shapesByName;
         ModelAnalyzer.ListTemporaryTensorShapes(model, inputShapes, out shapesByName);
@@ -250,15 +277,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 var instructions = new List<CompiledInstruction>();
 
                 // Conv2D
-                kernel = BestKernel(ComputeKernelLibrary.Conv2D(X, l.datasets[0].shape, O, l.stride, l.pad));
-                if (kernel.func.kernelName.StartsWith("Conv2DWinograd_2x2_3x3"))
-                {
-                    instructions.Add(new CompiledInstruction {kernel = kernel, shape = O, tensors = PrepareConv2dWinograd(model, l)});
-                }
-                else
-                {
-                    instructions.Add(new CompiledInstruction {kernel = kernel, shape = O});
-                }
+                var kernelConv = BestKernel(ComputeKernelLibrary.Conv2D(X, l.datasets[0].shape, O, l.stride, l.pad));
+                bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd_2x2_3x3"));
+                instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd(model, l) : null });
 
                 // FusedActivation
                 var fusedActivation = (Layer.FusedActivation) l.activation;
@@ -291,7 +312,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                             K.kernelWidth - l.pad[2] - 1, K.kernelHeight - l.pad[3] - 1
                     };
 
-                    var XpaddedShape = new TensorShape(X.batch, stride[0] * (X.height - 1) + 1 + outputAdjustment[0], stride[0] * (X.width - 1) + 1 + outputAdjustment[1], X.channels);
+                    var XpaddedShape = new TensorShape(X.batch, stride[1] * (X.height - 1) + 1 + outputAdjustment[1], stride[0] * (X.width - 1) + 1 + outputAdjustment[0], X.channels);
 
                     var kernelFill = CompileKernel(new ComputeKernelLibrary.Entry("Conv2DTransPadFill", (X.channels, X.width, X.height), 1.0f, 0));
 
@@ -650,9 +671,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var Xpadded = NewTensor(XpaddedShape);
         var fn0PadX = instruction0PadX.kernel;
 
-        fn0PadX.shader.SetInts("_Stride", stride);
         fn0PadX.SetTensor("X", X.shape, Pin(X).buffer);
         fn0PadX.SetTensor("O", Xpadded.shape, Pin(Xpadded).buffer);
+        fn0PadX.shader.SetInts("_Stride", stride);
+        fn0PadX.shader.SetInts("_Pad", outputAdjustment);
         fn0PadX.Dispatch();
 
         // kernel flip
@@ -696,6 +718,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(Pin(Kflipped).buffer, Pin(Bpacked).buffer);
         fnConv.SetTensorBuffer(_DataWBK, Pin(Kflipped).buffer);
 
+        fnConv.shader.SetInt("_ActivationMode", 0);
         fnConv.shader.SetInts(_Pad, padTrans);
         fnConv.shader.SetInts(_Stride, strideTrans);
 
@@ -979,7 +1002,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
-    public override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
+    protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         if (m_Compiled.kernel.shader == null)
             return base.ElementwiseWithBroadcast(kernelName, tensors);

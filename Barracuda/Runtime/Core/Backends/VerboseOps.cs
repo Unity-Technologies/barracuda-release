@@ -75,6 +75,27 @@ public class VerboseOps : IOps, IModelCompiler
         O.PrintDataPart(32, Prefix + "Upsample2D");
         return O;
     }
+    Tensor IOps.Resample2D(Tensor X, int[] size, bool bilinear)
+    {
+        var O = m_Ops.Resample2D(X, size, bilinear);
+        D.Log(X.shape + " ^ " + (bilinear ? "bilinear" : "") + O.shape);
+        O.PrintDataPart(32, Prefix + "Resample2D");
+        return O;
+    }
+    Tensor IOps.DepthToSpace(Tensor X, int[] scale, Layer.DepthToSpaceMode mode)
+    {
+        var O = m_Ops.DepthToSpace(X, scale, mode);
+        D.Log(X.shape + " ^ " + mode + O.shape);
+        O.PrintDataPart(32, Prefix + "DepthToSpace");
+        return O;
+    }
+    Tensor IOps.SpaceToDepth(Tensor X, int[] scale)
+    {
+        var O = m_Ops.SpaceToDepth(X, scale);
+        D.Log(X.shape + " ^ " + O.shape);
+        O.PrintDataPart(32, Prefix + "SpaceToDepth");
+        return O;
+    }
     Tensor IOps.MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         var O = m_Ops.MaxPool2D(X, pool, stride, pad);
@@ -510,6 +531,12 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Reshape(Tensor X, TensorShape shape)
     {
         var O = m_Ops.Reshape(X, shape);
+        D.Log(X.shape + " $ " + O.shape);
+        return O;
+    }
+    Tensor IOps.Expand(Tensor X, TensorShape shape)
+    {
+        var O = m_Ops.Expand(X, shape);
         D.Log(X.shape + " $ " + O.shape);
         return O;
     }

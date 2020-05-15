@@ -1193,7 +1193,7 @@ void KERNEL_FUNC(DepthwiseConv2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
                         acc);
                 }
 
-            O.SetWithActivation(n, y, x, k, acc);
+            O.Set(n, y, x, k, acc);
         }
     }
     else
@@ -1215,7 +1215,7 @@ void KERNEL_FUNC(DepthwiseConv2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
                         acc);
                 }
 
-            O.SetWithActivation(n, y, x, k, acc);
+            O.Set(n, y, x, k, acc);
         }
     }
 }
@@ -1245,7 +1245,7 @@ void Conv2DTransFlipKernel(uint3 dispatchThreadID : SV_DispatchThreadID)
 NUMTHREADS((16, 4, 4), (8, 4, 4), (4, 4, 4))
 void KERNEL_FUNC(Conv2DTransPadFill)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(K.kernelCount, O.width, O.height);
+    DISPATCH_ARGS(X.channels, X.width, X.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -1258,22 +1258,19 @@ void KERNEL_FUNC(Conv2DTransPadFill)(uint3 dispatchThreadID : SV_DispatchThreadI
 
     for (uint n = 0; n < O.batch; ++n)
     {
-        float v = X.Get(n, y, x, c);
-
-        uint oy = y * _Stride.y;
         uint ox = x * _Stride.x;
-        O.Set(n, oy, ox, c, v);
+        uint oy = y * _Stride.y;
 
-        // 0-pad accordingly:
-        // stride number of 0 between values of X
-        // outputAdjustment number of 0 at the end of X
-        const uint2 padding = y < (X.height - 1) && x < (X.width - 1) ? _Stride.xy : _Pad.xy;
-        for (uint dy = 0; dy < padding.y; ++dy)
-            for (uint dx = 0; dx < padding.x; ++dx)
+        uint strideX = x == (X.width - 1)  ? _Pad.x + 1 : _Stride.x;
+        uint strideY = y == (X.height - 1) ? _Pad.y + 1 : _Stride.y;
+
+        for (uint dx = 0; dx < strideX; dx++)
+            for (uint dy = 0; dy < strideY; dy++)
             {
-                if (dy != 0 && dx != 0)
-                    O.Set(n, oy + dy, ox + dx, c, 0.0);
+                O.Set(n, oy + dy, ox + dx, c, 0.0f);
             }
+        float v = X.Get(n, y, x, c);
+        O.Set(n, oy, ox, c, v);
     }
 }
 
@@ -1317,7 +1314,7 @@ void KERNEL_FUNC(Conv2DTrans)(uint3 dispatchThreadID : SV_DispatchThreadID)
             }
         }
 
-        O.SetWithActivation(n, y, x, k, acc);
+        O.Set(n, y, x, k, acc);
     }
 }
 
@@ -1396,7 +1393,7 @@ void CONV2DTRANS_NAME(MAX_KERNEL_SIZE, GROUP_SIZE_X,GROUP_SIZE_Y)(uint3 dispatch
                 }
             }
         }
-        O.SetWithActivation(n, y, x, k, acc);
+        O.Set(n, y, x, k, acc);
     }
 }
 #undef CONV2DTRANS_NAME

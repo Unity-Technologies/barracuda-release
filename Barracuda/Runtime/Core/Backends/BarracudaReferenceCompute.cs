@@ -627,16 +627,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return X.tensorOnDevice as ComputeTensorData;
     }
 
-    public override void WaitForCompletion(Tensor x)
-    {
-        var data = x.tensorOnDevice as ComputeTensorData;
-
-        if (data != null)
-        {
-            data.buffer.GetData(m_SyncBuffer, 0, 0, 1);
-        }
-    }
-
     public void SetTensor(ComputeFunc fn, string name, Tensor X)
     {
         var XonDevice = Pin(X);
@@ -738,7 +728,37 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return flattenDimensions > 1;
     }
 
+    protected bool IsFusedActivationSupported(Layer.FusedActivation fusedActivation)
+    {
+        switch (fusedActivation)
+        {
+            case Layer.FusedActivation.Relu:
+                return true;
+            case Layer.FusedActivation.None:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // ---------------------------------------------------------------------------------
+
+    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    {
+        // MatMul implementation in terms of Dense
+        var A = (xTranspose) ? Transpose(X): X;
+        var B = (yTranspose) ? Transpose(Y): Y;
+        var C = NewTensor(1, B.flatWidth);
+        var Z = Sub(new[] { C, C }); // intialize bias with zeros
+
+        var O = Dense(A, B, Z, Layer.FusedActivation.None);
+        if (A != X) A.Dispose();
+        if (B != Y) B.Dispose();
+        C.Dispose();
+        Z.Dispose();
+
+        return O;
+    }
 
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
@@ -749,7 +769,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         if (ShouldFlattenInputForDenseLayer(X.shape))
             X = Flatten(X);
 
-        var OShape = new TensorShape(X.flatHeight, W.flatWidth);
+        var Oshape = new TensorShape(X.flatHeight, W.flatWidth);
 
         var fn = new ComputeFunc(m_Kernels, "Dense");
 
@@ -758,7 +778,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "B", B);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, OShape, OShape.flatWidth, OShape.flatHeight, 1);
+        var O = Dispatch(fn, Oshape, Oshape.flatWidth, Oshape.flatHeight, 1);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -779,7 +799,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var OShape = X.shape.ApplyKernel(K.shape, stride, pad);
+        var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
         var fn = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
 
@@ -790,7 +810,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, OShape, K.kernelCount, IDivC(OShape.width, 2), IDivC(OShape.height, 2));
+        var O = Dispatch(fn, Oshape, K.kernelCount, IDivC(Oshape.width, 2), IDivC(Oshape.height, 2));
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -806,9 +826,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var OShape = X.shape.ApplyKernel(K.shape, stride, pad);
+        var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        bool useWinograd = (K.kernelWidth == 3) && (K.kernelHeight == 3) && (stride[0] == 1) && (stride[1] == 1) && ((OShape.height % 2) == 0) && ((OShape.width % 2) == 0);
+        bool useWinograd = (K.kernelWidth == 3) && (K.kernelHeight == 3) && (stride[0] == 1) && (stride[1] == 1) && ((Oshape.height % 2) == 0) && ((Oshape.width % 2) == 0);
         if( useWinograd )
         {
             return Conv2DWinograd(X, K, B, stride, pad, fusedActivation);
@@ -823,7 +843,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, OShape, K.kernelCount, OShape.width, OShape.height);
+        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -853,8 +873,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", pad);
 
-        var o = Dispatch(fn, O, K.kernelCount, O.width, O.height);
-        return o;
+        return Dispatch(fn, O, K.kernelCount, O.width, O.height);
     }
 
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
@@ -903,52 +922,49 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
-    protected virtual Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
+    public override Tensor Resample2D(Tensor X, int[] size, bool bilinear)
     {
-        Assert.AreEqual(pad.Length, 4);
+        Assert.AreEqual(size.Length, 2);
 
-        var O = X.shape.ApplyBorder(pad);
+        var O = new TensorShape(X.batch, size[1], size[0], X.channels);
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(m_Kernels, bilinear ? "ResampleBilinear2D" : "Resample2D");
 
         SetTensor(fn, "X", X);
-
-        fn.shader.SetInts("_Pad", pad);
-
-        if (kernelName == "Border2D")
-        {
-            // NOTE: negative "pad" variable will crop X tensor
-            int croppedWidth = X.width - Math.Max(0, -pad[2]);
-            int croppedHeight = X.height - Math.Max(0, -pad[3]);
-            var croppedSize = new int[] { 0, 0 };
-            croppedSize[0] = croppedWidth;
-            croppedSize[1] = croppedHeight;
-
-            fn.shader.SetInts("_Pool", croppedSize);
-            fn.shader.SetFloat("_Beta", constant);
-        }
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
-    public override Tensor Border2D(Tensor X, int[] pad, float constant)
+    public override Tensor DepthToSpace(Tensor X, int[] blocksize, Layer.DepthToSpaceMode mode)
     {
-        return ApplyPadding(X, pad, "Border2D", constant);
+        Assert.AreEqual(blocksize.Length, 2);
+        Assert.AreEqual(X.channels % (blocksize[0] * blocksize[1]), 0);
+
+        var O = new TensorShape(X.batch, X.height * blocksize[1], X.width * blocksize[0], X.channels / (blocksize[0] * blocksize[1]));
+
+        var fn = new ComputeFunc(m_Kernels, "DepthToSpace_" + mode);
+
+        SetTensor(fn, "X", X);
+
+        fn.shader.SetInts("_Pool", blocksize);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
-    public override Tensor Pad2DEdge(Tensor X, int[] pad)
+    public override Tensor SpaceToDepth(Tensor X, int[] blocksize)
     {
-        return ApplyPadding(X, pad, "Pad2DEdge");
-    }
+        Assert.AreEqual(blocksize.Length, 2);
+        Assert.AreEqual(X.channels % (blocksize[0] * blocksize[1]), 0);
 
-    public override Tensor Pad2DReflect(Tensor X, int[] pad)
-    {
-        return ApplyPadding(X, pad, "Pad2DReflect");
-    }
+        var O = new TensorShape(X.batch, X.height / blocksize[1], X.width / blocksize[0], X.channels * (blocksize[0] * blocksize[1]));
 
-    public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
-    {
-        return ApplyPadding(X, pad, "Pad2DSymmetric");
+        var fn = new ComputeFunc(m_Kernels, "SpaceToDepth");
+
+        SetTensor(fn, "X", X);
+
+        fn.shader.SetInts("_Pool", blocksize);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
     protected virtual Tensor Pool2D(string kernelName, Tensor X, int[] pool, int[] stride, int[] pad)
@@ -1010,6 +1026,54 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, 1, 1);
     }
 
+    protected virtual Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
+    {
+        Assert.AreEqual(pad.Length, 4);
+
+        var O = X.shape.ApplyBorder(pad);
+
+        var fn = new ComputeFunc(m_Kernels, kernelName);
+
+        SetTensor(fn, "X", X);
+
+        fn.shader.SetInts("_Pad", pad);
+
+        if (kernelName == "Border2D")
+        {
+            // NOTE: negative "pad" variable will crop X tensor
+            int croppedWidth = X.width - Math.Max(0, -pad[2]);
+            int croppedHeight = X.height - Math.Max(0, -pad[3]);
+            var croppedSize = new int[] { 0, 0 };
+            croppedSize[0] = croppedWidth;
+            croppedSize[1] = croppedHeight;
+
+            fn.shader.SetInts("_Pool", croppedSize);
+            fn.shader.SetFloat("_Beta", constant);
+        }
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
+    }
+
+    public override Tensor Border2D(Tensor X, int[] pad, float constant)
+    {
+        return ApplyPadding(X, pad, "Border2D", constant);
+    }
+
+    public override Tensor Pad2DReflect(Tensor X, int[] pad)
+    {
+        return ApplyPadding(X, pad, "Pad2DReflect");
+    }
+
+    public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
+    {
+        return ApplyPadding(X, pad, "Pad2DSymmetric");
+    }
+
+    public override Tensor Pad2DEdge(Tensor X, int[] pad)
+    {
+        return ApplyPadding(X, pad, "Pad2DEdge");
+    }
+
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
@@ -1025,19 +1089,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
-    protected bool IsFusedActivationSupported(Layer.FusedActivation fusedActivation)
-    {
-        switch (fusedActivation)
-        {
-            case Layer.FusedActivation.Relu:
-                return true;
-            case Layer.FusedActivation.None:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
         if (axis != 3 && axis != -1)
@@ -1049,7 +1100,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         if (pool <= 0)
             pool = X.batch;
 
-        var OShape = X.shape;
+        var Oshape = X.shape;
         var fn = new ComputeFunc(m_Kernels, "InstanceNorm");
         fn.shader.SetFloat("_Epsilon", epsilon);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
@@ -1058,12 +1109,18 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "W", S);
         SetTensor(fn, "B", B);
 
-        var O = Dispatch(fn, OShape, OShape.channels, 1, 1);
+        var O = Dispatch(fn, Oshape, Oshape.channels, 1, 1);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
 
         return O;
+    }
+
+    public override Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
+    {
+        // @TODO: GPU implementation
+        return base.LRN(X, alpha, beta, bias, size);
     }
 
     // @TODO: debug & fix
@@ -1098,46 +1155,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Relu", X);
     }
 
-    public override Tensor Selu(Tensor X, float alpha, float gamma)
-    {
-        return Activation("Selu", X, alpha, gamma);
-    }
-
-    public override Tensor Neg(Tensor X)
-    {
-        return Activation("Neg", X);
-    }
-
-    public override Tensor Swish(Tensor X)
-    {
-        return Activation("Swish", X);
-    }
-
-    public override Tensor Tanh(Tensor X)
-    {
-        return Activation("Tanh", X);
-    }
-
-    public override Tensor Sigmoid(Tensor X)
-    {
-        return Activation("Sigmoid", X);
-    }
-
-    public override Tensor Elu(Tensor X, float alpha)
-    {
-        return Activation("Elu", X, alpha);
-    }
-
-    public override Tensor Relu6(Tensor X)
-    {
-        return Activation("Relu6", X);
-    }
-
-    public override Tensor LeakyRelu(Tensor X, float alpha)
-    {
-        return Activation("LeakyRelu", X, alpha);
-    }
-
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
@@ -1149,31 +1166,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "W", S);
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
-    }
-
-    public override Tensor Exp(Tensor X)
-    {
-        return Activation("Exp", X);
-    }
-
-    public override Tensor Log(Tensor X)
-    {
-        return Activation("Log", X);
-    }
-
-    public override Tensor Sqrt(Tensor X)
-    {
-        return Activation("Sqrt", X);
-    }
-
-    public override Tensor Pow(Tensor X, float alpha)
-    {
-        return Activation("Pow", X, alpha);
-    }
-
-    public override Tensor Clip(Tensor X, float min, float max)
-    {
-        return Activation("Clip", X, min, max);
     }
 
     public override Tensor Softmax(Tensor X)
@@ -1198,76 +1190,105 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
 
-    protected static int[] s_ConcatOffsets = new int[] {0, 0, 0, 0};
-    public override Tensor Concat(Tensor[] tensors, int axis)
+    public override Tensor Tanh(Tensor X)
     {
-        if (axis != 3 && axis != -1)
-            return base.Concat(tensors, axis);
-
-        foreach (var X in tensors)
-            if (X.shape.rank != 4)
-                return base.Concat(tensors, axis);
-
-        var O = TensorExtensions.Concat(tensors, axis);
-        var offsets = s_ConcatOffsets;
-        Array.Clear(offsets, 0, offsets.Length);
-        axis = O.Axis(axis);
-
-        var fn = new ComputeFunc(m_Kernels, "Copy");
-        var result = NewTensor(fn, "O", O);
-        foreach (var X in tensors)
-        {
-            SetTensor(fn, "X", X);
-            fn.shader.SetInts("_Pad", offsets);
-            fn.Dispatch(X.channels, X.width, X.height);
-
-            offsets[axis] += X.shape[axis];
-        }
-        return result;
+        return Activation("Tanh", X);
     }
 
-    static private int[] s_StridedSliceStart = new int[4];
-    public override Tensor StridedSlice(Tensor X, int[] starts, int[] ends, int[] stride)
+    public override Tensor Sigmoid(Tensor X)
     {
-        Assert.AreEqual(starts.Length, 4);
-        Assert.AreEqual(ends.Length, 4);
-        Assert.AreEqual(stride.Length, 4);
+        return Activation("Sigmoid", X);
+    }
 
-        var O = X.shape.ApplyStridedSlice(starts, ends, stride);
+    public override Tensor Relu6(Tensor X)
+    {
+        return Activation("Relu6", X);
+    }
 
-        s_StridedSliceStart[0] = TensorExtensions.WrapIndex(starts[0], X.batch);
-        s_StridedSliceStart[1] = TensorExtensions.WrapIndex(starts[1], X.height);
-        s_StridedSliceStart[2] = TensorExtensions.WrapIndex(starts[2], X.width);
-        s_StridedSliceStart[3] = TensorExtensions.WrapIndex(starts[3], X.channels);
+    public override Tensor Elu(Tensor X, float alpha)
+    {
+        return Activation("Elu", X, alpha);
+    }
 
+    public override Tensor LeakyRelu(Tensor X, float alpha)
+    {
+        return Activation("LeakyRelu", X, alpha);
+    }
 
-        var fn = new ComputeFunc(m_Kernels, "StridedSlice");
+    public override Tensor Selu(Tensor X, float alpha, float gamma)
+    {
+        return Activation("Selu", X, alpha, gamma);
+    }
+
+    public override Tensor Swish(Tensor X)
+    {
+        return Activation("Swish", X);
+    }
+
+    public override Tensor Abs(Tensor X)
+    {
+        return Activation("Abs", X);
+    }
+
+    public override Tensor Neg(Tensor X)
+    {
+        return Activation("Neg", X);
+    }
+
+    public override Tensor Ceil(Tensor X)
+    {
+        return Activation("Ceil", X);
+    }
+
+    public override Tensor Clip(Tensor X, float min, float max)
+    {
+        return Activation("Clip", X, min, max);
+    }
+
+    public override Tensor Floor(Tensor X)
+    {
+        return Activation("Floor", X);
+    }
+
+    public override Tensor Reciprocal(Tensor X)
+    {
+        return Activation("Reciprocal", X);
+    }
+
+    public override Tensor Pow(Tensor X, float alpha)
+    {
+        return Activation("Pow", X, alpha);
+    }
+
+    public override Tensor Exp(Tensor X)
+    {
+        return Activation("Exp", X);
+    }
+
+    public override Tensor Log(Tensor X)
+    {
+        return Activation("Log", X);
+    }
+
+    public override Tensor Sqrt(Tensor X)
+    {
+        return Activation("Sqrt", X);
+    }
+
+    public override Tensor Expand(Tensor X, TensorShape newShape)
+    {
+        Assert.IsTrue(newShape.batch == X.batch || X.batch == 1);
+        Assert.IsTrue(newShape.height == X.height || X.height == 1);
+        Assert.IsTrue(newShape.width == X.width || X.width == 1);
+        Assert.IsTrue(newShape.channels == X.channels || X.channels == 1);
+
+        var fn = new ComputeFunc(m_Kernels, "Expand");
         SetTensor(fn, "X", X);
-        fn.shader.SetInts("_Stride", stride);
-        fn.shader.SetInts("_Pad", s_StridedSliceStart);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, newShape, newShape.channels, newShape.width, newShape.height);
     }
 
-    public override Tensor Gather(Tensor[] tensors, int axis)
-    {
-        Tensor X = tensors[0];
-        Tensor indices = tensors[1];
-
-        int[] shape = X.shape.ToArray();
-        shape[axis] = indices.flatWidth;
-
-        var O = new TensorShape(shape);
-
-        var fn = new ComputeFunc(m_Kernels, "Gather");
-        SetTensor(fn, "X", X);
-        SetTensor(fn, "K", indices);
-        fn.shader.SetInts("_Axis", axis);
-
-        return Dispatch(fn, O, O.channels, O.width, O.height);
-    }
-
-    public virtual Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
+    protected virtual Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         var O = TensorExtensions.MaxShape(tensors);
 
@@ -1332,6 +1353,46 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return ElementwiseWithBroadcast("BroadcastMean", tensors);
     }
 
+    protected virtual Tensor Reduce(string kernelName, Tensor X, int axis)
+    {
+        if (axis != 3 && axis != -1)
+            throw new NotImplementedException();
+
+        var O = X.shape.Reduce(axis);
+        Assert.AreEqual(O.channels, 1);
+
+        var fn = new ComputeFunc(m_Kernels, kernelName);
+        SetTensor(fn, "X", X);
+
+        return Dispatch(fn, O, O.width, O.height, 1);
+    }
+
+    public override Tensor ReduceMin(Tensor X, int axis)
+    {
+        return Reduce("ReduceMin", X, axis);
+    }
+
+    public override Tensor ReduceMax(Tensor X, int axis)
+    {
+        return Reduce("ReduceMax", X, axis);
+    }
+
+    public override Tensor ReduceSum(Tensor X, int axis)
+    {
+        return Reduce("ReduceSum", X, axis);
+    }
+
+    public override Tensor ReduceMean(Tensor X, int axis)
+    {
+        return Reduce("ReduceMean", X, axis);
+    }
+
+    public override Tensor ReduceProd(Tensor X, int axis)
+    {
+        return Reduce("ReduceProd", X, axis);
+    }
+
+
     public override Tensor Greater(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastGreater", new Tensor[] { A, B });
@@ -1377,62 +1438,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("LogicalNot", X);
     }
 
-    public virtual Tensor Reduce(string kernelName, Tensor X, int axis)
-    {
-        if (axis != 3 && axis != -1)
-            throw new NotImplementedException();
-
-        var O = X.shape.Reduce(axis);
-		Assert.AreEqual(O.channels, 1);
-
-        var fn = new ComputeFunc(m_Kernels, kernelName);
-        SetTensor(fn, "X", X);
-
-        return Dispatch(fn, O, O.width, O.height, 1);
-    }
-
-    public override Tensor ReduceMin(Tensor X, int axis)
-    {
-    	return Reduce("ReduceMin", X, axis);
-    }
-
-	public override Tensor ReduceMax(Tensor X, int axis)
-    {
-    	return Reduce("ReduceMax", X, axis);
-    }
-
-    public override Tensor ReduceSum(Tensor X, int axis)
-    {
-    	return Reduce("ReduceSum", X, axis);
-    }
-
-    public override Tensor ReduceMean(Tensor X, int axis)
-    {
-    	return Reduce("ReduceMean", X, axis);
-    }
-
-    public override Tensor ReduceProd(Tensor X, int axis)
-    {
-    	return Reduce("ReduceProd", X, axis);
-    }
-
-    public override Tensor Flatten(Tensor X)
-    {
-        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
-            return base.Flatten(X);
-
-        var newShape = X.shape.Flatten();
-        return CopyAndReshape_NCHW(X, newShape);
-    }
-
-    public override Tensor Reshape(Tensor X, TensorShape newShape)
-    {
-        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
-            return base.Reshape(X, newShape);
-
-        return CopyAndReshape_NCHW(X, newShape);
-    }
-
     protected virtual Tensor CopyAndReshape_NCHW(Tensor X, TensorShape newShape)
     {
         Assert.AreEqual(X.length, newShape.length);
@@ -1476,10 +1481,127 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    public override Tensor Flatten(Tensor X)
+    {
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+            return base.Flatten(X);
+
+        var newShape = X.shape.Flatten();
+        return CopyAndReshape_NCHW(X, newShape);
+    }
+
+    public override Tensor Reshape(Tensor X, TensorShape newShape)
+    {
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+            return base.Reshape(X, newShape);
+
+        return CopyAndReshape_NCHW(X, newShape);
+    }
+
+    public override Tensor Transpose(Tensor X)
+    {
+        Assert.IsTrue(X.dimensions <= 2);
+        var O = new TensorShape(X.flatWidth, X.flatHeight);
+
+        var fn = new ComputeFunc(m_Kernels, "Transpose");
+        SetTensor(fn, "X", X);
+        return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
+    }
+
+    protected static int[] s_ConcatOffsets = new int[] {0, 0, 0, 0};
+    public override Tensor Concat(Tensor[] tensors, int axis)
+    {
+        if (axis != 3 && axis != -1)
+            return base.Concat(tensors, axis);
+
+        foreach (var X in tensors)
+            if (X.shape.rank != 4)
+                return base.Concat(tensors, axis);
+
+        var O = TensorExtensions.Concat(tensors, axis);
+        var offsets = s_ConcatOffsets;
+        Array.Clear(offsets, 0, offsets.Length);
+        axis = O.Axis(axis);
+
+        var fn = new ComputeFunc(m_Kernels, "Copy");
+        var result = NewTensor(fn, "O", O);
+        foreach (var X in tensors)
+        {
+            SetTensor(fn, "X", X);
+            fn.shader.SetInts("_Pad", offsets);
+            fn.Dispatch(X.channels, X.width, X.height);
+
+            offsets[axis] += X.shape[axis];
+        }
+        return result;
+    }
+
+    static private int[] s_StridedSliceStart = new int[4];
+    public override Tensor StridedSlice(Tensor X, int[] starts, int[] ends, int[] stride)
+    {
+        Assert.AreEqual(starts.Length, 4);
+        Assert.AreEqual(ends.Length, 4);
+        Assert.AreEqual(stride.Length, 4);
+
+        var O = X.shape.ApplyStridedSlice(starts, ends, stride);
+
+        s_StridedSliceStart[0] = TensorExtensions.WrapIndex(starts[0], X.batch);
+        s_StridedSliceStart[1] = TensorExtensions.WrapIndex(starts[1], X.height);
+        s_StridedSliceStart[2] = TensorExtensions.WrapIndex(starts[2], X.width);
+        s_StridedSliceStart[3] = TensorExtensions.WrapIndex(starts[3], X.channels);
+
+
+        var fn = new ComputeFunc(m_Kernels, "StridedSlice");
+        SetTensor(fn, "X", X);
+        fn.shader.SetInts("_Stride", stride);
+        fn.shader.SetInts("_Pad", s_StridedSliceStart);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
+    }
+
+    public override Tensor Tile(Tensor X, int[] repeats)
+    {
+        // @TODO: GPU implementation
+        return base.Tile(X, repeats);
+    }
+
+    public override Tensor Gather(Tensor[] tensors, int axis)
+    {
+        Tensor X = tensors[0];
+        Tensor indices = tensors[1];
+
+        int[] shape = X.shape.ToArray();
+        shape[axis] = indices.flatWidth;
+
+        var O = new TensorShape(shape);
+
+        var fn = new ComputeFunc(m_Kernels, "Gather");
+        SetTensor(fn, "X", X);
+        SetTensor(fn, "K", indices);
+        fn.shader.SetInts("_Axis", axis);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
+    }
+
+    public override Tensor Copy(Tensor X)
+    {
+        return base.Copy(X);
+    }
+
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);
         return X;
+    }
+
+    public override void WaitForCompletion(Tensor x)
+    {
+        var data = x.tensorOnDevice as ComputeTensorData;
+
+        if (data != null)
+        {
+            data.buffer.GetData(m_SyncBuffer, 0, 0, 1);
+        }
     }
 }
 

@@ -210,14 +210,48 @@ public class ReferenceCPUOps : IOps
         return NewTensor(new TensorShape(b, h, w, ch), name);
     }
 
-    public virtual void WaitForCompletion(Tensor x)
-    {
-        // do nothing on CPU
-    }
-
     public virtual void ResetAllocator(bool keepCachedMemory = true)
     {
         m_Allocator.Reset(keepCachedMemory);
+    }
+
+    protected float ApplyFusedActivation(float v, Layer.FusedActivation fusedActivation)
+    {
+        switch (fusedActivation)
+        {
+            case Layer.FusedActivation.None:
+                break;
+            case Layer.FusedActivation.Relu:
+                v = Mathf.Max(v, 0.0f);
+                break;
+            case Layer.FusedActivation.Tanh:
+                v = MathfEx.tanh(v);
+                break;
+            case Layer.FusedActivation.Sigmoid:
+                v = 1f / (1f + Mathf.Exp(-v));
+                break;
+            case Layer.FusedActivation.Relu6:
+                v = Mathf.Min(Mathf.Max(0f, v), 6f);
+                break;
+            case Layer.FusedActivation.Swish:
+                v = v / (1f + Mathf.Exp(-v));
+                break;
+            case Layer.FusedActivation.Neg:
+                v = -v;
+                break;
+            case Layer.FusedActivation.Sqrt:
+                v = Mathf.Sqrt(v);
+                break;
+            case Layer.FusedActivation.Exp:
+                v = Mathf.Exp(v);
+                break;
+            case Layer.FusedActivation.Log:
+                v = Mathf.Log(v);
+                break;
+            default:
+                throw new NotImplementedException();
+        }
+        return v;
     }
 
     // ---------------------------------------------------------------------------------
@@ -471,6 +505,111 @@ public class ReferenceCPUOps : IOps
                         }
 
                     }
+        return O;
+    }
+
+    public virtual Tensor Resample2D(Tensor X, int[] size, bool bilinear)
+    {
+        Assert.AreEqual(size.Length, 2);
+        var O = NewTensor(X.batch, size[1], size[0], X.channels);
+
+        float scaleX = O.width / (float) X.width;
+        float scaleY = O.height / (float) X.height;
+
+        for (int b = 0; b < O.batch; ++b)
+            for (int y = 0; y < O.height; ++y)
+                for (int x = 0; x < O.width; ++x)
+                    for (int c = 0; c < O.channels; ++c)
+                    {
+                        if (bilinear)
+                        {
+                            float srcPosX = (x + 0.5f) / scaleX - 0.5f;
+                            float srcPosY = (y + 0.5f) / scaleY - 0.5f;
+                            float floorSrcPosX = Mathf.Floor(srcPosX);
+                            float floorSrcPosY = Mathf.Floor(srcPosY);
+                            float fracSrcPosX = srcPosX - floorSrcPosX;
+                            float fracSrcPosY = srcPosY - floorSrcPosY;
+
+                            float p00 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 0, (int)floorSrcPosX + 0, c)];
+                            float p01 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 1, (int)floorSrcPosX + 0, c)];
+                            float p10 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 0, (int)floorSrcPosX + 1, c)];
+                            float p11 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 1, (int)floorSrcPosX + 1, c)];
+                            float v =
+                                p00 * (1 - fracSrcPosX) * (1 - fracSrcPosY) +
+                                p01 * (1 - fracSrcPosX) * fracSrcPosY +
+                                p10 * fracSrcPosX * (1 - fracSrcPosY) +
+                                p11 * fracSrcPosX * fracSrcPosY;
+                            O[b, y, x, c] = v;
+                        }
+                        else
+                        {
+                            var srcY = Mathf.FloorToInt(y / scaleY);
+                            var srcX = Mathf.FloorToInt(x / scaleX);
+                            O[b, y, x, c] = X[X.IndexWithClamp(b, srcY, srcX, c)];
+                        }
+                    }
+        return O;
+    }
+
+
+    public virtual Tensor DepthToSpace(Tensor X, int[] blocksize, Layer.DepthToSpaceMode mode)
+    {
+        Assert.AreEqual(blocksize.Length, 2);
+        int bsX = blocksize[0];
+        int bsY = blocksize[1];
+
+        Assert.AreEqual(X.channels % (bsX * bsY), 0);
+
+        var O = NewTensor(X.batch, X.height * bsY, X.width * bsX, X.channels / (bsX * bsY));
+
+        for (int b = 0; b < O.batch; ++b)
+            for (int y = 0; y < O.height; ++y)
+                for (int x = 0; x < O.width; ++x)
+                    for (int c = 0; c < O.channels; ++c)
+                    {
+                        int iy = y / bsY;
+                        int by = y % bsY;
+                        int ix = x / bsX;
+                        int bx = x % bsX;
+                        switch (mode)
+                        {
+                            case Layer.DepthToSpaceMode.CRD:
+                                O[b, y, x, c] = X[b, iy, ix, (c * bsX * bsY) + (by * bsX) + bx];
+                                break;
+                            case Layer.DepthToSpaceMode.DCR:
+                                O[b, y, x, c] = X[b, iy, ix, (by * bsX * O.channels) + (bx * O.channels) + c];
+                                break;
+                        }
+                    }
+
+        return O;
+    }
+
+    public virtual Tensor SpaceToDepth(Tensor X, int[] blocksize)
+    {
+        Assert.AreEqual(blocksize.Length, 2);
+        int bsX = blocksize[0];
+        int bsY = blocksize[1];
+
+        Assert.AreEqual(X.height % bsY, 0);
+        Assert.AreEqual(X.width % bsX, 0);
+
+        var O = NewTensor(X.batch, X.height / bsY, X.width / bsX, X.channels * (bsX * bsY));
+
+        for (int b = 0; b < O.batch; ++b)
+        for (int y = 0; y < O.height; ++y)
+        for (int x = 0; x < O.width; ++x)
+        for (int c = 0; c < O.channels; ++c)
+        {
+            int ic = c % X.channels;
+            int bx = c / X.channels % bsX;
+            int by = c / X.channels / bsX;
+            int ix = x * bsX + bx;
+            int iy = y * bsY + by;
+
+            O[b, y, x, c] = X[b, iy, ix, ic];
+        }
+
         return O;
     }
 
@@ -804,45 +943,6 @@ public class ReferenceCPUOps : IOps
     {
         // https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf
         throw new NotImplementedException();
-    }
-
-    protected float ApplyFusedActivation(float v, Layer.FusedActivation fusedActivation)
-    {
-        switch (fusedActivation)
-        {
-            case Layer.FusedActivation.None:
-                break;
-            case Layer.FusedActivation.Relu:
-                v = Mathf.Max(v, 0.0f);
-                break;
-            case Layer.FusedActivation.Tanh:
-                v = MathfEx.tanh(v);
-                break;
-            case Layer.FusedActivation.Sigmoid:
-                v = 1f / (1f + Mathf.Exp(-v));
-                break;
-            case Layer.FusedActivation.Relu6:
-                v = Mathf.Min(Mathf.Max(0f, v), 6f);
-                break;
-            case Layer.FusedActivation.Swish:
-                v = v / (1f + Mathf.Exp(-v));
-                break;
-            case Layer.FusedActivation.Neg:
-                v = -v;
-                break;
-            case Layer.FusedActivation.Sqrt:
-                v = Mathf.Sqrt(v);
-                break;
-            case Layer.FusedActivation.Exp:
-                v = Mathf.Exp(v);
-                break;
-            case Layer.FusedActivation.Log:
-                v = Mathf.Log(v);
-                break;
-            default:
-                throw new NotImplementedException();
-        }
-        return v;
     }
 
     public virtual Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
@@ -1854,6 +1954,36 @@ public class ReferenceCPUOps : IOps
         return CopyAndReshape(X, newShape);
     }
 
+    public virtual Tensor Expand(Tensor X, TensorShape newShape)
+    {
+        Assert.IsTrue(newShape.batch == X.batch || X.batch == 1);
+        Assert.IsTrue(newShape.height == X.height || X.height == 1);
+        Assert.IsTrue(newShape.width == X.width || X.width == 1);
+        Assert.IsTrue(newShape.channels == X.channels || X.channels == 1);
+
+        // scale is either 1 or 0 in case of expansion
+        int bS = X.batch / newShape.batch;
+        int hS = X.height / newShape.height;
+        int wS = X.width / newShape.width;
+        int cS = X.channels / newShape.channels;
+
+        Assert.IsTrue(bS == 0 || bS == 1);
+        Assert.IsTrue(hS == 0 || hS == 1);
+        Assert.IsTrue(wS == 0 || wS == 1);
+        Assert.IsTrue(cS == 0 || cS == 1);
+
+        var O = NewTensor(newShape);
+        for (int b = 0; b < newShape.batch; ++b)
+            for (int y = 0; y < newShape.height; ++y)
+                for (int x = 0; x < newShape.width; ++x)
+                    for (int c = 0; c < newShape.channels; ++c)
+                    {
+                        // sample either from dim or index 0 in case of expansion
+                        O[b, y, x, c] = X[b * bS, y * hS, x * wS, c * cS];
+                    }
+        return O;
+    }
+
     public virtual Tensor Gather(Tensor[] tensors, int axis)
     {
         Tensor X = tensors[0];
@@ -1899,6 +2029,11 @@ public class ReferenceCPUOps : IOps
     {
         X.PrepareCacheForAccess();
         return X;
+    }
+
+    public virtual void WaitForCompletion(Tensor x)
+    {
+        // do nothing on CPU
     }
 }
 

@@ -973,9 +973,10 @@ public class ComputeOps : ReferenceComputeOps
         // stride number of 0 between values of X
         // outputAdjustment number of 0 at the end of X
         // regular padding will be done in Conv2D
-        var XpaddedShape = new TensorShape(X.batch, stride[0] * (X.height-1) + 1 + outputAdjustment[0], stride[1] * (X.width-1) + 1 + outputAdjustment[1], X.channels);
+        var XpaddedShape = new TensorShape(X.batch, stride[1] * (X.height - 1) + 1 + outputAdjustment[1], stride[0] * (X.width - 1) + 1 + outputAdjustment[0], X.channels);
         var fn = new ComputeFunc(m_Kernels, "Conv2DTransPadFill");
         fn.shader.SetInts("_Stride", stride);
+        fn.shader.SetInts("_Pad", outputAdjustment);
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         var Xpadded = Dispatch(fn, XpaddedShape, X.channels, X.width, X.height);
 
@@ -1336,7 +1337,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    public override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
+    protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         Assert.IsTrue(tensors.Length > 0);
 

@@ -18,6 +18,9 @@ public interface IOps
     Tensor DepthwiseConv2D(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad);
     Tensor Conv2DTrans(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, int[] outputAdjustment);
     Tensor Upsample2D(Tensor x, int[] scale, bool bilinear);
+    Tensor Resample2D(Tensor x, int[] size, bool bilinear);
+    Tensor DepthToSpace(Tensor x, int[] scale, Layer.DepthToSpaceMode mode);
+    Tensor SpaceToDepth(Tensor x, int[] scale);
     Tensor MaxPool2D(Tensor x, int[] pool, int[] stride, int[] pad);
     Tensor AvgPool2D(Tensor x, int[] pool, int[] stride, int[] pad);
     Tensor GlobalMaxPool2D(Tensor x); // @TODO: consider, if it should be just a special case of MaxPool2D with {pool=X.width/height, stride=1}
@@ -87,6 +90,7 @@ public interface IOps
 
     Tensor Flatten(Tensor x);
     Tensor Reshape(Tensor x, TensorShape shape);
+    Tensor Expand(Tensor x, TensorShape shape);
     Tensor Transpose(Tensor x);
 
     Tensor Concat(Tensor[] tensors, int axis);

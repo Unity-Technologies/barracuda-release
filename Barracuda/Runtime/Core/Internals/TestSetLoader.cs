@@ -232,11 +232,14 @@ public class TestSetLoader
 
     public static TestSet LoadJSON(string filename)
     {
-        string fullpath = Path.Combine(Application.streamingAssetsPath, "TestSet", filename);
+        string json = "";
 
-        var json = File.ReadAllText(fullpath);
+        if (filename.EndsWith(".json"))
+            json = File.ReadAllText(Path.Combine(Application.streamingAssetsPath, "TestSet", filename));
+        else
+            json = Resources.Load<TextAsset>($"TestSet/{filename}").text;
+
         TestSet result = new TestSet(JsonUtility.FromJson<JSONTestSet>(json));
-
         return result;
     }
 

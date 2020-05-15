@@ -96,6 +96,7 @@ namespace Unity.Barracuda
         public float Seed { get { return GetOptionalFloat("seed", 1337f); } } // seed is always optional and defaults to 'auto generated'
         public ONNXTensor ValueAsTensor { get { return GetRequiredTensor("value"); } }
         public int Axis { get { return GetRequiredInt("axis"); } }
+        public int BlockSize { get { return GetRequiredInt("blocksize"); } }
         public int Group { get { return GetRequiredInt("group"); } }
         public long[] Shape { get { return GetRequiredLongArray("shape"); } }
         public int[] Starts { get { return GetRequiredIntArray("starts"); } }
@@ -109,6 +110,7 @@ namespace Unity.Barracuda
         internal bool SupportsSpatialOnlyPads { get { return OperatorType != "Pad"; } }
         public int[] Pads { get { return ConvertPadsToBarracuda(); } }
         public float[] Scales { get { return ConvertScalesToBarracuda(); } }
+        public int[] Sizes { get { return ConvertSizesToBarracuda(); } }
         public float AlphaOptional(float defaultValue) { return GetOptionalFloat("alpha", defaultValue); }
         public float BetaOptional(float defaultValue) { return GetOptionalFloat("beta", defaultValue); }
         public float GammaOptional(float defaultValue) { return GetOptionalFloat("gamma", defaultValue); }
@@ -424,6 +426,32 @@ namespace Unity.Barracuda
                     throw new OnnxLayerImportException(
                         $"Attribute pads of unsupported length {scales.Length} in {Name} ot fype {OperatorType}.");
             }
+        }
+
+        private int[] ConvertSizesToBarracuda()
+        {
+            int[] sizes = null;
+            Debug.Assert(OperatorType == "Resize");
+            Debug.Assert(InputCount == 4);
+
+            if (IsInput3Const)
+            {
+                sizes = Input3Constant(onnxLayout: "C", name: "sizes").AsInts();
+                Debug.Assert(sizes != null);
+                Debug.Assert(sizes.Length == 4);
+
+                if ((sizes[0] != 1) || (sizes[1] != 1))
+                    Warn("Only spatial (H and W) resizing is currently supported." +
+                        " Non spatial sizes (N and C) will be ignored and default to 1.");
+
+                // Skip non-spatial dimensions N, C, return WH (NCHW layout)
+                sizes = sizes.Skip(2).Reverse().ToArray();
+            }
+            else
+                throw new OnnxLayerImportException(
+                    $"Only constant size values are currently supported in {Name} ot fype {OperatorType}.");
+
+            return sizes;
         }
 
         public Tensor DefaultTensor(TensorShape tensorShape, float defaultValue)

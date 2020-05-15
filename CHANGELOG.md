@@ -1,5 +1,19 @@
 # Release notes
 
+## [0.7.1] - 2020-05-12
+- ONNX: Added DepthToSpace and SpaceToDepth support (*thanks to latentspace.co!*).
+- ONNX: Added Expand support (*thanks to latentspace.co!*).
+- ONNX: Implemented `sizes` input for Resize op, previously only `scales` input was supported (*thanks to latentspace.co!*).
+- ONNX: Automatic activation folding for ConvTranspose and DepthwiseConv
+- ONNX: Conv dilatation support
+- Fix: Fixed issue where second call to `Execute()` would produce incorrect results.
+- Fix: Fix ConvTranpose for non-unit strides and outputadjustment input. Also fixed ComputePrecompiled path for non-0 bias.
+- Fix: Small shader fix linked to activation fusing on ComputePrecompile backend.
+- Performance: Slight improved performance of ConvTranpose.
+- Compute: Added GPU implementation for Abs, Ceil, Floor, Reciprocal ops. Previously these operations would fallback to CPU.
+- Compute: Added GPU implementation for generic MatMul op. Previously this operation would fallback to CPU.
+
+
 ## [0.7.0] - 2020-04-27
 - API/Breaking change: Barracuda namespace renamed to Unity.Barracuda.
 - API/Breaking change: Barracuda assembly renamed to Unity.Barracuda. IMPORTANT: You have to update asmdef files that reference Barracuda in your project!

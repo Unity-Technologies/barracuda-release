@@ -110,6 +110,16 @@ namespace Unity.Barracuda
                     Output(node, rank:symbolicShape.Length);
                 }
             });
+            Add("Expand", (net, node) => {
+                var onnxShape = node.Input1Constant(onnxLayout: "C", name: "shape").AsLongs();
+                var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "NCHW");
+                bool containsNoVariableDimensions = Array.IndexOf(symbolicShape, -1) == -1;
+                if (containsNoVariableDimensions && forceArbitraryBatchSize)
+                    symbolicShape[0] = -1; // force arbitrary batch size
+
+                net.Expand(node.Name, node.Input0, symbolicShape);
+                Output(node, rank:symbolicShape.Length);
+            });
             Add("Shape", (net, node)    => {
                 float[] shapeValuesAsFloats;
                 if (node.IsInput0Const)
@@ -522,7 +532,16 @@ namespace Unity.Barracuda
                     // TODO: support sizes
                 }
 
-                Resize2D(net, node, node.Scales, node.ModeOptional("nearest"));
+                if (node.InputCount > 3)
+                {
+                    var mode = node.ModeOptional("nearest");
+                    var bilinear = IsModeBilinear(net, node, mode);
+                    net.Resample2D(node.Name, node.Input0, node.Sizes, bilinear);
+                }
+                else
+                {
+                    Resize2D(net, node, node.Scales, node.ModeOptional("nearest"));
+                }
             });
             Add("Transpose", (net, node) =>
             {
@@ -579,6 +598,14 @@ namespace Unity.Barracuda
                         throw new OnnxLayerImportException(
                             $"Currently only constant inputs for node of type {node.OperatorType} are supported. Instead input of {node.Name} is pointing to non-constant node {node.Input0}.");
                 }
+            });
+
+            Add("DepthToSpace", (net, node) => {
+                net.DepthToSpace(node.Name, node.Input0, node.BlockSize, node.ModeOptional("DCR"));
+            });
+
+            Add("SpaceToDepth", (net, node) => {
+                net.SpaceToDepth(node.Name, node.Input0, node.BlockSize);
             });
 
             // Tensor ops
