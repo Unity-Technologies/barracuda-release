@@ -34,13 +34,14 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     static public int _Alpha = Shader.PropertyToID("_Alpha");
     static public int _Beta  = Shader.PropertyToID("_Beta");
 
-    struct CompiledInstruction
+    private struct CompiledInstruction
     {
         public ComputeKernel kernel;
         public Tensor[] tensors;
         public TensorShape shape;
     }
-    struct CompiledLayer
+
+    private struct CompiledLayer
     {
         // output shape might not match instruction output shape
         public TensorShape shape;
@@ -56,7 +57,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
     private Dictionary<string, ComputeBuffer> m_CachedModelBuffers = new Dictionary<string, ComputeBuffer>();
 
-    public ComputeBuffer NewComputeBuffer(string name, int count, int stride)
+    private ComputeBuffer NewComputeBuffer(string name, int count, int stride)
     {
         if(!m_CachedModelBuffers.ContainsKey(name))
             m_CachedModelBuffers[name] = new ComputeBuffer(count, stride);
@@ -91,7 +92,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         base.ResetAllocator(keepCachedMemory);
     }
 
-    protected int CalcModelWithInputsHashCode(Model model, IDictionary<string, TensorShape> inputShapes)
+    private int CalcModelWithInputsHashCode(Model model, IDictionary<string, TensorShape> inputShapes)
     {
         var hash = model.GetHashCode();
         foreach (var entry in inputShapes)
@@ -102,7 +103,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return hash;
     }
 
-    Tensor[] PrepareConv2dWinograd(Model model, Layer l)
+    private Tensor[] PrepareConv2dWinograd(Model model, Layer l)
     {
         var K = l.datasets[0];
         var Kshape = new TensorShape(K.shape.batch + 1, K.shape.height + 1, K.shape.width, K.shape.channels);
@@ -191,7 +192,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return new Tensor[] { Kw, Bw };
     }
 
-    Tensor[] PrepareConv2DTrans(Model model, Layer l)
+    private Tensor[] PrepareConv2DTrans(Model model, Layer l)
     {
         var K = l.datasets[0];
         var B = l.datasets[1];
@@ -295,12 +296,29 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             else if (
                 l.type == Layer.Type.DepthwiseConv2D)
             {
-                kernel = BestKernel(
+                var instructions = new List<CompiledInstruction>();
+
+                // DepthwiseConv2D
+                var kernelDepthwiseConv = BestKernel(
                     ComputeKernelLibrary.DepthwiseConv2D(X, l.datasets[0].shape, O));
+                instructions.Add(new CompiledInstruction { kernel = kernelDepthwiseConv, shape = O });
+
+                // FusedActivation
+                var fusedActivation = (Layer.FusedActivation) l.activation;
+                if (!IsFusedActivationSupported(fusedActivation))
+                {
+                    var activationKernel = BestKernel(ComputeKernelLibrary.Activation(X, O, fusedActivation.ToString()));
+                    instructions.Add(new CompiledInstruction {kernel = activationKernel, shape = O});
+                }
+
+                m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
+                continue;
             }
             else if (
                 l.type == Layer.Type.Conv2DTrans)
             {
+                    var instructions = new List<CompiledInstruction>();
+
                     var outputAdjustment = l.pool;
                     var stride = l.stride;
 
@@ -320,12 +338,19 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                         ComputeKernelLibrary.Conv2D(XpaddedShape, K, O, new int[] { 1, 1 }, pad));
                     bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd_2x2_3x3"));
 
-                    m_CompiledLayers.Add(l, new CompiledLayer { instructions = new CompiledInstruction[]
+                    instructions.Add(new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape });
+                    instructions.Add(new CompiledInstruction { shape = K, tensors = PrepareConv2DTrans(model, l) });
+                    instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd(model, l) : null });
+
+                    // FusedActivation
+                    var fusedActivation = (Layer.FusedActivation)l.activation;
+                    if (!IsFusedActivationSupported(fusedActivation))
                     {
-                        new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape},
-                        new CompiledInstruction { shape = K, tensors = PrepareConv2DTrans(model, l)},
-                        new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd(model, l) : null }
-                    }, shape = O });
+                        var activationKernel = BestKernel(ComputeKernelLibrary.Activation(X, O, fusedActivation.ToString()));
+                        instructions.Add(new CompiledInstruction { kernel = activationKernel, shape = O });
+                    }
+
+                    m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
 
                     continue;
             }
@@ -366,7 +391,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                     var pad = new[] { 0, 0, 0, 0 };
 
                     var Oshape = Xr.ApplyPool(pool, stride, pad, ceilMode: true);
-                    var Or = new TensorShape(Oshape.batch, IDivC(Oshape.height, 2), IDivC(Oshape.width, 2), Oshape.channels);
+                    var Or = new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels);
                     var poolKernel = BestKernel(
                         ComputeKernelLibrary.Pool2DReduce(Xr, Or, poolKernelName));
 
@@ -408,7 +433,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                     var pad = new[] { 0, 0, 0, 0 };
 
                     var Oshape = Xr.ApplyPool(pool, stride, pad, ceilMode: true);
-                    var Or = new TensorShape(Oshape.batch, IDivC(Oshape.height, 2), IDivC(Oshape.width, 2), Oshape.channels);
+                    var Or = new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels);
                     var poolKernel = BestKernel(
                         ComputeKernelLibrary.PoolAvgVar2D(Xr, Or, poolKernelName));
 
@@ -502,9 +527,17 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 }
                 else if (l.activation != Layer.Activation.None)
                 {
-                    var kernelName = l.activation.ToString();
-                    kernel = BestKernel(
-                        ComputeKernelLibrary.Activation(X, O, kernelName));
+                    try
+                    {
+                        var kernelName = l.activation.ToString();
+                        kernel = BestKernel(
+                            ComputeKernelLibrary.Activation(X, O, kernelName));
+                    }
+                    catch (System.ArgumentException)
+                    {
+                        //Not all activation are supported on compute path, some will fallback.
+                        continue;
+                    }
                 }
             }
 
@@ -622,10 +655,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
-    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1 || m_Compiled.kernel.shader == null)
-            return base.DepthwiseConv2D(X, K, B, stride, pad);
+            return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
@@ -647,14 +680,16 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         fn.shader.SetInts(_Pad, pad);
         fn.shader.SetInts(_Stride, stride);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
         fn.Dispatch();
-        return O;
+
+        return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
-    public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
-        Assert.AreEqual(m_Compiled.instructions.Length, 3); // pad, kernel flip, conv
+        Assert.IsTrue(m_Compiled.instructions.Length >= 3); // pad, kernel flip, conv, ? fusedActivation
 
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -697,7 +732,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         if (fnConv.shader == null)
         {
-            return base.Conv2D(Xpadded, Kflipped, Bpacked, strideTrans, padTrans, Layer.FusedActivation.None);
+            return base.Conv2D(Xpadded, Kflipped, Bpacked, strideTrans, padTrans, fusedActivation);
         }
 
         Assert.IsNotNull(fnConv.shader);
@@ -718,14 +753,15 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(Pin(Kflipped).buffer, Pin(Bpacked).buffer);
         fnConv.SetTensorBuffer(_DataWBK, Pin(Kflipped).buffer);
 
-        fnConv.shader.SetInt("_ActivationMode", 0);
+        fnConv.shader.SetInt("_ActivationMode", (int)fusedActivation);
         fnConv.shader.SetInts(_Pad, padTrans);
         fnConv.shader.SetInts(_Stride, strideTrans);
 
         fnConv.Dispatch();
 
         Xpadded.Dispose();
-        return O;
+
+        return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
@@ -794,7 +830,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
-    Tensor GlobalPool2D(Tensor X)
+    private Tensor GlobalPool2D(Tensor X)
     {
         var inputDim = new [] {X.height, X.width};
         for (var i = 0; i < m_Compiled.instructions.Length-1; ++i)
@@ -955,8 +991,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (m_Compiled.kernel.shader == null)
             return base.PRelu(X, S);
 
-        Assert.AreEqual(X.channels, S.channels);
-        Assert.AreEqual(S.length, S.channels);
+        Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
         var O = NewTensor(m_Compiled.shape);
@@ -1008,7 +1043,6 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             return base.ElementwiseWithBroadcast(kernelName, tensors);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         Assert.IsTrue(tensors.Length > 0);
@@ -1019,6 +1053,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (tensors.Length > 2)
             outputTensor2 = NewTensor(TensorExtensions.MaxShape(tensors));
 
+        Tensor O = null;
         bool isFirstDispatch = true;
         for (int t = 1; t < tensors.Length; ++t)
         {
@@ -1030,6 +1065,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             fn.SetTensor(_DeclB, _DataB, B.shape, Pin(B).buffer, Pin(B).offset);
             fn.shader.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
+            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape));
+            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape));
 
             fn.Dispatch();
 
@@ -1037,6 +1074,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             isFirstDispatch = false;
         }
 
+        if (O != outputTensor1) outputTensor1.Dispose();
+        if (O != outputTensor2) outputTensor2?.Dispose();
         return O;
     }
 

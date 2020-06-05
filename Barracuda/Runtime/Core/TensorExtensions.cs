@@ -40,17 +40,17 @@ public static class TensorExtensions
 
     static public float[] AsFloats(this Tensor x)
     {
-        return x.readonlyArray;
+        return x.ToReadOnlyArray();
     }
 
     static public int[] AsInts(this Tensor x)
     {
-        return Array.ConvertAll(x.readonlyArray, (v => (int)v));
+        return Array.ConvertAll(x.ToReadOnlyArray(), (v => (int)v));
     }
 
     static public long[] AsLongs(this Tensor x)
     {
-        return Array.ConvertAll(x.readonlyArray, (v => (long)v));
+        return Array.ConvertAll(x.ToReadOnlyArray(), (v => (long)v));
     }
 
     static public string DataToString(this Tensor X, int size = 32)

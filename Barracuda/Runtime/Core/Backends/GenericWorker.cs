@@ -99,52 +99,51 @@ public class GenericWorker : IWorker
         SetInput(m_DefaultInputName, x);
     }
 
-    public virtual void Execute(IDictionary<string, Tensor> inputs)
+    public virtual IWorker Execute(IDictionary<string, Tensor> inputs)
     {
         foreach (var entry in inputs)
             SetInput(entry.Key, entry.Value);
-        Execute();
+        return Execute();
     }
 
-    public virtual void Execute(Tensor input)
+    public virtual IWorker Execute(Tensor input)
     {
         SetInput(input);
-        Execute();
+        return Execute();
     }
 
-    public virtual void Execute()
+    public virtual IWorker Execute()
     {
-        var enumerator = ExecuteAsync();
+        var enumerator = StartManualSchedule();
         while (enumerator.MoveNext()) {};
+        return this;
     }
 
-    public virtual IEnumerator ExecuteAsync(IDictionary<string, Tensor> inputs)
+    public virtual IEnumerator StartManualSchedule(IDictionary<string, Tensor> inputs)
     {
         foreach (var entry in inputs)
             SetInput(entry.Key, entry.Value);
-        return ExecuteAsync();
+        return StartManualSchedule();
     }
 
-    public virtual void WaitForCompletion()
+    public virtual void FlushSchedule(bool blocking)
     {
-        m_Ops.WaitForCompletion(m_SyncTensor);
+        // force execution of scheduled ops by requesting results of the intermedite tensor from the device
+        m_SyncTensor.PrepareCacheForAccess(blocking);
     }
 
-    internal Tensor WaitForCompletionAndReturnIntermediate()
-    {
-        WaitForCompletion();
-        return m_SyncTensor;
-    }
-
-    public virtual IEnumerator ExecuteAsync(Tensor input)
+    public virtual IEnumerator StartManualSchedule(Tensor input)
     {
         SetInput(input);
-        return ExecuteAsync();
+        return StartManualSchedule();
     }
 
-    public virtual float GetAsyncProgress()
-    {
-        return m_Progress;
+    public virtual float scheduleProgress
+    {   
+        get
+        {
+            return m_Progress;
+        }
     }
 
     private static Layer.FusedActivation GetAndVerifyFusedActivation(Layer l)
@@ -156,7 +155,7 @@ public class GenericWorker : IWorker
         return (Layer.FusedActivation) l.activation;
     }
 
-    public virtual IEnumerator ExecuteAsync()
+    public virtual IEnumerator StartManualSchedule()
     {
         Profiler.BeginSample ("Barracuda.Execute");
 
@@ -216,7 +215,7 @@ public class GenericWorker : IWorker
                 Assert.AreEqual(inputs.Length, 3);
                 Profiler.BeginSample ("Barracuda.DepthwiseConv2D");
                 var pad = X.AdjustPadToKernel(inputs[1], l.stride, l.pad);
-                X = m_Ops.DepthwiseConv2D(X, inputs[1], inputs[2], l.stride, pad);
+                X = m_Ops.DepthwiseConv2D(X, inputs[1], inputs[2], l.stride, pad, GetAndVerifyFusedActivation(l));
             }
             else if (l.type == Layer.Type.Conv2DTrans)
             {
@@ -225,7 +224,7 @@ public class GenericWorker : IWorker
                 // pool size is treated as output_adjustment aka output_padding here
                 var outputAdjustment = l.pool;
                 var pad = X.AdjustPadToKernel(inputs[1], l.stride, l.pad);
-                X = m_Ops.Conv2DTrans(X, inputs[1], inputs[2], l.stride, pad, outputAdjustment);
+                X = m_Ops.Conv2DTrans(X, inputs[1], inputs[2], l.stride, pad, outputAdjustment, GetAndVerifyFusedActivation(l));
             }
             else if (l.type == Layer.Type.Upsample2D)
             {
@@ -234,12 +233,11 @@ public class GenericWorker : IWorker
                 var scale = l.pool;
                 // axis is treated as upsample point/bilinear flag
                 var bilinear = l.axis > 0;
-                if (inputs.Length > 1)
+                if (scale.Length == 0 && inputs.Length > 1)
                 {
-                    var size = inputs[1];
-                    Assert.AreEqual(size.flatHeight, 4);
-                    Assert.AreEqual(size.flatWidth, 1);
-                    scale = new int[] {(int)size[2], (int)size[1]};
+                    var scaleTensor = inputs[1];
+                    Assert.AreEqual(scaleTensor.length, 4);
+                    scale = new int[] {(int)scaleTensor[2], (int)scaleTensor[1]};
                 }
                 X = m_Ops.Upsample2D(X, scale, bilinear);
             }
@@ -369,7 +367,8 @@ public class GenericWorker : IWorker
                 Assert.IsNotNull(l.pool);
                 Assert.AreEqual(l.pool.Length, 1);
                 int count = l.pool[0];
-                X = m_Ops.LRN(X, l.alpha, l.beta, 1.0f, count); // @TODO: bias
+                float bias = (l.weights.Length > 0) ? l.weights[0] : 1.0f;
+                X = m_Ops.LRN(X, l.alpha, l.beta, bias, count);
             }
             // Stochastic layers
             else if (l.type == Layer.Type.Dropout)
@@ -811,7 +810,7 @@ public class GenericWorker : IWorker
 }
 
 
-public class GenericVars : IVars
+internal class GenericVars : IVars
 {
     private Dictionary<string, Tensor> m_TensorsByName = new Dictionary<string, Tensor>();
     protected HashSet<Tensor> m_ModelTensors = new HashSet<Tensor>();
@@ -876,7 +875,7 @@ public class GenericVars : IVars
         {
             var tensor = new Tensor(arg.shape, new SharedArrayTensorData(layer.weights, (int)arg.offset,
                                                                         (int)arg.shape.length),
-                                                                        m_StringCache.Lookup(layer.name, "_arg", tensorIndex));
+                                                                        arg.name);
             if (ops != null)
                 tensor = ops.Prepare(tensor);
             m_ModelTensors.Add(tensor);
@@ -982,7 +981,17 @@ public class GenericVars : IVars
     public virtual void Store(Layer fromLayer, Tensor result)
     {
         // assign debug name
-        result.name = m_StringCache.Lookup(fromLayer.name, "_out");
+        result.name = fromLayer.name;
+
+        // @TODO: implement Disposal of the old tensor that is going to be overwritten with new one
+        // NOTE: need to make IWorker.CopyOutput to do real copy before enabling code below
+        // otherwise there is a risk of Disposing tensor that is already owned by the user, if one calls CopyOutput on m_TensorsByName
+        // if (m_TensorsByName.ContainsKey(fromLayer.name))
+        // {
+        //     var oldTensor = m_TensorsByName[fromLayer.name];
+        //     if (oldTensor != result && IsTensorOwnedByInternalAllocator(oldTensor))
+        //         oldTensor.Dispose();
+        // }
 
         m_TensorsByName[fromLayer.name] = result;
     }
@@ -1021,7 +1030,7 @@ public class GenericVars : IVars
     }
 }
 
-public class GenericVarsWithReuse : GenericVars
+internal class GenericVarsWithReuse : GenericVars
 {
     private Model m_CachedModel;
     private bool m_LayerRequiresStorage = false;
@@ -1067,6 +1076,9 @@ public class GenericVarsWithReuse : GenericVars
         if (result.tensorOnDevice != m_Temporary?.tensorOnDevice)
             ReleaseTemporary();
 
+        // assign debug name
+        result.name = fromLayer.name;
+
         if (layerRequiresStorage)
         {
             Assert.IsNotNull(result);
@@ -1078,9 +1090,6 @@ public class GenericVarsWithReuse : GenericVars
         else
         {
             Assert.IsTrue(m_Temporary == null || m_Temporary.tensorOnDevice == result.tensorOnDevice);
-
-            // assign debug name
-            result.name = m_StringCache.Lookup(fromLayer.name, "_out");
 
             m_Temporary = result;
             m_TemporaryName = fromLayer.name;
@@ -1098,7 +1107,7 @@ public class GenericVarsWithReuse : GenericVars
     }
 }
 
-public class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocator
+internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocator
 {
     private Model m_CachedModel;
 
@@ -1149,13 +1158,9 @@ public class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocat
         else
             return m_TemporaryAllocator.Alloc(shape, buffer);
     }
-    public virtual void Repin(Tensor x, ITensorData newBuffer, ITensorData oldBuffer, bool disposeUnpinnedHint)
+    public virtual void MoveToDevice(Tensor x, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {
-        x.allocator.Repin(x, newBuffer, oldBuffer, disposeUnpinnedHint);
-    }
-    public virtual void Cast(Tensor x, ITensorData newBuffer, ITensorData oldBuffer)
-    {
-        x.allocator.Cast(x, newBuffer, oldBuffer);
+        x.allocator.MoveToDevice(x, newBuffer, oldBuffer, disposeDetachedBufferHint);
     }
     public virtual void Release(Tensor x, bool calledFromTensorDispose)
     {
@@ -1191,11 +1196,11 @@ public class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocat
 
 //public class DefaultTensorAllocator : TensorOperatorNewAllocator {}
 //public class DefaultTensorAllocator : TensorCachingByShapeAllocator {}
-public class DefaultTensorAllocator : TensorCachingAllocator {}
+internal class DefaultTensorAllocator : TensorCachingAllocator {}
 
 //public class DefaultVars : GenericVars {}
 //public class DefaultVars : GenericVarsWithReuse {}
-public class DefaultVars : GenericVarsWithPreallocation {}
+internal class DefaultVars : GenericVarsWithPreallocation {}
 
 
 } // namespace Unity.Barracuda

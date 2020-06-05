@@ -34,7 +34,7 @@ public class Layer
         Activation = 50,
         ScaleBias = 51,
         Normalization = 52,
-        LRN = 53,                   // TODO: NOT IMPLEMENTED, https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf
+        LRN = 53,
 
         Dropout = 60,
         RandomNormal = 64,

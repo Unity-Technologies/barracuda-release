@@ -30,7 +30,7 @@ uint4 _Pad;
 NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
 void KERNEL_FUNC(MaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -51,7 +51,7 @@ void KERNEL_FUNC(MaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
                 uint ox = x * _Stride.x + dx;
 
                 bool mask = (oy >= _Pad.y) && (ox >= _Pad.x) && (oy - _Pad.y < X.height) && (ox - _Pad.x < X.width);
-                float v = (mask)? X.Get(n, oy - _Pad.y, ox - _Pad.x, c): -FLT_MAX;
+                float v = (mask)? X.Get(n, min(oy - _Pad.y, X.height-1), min(ox - _Pad.x, X.width-1), c): -FLT_MAX;
 
                 maxV = max(v, maxV);
             }
@@ -63,7 +63,7 @@ void KERNEL_FUNC(MaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
 void KERNEL_FUNC(AvgPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -85,7 +85,7 @@ void KERNEL_FUNC(AvgPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
                 uint ox = x * _Stride.x + dx;
 
                 bool mask = (oy >= _Pad.y) && (ox >= _Pad.x) && (oy - _Pad.y < X.height) && (ox - _Pad.x < X.width);
-                acc += (mask)? X.Get(n, oy - _Pad.y, ox - _Pad.x, c): 0;
+                acc += (mask)? X.Get(n, min(oy - _Pad.y, X.height-1), min(ox - _Pad.x, X.width-1), c): 0;
                 counter += (mask)? 1: 0;
             }
 
@@ -111,7 +111,7 @@ inline void AvgPoolInternalReduce(uint gtc, uint gtz, uint s)
 NUMTHREADS((4, POOL_SIZE, POOL_SIZE), (2, POOL_SIZE, POOL_SIZE), (1, POOL_SIZE, POOL_SIZE))
 void KERNEL_FUNC(AvgPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -133,10 +133,10 @@ void KERNEL_FUNC(AvgPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, 
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = (y >= X.height) || (x >= X.width) ? 0.0 : X.Get(n, y, x, c);
-        float v1 = (x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x, c);
-        float v2 = (x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X.Get(n, y, x + POOL_SIZE, c);
-        float v3 = (x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         AvPool2D_PartialSum[gtc][gtz] = v0 + v1 + v2 + v3;
 
         GroupMemoryBarrierWithGroupSync();
@@ -183,7 +183,7 @@ inline void GlobalAvgPoolInternalReduce(uint gtc, uint gtz, uint s)
 NUMTHREADS((4, POOL_SIZE, POOL_SIZE), (2, POOL_SIZE, POOL_SIZE), (1, POOL_SIZE, POOL_SIZE))
 void KERNEL_FUNC(GlobalAvgPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    DISPATCH_ARGS(O.channels, 1, 1);
+    //DISPATCH ARGS(O.channels, 1, 1);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -203,10 +203,10 @@ void KERNEL_FUNC(GlobalAvgPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, 
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = (y >= X.height) || (x >= X.width) ? 0.0 : X.Get(n, y, x, c);
-        float v1 = (x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x, c);
-        float v2 = (x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X.Get(n, y, x + POOL_SIZE, c);
-        float v3 = (x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         GlobalAvgPool2D_PartialSum[gtc][gtz] = v0 + v1 + v2 + v3;
         GroupMemoryBarrierWithGroupSync();
 
@@ -255,7 +255,7 @@ inline void MaxPoolInternalReduce(uint gtc, uint gtz, uint s)
 NUMTHREADS((4, POOL_SIZE, POOL_SIZE), (2, POOL_SIZE, POOL_SIZE), (1, POOL_SIZE, POOL_SIZE))
 void KERNEL_FUNC(MaxPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -277,10 +277,10 @@ void KERNEL_FUNC(MaxPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, 
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = (y >= X.height) || (x >= X.width) ? 0.0 : X.Get(n, y, x, c);
-        float v1 = (x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x, c);
-        float v2 = (x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X.Get(n, y, x + POOL_SIZE, c);
-        float v3 = (x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         MaxPool2D_PartialSum[gtc][gtz] = max(max(max(v0, v1), v2), v3);
 
         GroupMemoryBarrierWithGroupSync();
@@ -326,7 +326,7 @@ inline void GlobalMaxPoolInternalReduce(uint gtc, uint gtz, uint s)
 NUMTHREADS((4, POOL_SIZE, POOL_SIZE), (2, POOL_SIZE, POOL_SIZE), (1, POOL_SIZE, POOL_SIZE))
 void KERNEL_FUNC(GlobalMaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    DISPATCH_ARGS(O.channels, 1, 1);
+    //DISPATCH ARGS(O.channels, 1, 1);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -347,10 +347,10 @@ void KERNEL_FUNC(GlobalMaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, 
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = (y >= X.height) || (x >= X.width) ? 0.0 : X.Get(n, y, x, c);
-        float v1 = (x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x, c);
-        float v2 = (x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X.Get(n, y, x + POOL_SIZE, c);
-        float v3 = (x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         GlobalMaxPool2D_PartialMax[gtc][gtz] = max(max(max(v0, v1), v2), v3);
         GroupMemoryBarrierWithGroupSync();
 
@@ -402,7 +402,7 @@ inline void AvgVarianceInternalReduce(uint gtc, uint gtz, uint s)
 NUMTHREADS((4, POOL_SIZE, POOL_SIZE), (2, POOL_SIZE, POOL_SIZE), (1, POOL_SIZE, POOL_SIZE))
 void KERNEL_FUNC(AvgVariancePool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARG(X); TENSOR_ARG(X2); TENSOR_ARG_RW(O); TENSOR_ARG_RW(O2);
 
     uint c = dispatchThreadID.x;
@@ -425,16 +425,16 @@ void KERNEL_FUNC(AvgVariancePool2DReduce)(uint3 dispatchThreadID : SV_DispatchTh
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = (y >= X.height) || (x >= X.width) ? 0.0 : X.Get(n, y, x, c);
-        float v1 = (x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x, c);
-        float v2 = (x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X.Get(n, y, x + POOL_SIZE, c);
-        float v3 = (x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         AvgVariancePool2D_PartialSum[gtc][gtz] = v0 + v1 + v2 + v3;
 
-        float w0 = ((y >= X.height) || (x >= X.width) ? 0.0 : X2.Get(n, y, x, c));
-        float w1 = ((x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X2.Get(n, y + POOL_SIZE, x, c));
-        float w2 = ((x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X2.Get(n, y, x + POOL_SIZE, c));
-        float w3 = ((x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X2.Get(n, y + POOL_SIZE, x + POOL_SIZE, c));
+        float w0 = X2.SafeGetHW(n, y, x, c);
+        float w1 = X2.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float w2 = X2.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float w3 = X2.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         if (_IsFirstDispatch)
         {
             // to avoid X^2 dispatch, first call squares X inplace
@@ -492,7 +492,7 @@ inline void GlobalAvgVarianceInternalReduce(uint gtc, uint gtz, uint s)
 NUMTHREADS((4, POOL_SIZE, POOL_SIZE), (2, POOL_SIZE, POOL_SIZE), (1, POOL_SIZE, POOL_SIZE))
 void KERNEL_FUNC(GlobalAvgVariancePool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    DISPATCH_ARGS(O.channels, 1, 1);
+    //DISPATCH ARGS(O.channels, 1, 1);
     TENSOR_TWOINPUTS(X, X2, O);
 
     uint c = dispatchThreadID.x;
@@ -513,16 +513,16 @@ void KERNEL_FUNC(GlobalAvgVariancePool2D)(uint3 dispatchThreadID : SV_DispatchTh
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = (y >= X.height) || (x >= X.width) ? 0.0 : X.Get(n, y, x, c);
-        float v1 = (x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x, c);
-        float v2 = (x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X.Get(n, y, x + POOL_SIZE, c);
-        float v3 = (x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X.Get(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         GlobalAvgVariancePool2D_PartialSum[gtc][gtz] = v0 + v1 + v2 + v3;
 
-        float w0 = ((y >= X.height) || (x >= X.width) ? 0.0 : X2.Get(n, y, x, c));
-        float w1 = ((x >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X2.Get(n, y + POOL_SIZE, x, c));
-        float w2 = ((x + POOL_SIZE >= X.width) || (y >= X.height) ? 0.0 : X2.Get(n, y, x + POOL_SIZE, c));
-        float w3 = ((x + POOL_SIZE >= X.width) || (y + POOL_SIZE >= X.height) ? 0.0 : X2.Get(n, y + POOL_SIZE, x + POOL_SIZE, c));
+        float w0 = X2.SafeGetHW(n, y, x, c);
+        float w1 = X2.SafeGetHW(n, y + POOL_SIZE, x, c);
+        float w2 = X2.SafeGetHW(n, y, x + POOL_SIZE, c);
+        float w3 = X2.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
         if (_IsFirstDispatch)
         {
             // to avoid X^2 dispatch, first call squares X inplace

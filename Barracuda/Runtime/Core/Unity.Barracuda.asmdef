@@ -1,6 +1,8 @@
 {
     "name": "Unity.Barracuda",
-    "references": [],
+    "references": [
+        "Unity.Burst"
+    ],
     "optionalUnityReferences": [],
     "includePlatforms": [],
     "excludePlatforms": [],

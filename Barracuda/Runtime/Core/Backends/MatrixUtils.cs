@@ -4,11 +4,20 @@ using System.Threading.Tasks;
 using UnityEngine.Assertions;
 using UnityEngine.Scripting;
 
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs;
+
 namespace Unity.Barracuda
 {
     [Preserve]
-    public class CSharpBLAS : BLASPlugin
+    internal class CSharpBLAS : BLASPlugin
     {
+        public bool IsNative()
+        {
+            return false; // reference implementation
+        }
+
         public bool IsCurrentPlatformSupported()
         {
             return true;
@@ -19,6 +28,43 @@ namespace Unity.Barracuda
         {
             MatrixUtils.MultiplyBlockUnroll8xhParallelWithPadding(Ap, AN, AM, Bp, BN, BM, Cp, CN, CM, bs,
                 transposeA, transposeB);
+        }
+
+        public unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
+            float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
+            int bs,
+            bool transposeA = false, bool transposeB = false)
+        {
+            var job = new SGEMMJob();
+            job.Ap = Ap; job.AN = AN; job.AM = AM;
+            job.Bp = Bp; job.BN = BN; job.BM = BM;
+            job.Cp = Cp; job.CN = CN; job.CM = CM;
+            job.transposeA = transposeA;
+            job.transposeB = transposeB;
+            job.bs = bs;
+            return job.Schedule(dependsOn);
+        }
+
+        unsafe struct SGEMMJob : IJob
+        {
+            [NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* Ap;
+            public int AN, AM;
+            [NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* Bp;
+            public int BN, BM;
+            [NativeDisableUnsafePtrRestriction]           public unsafe float* Cp;
+            public int CN, CM;
+            public int bs;
+            public bool transposeA;
+            public bool transposeB;
+
+            public void Execute()
+            {
+                MatrixUtils.MultiplyBlockUnroll8xhParallelWithPadding(
+                    Ap, AN, AM,
+                    Bp, BN, BM,
+                    Cp, CN, CM, bs,
+                    transposeA, transposeB);
+            }
         }
     }
 

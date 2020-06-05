@@ -7,85 +7,176 @@ using UnityEngine.Assertions;
 namespace Unity.Barracuda {
 
 /// <summary>
-/// Public interface for Workers. A worker is able to schedule models execution for a given backend.
-/// Use `WorkerFactory` to instantiate a worker.
+/// The main interface to execute neural networks (a.k.a models).
+/// `IWorker` abstracts implementation details associated with various hardware devices (CPU, GPU and NPU in the future)
+/// that can execute neural networks and provides clean and simple interface to:
+///   1) specify inputs, 2) schedule the work and 3) retrieve outputs.
+/// Internally `IWorker` translates description of the neural network provided by `Model` instance
+/// into the set of operations that are sent to hardware device for execution in a non-blocking (asynchronous) manner.
+///
+/// The following is a simple example of image classification using pretrained neural network:
+/// <code>
+///     using UnityEngine;
+///     using Unity.Barracuda;
+///
+///     public class ImageRecognitionSample : MonoBehaviour
+///     {
+///         // small ready to use image classification neural network in ONNX format can be obtained from https://github.com/onnx/models/tree/master/vision/classification/mobilenet
+///         public NNModel onnxAsset;
+///         public Texture2D imageToRecognise;
+///
+///         private IWorker worker;
+///         void Start()
+///         {
+///             worker = onnxAsset.CreateWorker();
+///         }
+///
+///         void Update()
+///         {
+///             // convert texture into Tensor of shape [1, imageToRecognise.height, imageToRecognise.width, 3]
+///             using (var input = new Tensor(imageToRecognise, channels:3))
+///             {
+///                 // execute neural network with specific input and get results back
+///                 var output = worker.Execute(input).PeekOutput();
+///
+///                 // the following line will access values of the output tensor causing the main thread to block until neural network execution is done
+///                 var indexWithHighestProbability = output.ArgMax()[0];
+///
+///                 UnityEngine.Debug.Log($"Image was recognised as class number: {indexWithHighestProbability}");
+///             }
+///         }
+///
+///         void OnDisable()
+///         {
+///             worker.Dispose();
+///         }
+///     }
+/// </code>
+///
+/// The following example demonstrates the use of coroutine to continue smooth app execution while neural network executes in the background:
+/// <code>
+///     using UnityEngine;
+///     using Unity.Barracuda;
+///     using System.Collections;
+///     public class CoroutineImageRecognitionSample : MonoBehaviour
+///     {
+///         // small ready to use image classification neural network in ONNX format can be obtained from https://github.com/onnx/models/tree/master/vision/classification/mobilenet
+///         public NNModel onnxAsset;
+///         public Texture2D imageToRecognise;
+///
+///         private IWorker worker;
+///         void Start()
+///         {
+///             worker = onnxAsset.CreateWorker();
+///             StartCoroutine(ImageRecognitionCoroutine());
+///         }
+///
+///         IEnumerator ImageRecognitionCoroutine()
+///         {
+///             while (true)
+///             {
+///                 // convert texture into Tensor of shape [1, imageToRecognise.height, imageToRecognise.width, 3]
+///                 using (var input = new Tensor(imageToRecognise, channels:3))
+///                 {
+///                     // execute neural network with specific input and get results back
+///                     var output = worker.Execute(input).PeekOutput();
+///
+///                     // allow main thread to run until neural network execution has finished
+///                     yield return new WaitForCompletion(output);
+///
+///                     var indexWithHighestProbability = output.ArgMax()[0];
+///                     UnityEngine.Debug.Log($"Image was recognised as class number: {indexWithHighestProbability}");
+///                 }
+///
+///                 // wait until a new image is provided
+///                 var previousImage = imageToRecognise;
+///                 while (imageToRecognise == previousImage)
+///                    yield return null;
+///             }
+///         }
+///
+///         void OnDisable()
+///         {
+///             worker.Dispose();
+///         }
+///     }
+/// </code>
+///
+/// Use `WorkerFactory.CreateWorker` or `Model.CreateWorker` to create new worker instance.
 /// </summary>
 public interface IWorker : IDisposable
 {
     #region Inputs
     /// <summary>
-    /// Optional method to prepare network for particular input dimensions
+    /// Optional API to prepare network execution for inputs of particular shapes.
+    /// Useful to initialize execution device ahead of the first call to `Execute`.
     /// </summary>
     void PrepareForInput(IDictionary<string, TensorShape> inputShapes);
     /// <summary>
-    /// Specify single tensor value as the input for the network.
-    /// Useful when network has only one input and caller does not need to know input's name.
+    /// Specify single tensor `x` as the only input for the network.
+    /// Useful when network has only one input and caller does not need to specify input's name.
     /// </summary>
     void SetInput(Tensor x);
     /// <summary>
-    /// Specify tensor value for the named input of the network.
+    /// Assign tensor `x` to the named input of the network. String `name` specifies the name of the input.
     /// </summary>
     void SetInput(string name, Tensor x);
     #endregion
 
-    #region Schedule whole network
+    #region Schedule the whole network
     /// <summary>
-    /// Non-blocking API that schedules network execution in one go
-    /// Remark: This API will only be non-blocking for GPU inference.
+    /// Non-blocking API that schedules network execution in one go.
     /// </summary>
-    void Execute();
+    IWorker Execute();
     /// <summary>
-    /// Non-blocking API that schedules network execution in one go, using the provider tensor as input.
-    /// Remark: This API will only be non-blocking for GPU inference.
+    /// Non-blocking API that takes single `input` tensor and schedules network execution in one go.
     /// Useful when network have only one input as input name is not needed.
     /// </summary>
-    void Execute(Tensor input);
+    IWorker Execute(Tensor input);
     /// <summary>
-    /// Non-blocking API that schedules network execution in one go, using the provider tensor dictionary for inputs.
-    /// Remark: This API will only be non-blocking for GPU inference.
+    /// Non-blocking API that takes mutliple input tensors and schedules network execution in one go.
     /// </summary>
-    void Execute(IDictionary<string, Tensor> inputs);
+    IWorker Execute(IDictionary<string, Tensor> inputs);
     #endregion
 
     #region Schedule one layer at a time
     /// <summary>
-    /// Non-blocking API that schedules network execution one layer at the time.
-    /// Remark: This API will only be non-blocking for GPU inference.
-    /// Check GetAsyncProgress() for progress.
+    /// Non-blocking API that allows manual scheduling of the model one layer at the time.
+    /// Call `MoveNext` on the `IEnumerator` obtained from calling this function to schedule next layer of the model.
     /// </summary>
-    IEnumerator ExecuteAsync();
+    IEnumerator StartManualSchedule();
     /// <summary>
-    /// Non-blocking API that schedules network execution one layer at the time, using the provider tensor as input.
-    /// Remark: This API will only be non-blocking for GPU inference.
-    /// Useful when network have only one input as input name is not needed.
-    /// Check GetAsyncProgress() for progress.
+    /// Non-blocking API that takes single `input` tensor and schedules network execution one layer at the time.
+    /// Call `MoveNext` on the `IEnumerator` obtained from calling this function to schedule next layer of the model.
     /// </summary>
-    IEnumerator ExecuteAsync(Tensor input);
+    IEnumerator StartManualSchedule(Tensor input);
     /// <summary>
-    /// Non-blocking API that schedules network execution one layer at the time, using the provider tensor dictionary for inputs.
-    /// Remark: This API will only be non-blocking for GPU inference.
-    /// Check GetAsyncProgress() for progress.
+    /// Non-blocking API that takes mutliple input tensors and schedules network execution one layer at the time.
+    /// Call `MoveNext` on the `IEnumerator` obtained from calling this function to schedule next layer of the model.
     /// </summary>
-    IEnumerator ExecuteAsync(IDictionary<string, Tensor> inputs);
+    IEnumerator StartManualSchedule(IDictionary<string, Tensor> inputs);
     /// <summary>
-    /// Wait for completion of part of the network that was scheduled via `ExecuteAsync()`
+    /// Non-blocking API that starts immediate execution on the part of the network that was scheduled so far.
+    /// Optional `blocking` flag can force this function to block until execution is complete.
     /// </summary>
-    void WaitForCompletion();
+    void FlushSchedule(bool blocking = false);
     /// <summary>
-    /// Progress of the scheduling, 0.0 = 0%, 1.0 = 100%
+    /// Reports the fraction (from 0.0 to 1.0) of the model that was scheduled for the execution since the last call to `StartManualSchedule`.
+    /// This property will return 0.0 immediately after calling `StartManualSchedule` and will return 1.0 once the complete model was scheduled.
+    /// This property will monotonuosly increase with the every iteration of `IEnumerator` that was obtained by calling `StartManualSchedule`.
     /// </summary>
-    float GetAsyncProgress();
+    float scheduleProgress { get; }
     #endregion
 
     #region Outputs
     /// <summary>
-    /// Returns a reference to the first output tensor. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
+    /// Non-blocking API that returns a reference to the main output tensor. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
     /// Useful when network has only one output.
     /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor.
     /// </summary>
     Tensor PeekOutput();
     /// <summary>
-    /// Returns a reference to output tensor by name. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
+    /// Non-blocking API that returns a reference to output tensor by specified `name`. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
     /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor.
     /// </summary>
     Tensor PeekOutput(string name);
@@ -106,7 +197,7 @@ public interface IWorker : IDisposable
 
 public static class WorkerExtensions
 {
-    #region Blocking APIs
+    // @TODO: add optional targetDevice argument of type WorkerFactory.Device
     /// <summary>
     /// Returns CPU copy of the first output tensor.
     /// This method is a blocking call and will wait until network execution is completed.
@@ -114,46 +205,27 @@ public static class WorkerExtensions
     /// </summary>
     public static Tensor CopyOutput(this IWorker worker)
     {
-        // @TODO: consider using PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
+        // @TODO: implement as PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
         var output = worker.PeekOutput();
-        output.Unpin(); // unpin will readback to CPU and
-                        // give allocator a chance to reuse allocated buffer
+        output.DetachFromDevice(); // detach will readback to CPU and
+                                   // give allocator a chance to reuse allocated buffer
         output.TakeOwnership();
         return output;
     }
+    // @TODO: add optional targetDevice argument of type WorkerFactory.Device
     /// <summary>
     /// Returns CPU copy of output tensor by name.
     /// This method is a blocking call and will wait until network execution is completed.
     /// </summary>
     public static Tensor CopyOutput(this IWorker worker, string name)
     {
-        // @TODO: consider using PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
+        // @TODO: implement as PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
         var output = worker.PeekOutput(name);
-        output.Unpin(); // unpin will readback to CPU and
-                        // give allocator a chance to reuse allocated buffer
+        output.DetachFromDevice(); // detach will readback to CPU and
+                                   // give allocator a chance to reuse allocated buffer
         output.TakeOwnership();
         return output;
     }
-
-    /// <summary>
-    /// Schedules network execution in one go and waits for result to be available.
-    /// Useful when network has only one input and caller does not need to know input's name.
-    /// </summary>
-    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, Tensor input)
-    {
-        worker.Execute(input);
-        return worker.CopyOutput();
-    }
-    /// <summary>
-    /// Schedules network execution in one go and waits for result to be available.
-    /// This method supports multiple inputs.
-    /// </summary>
-    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, IDictionary<string, Tensor> inputs)
-    {
-        worker.Execute(inputs);
-        return worker.CopyOutput();
-    }
-    #endregion
 }
 
 /// <summary>
@@ -192,9 +264,21 @@ public interface ITensorData : IDisposable
     /// </summary>
     float[] SharedAccess(out int offset);
     /// <summary>
-    /// Return the maximum number of element this tensorData can contain.
+    /// Returns the maximum number of element this tensorData can contain.
     /// </summary>
-    int GetMaxCount();
+    int maxCapacity { get; }
+}
+
+/// <summary>
+/// Interface for device dependent representation of Tensor data that provides a read fence for scheduling data consumer job.
+/// </summary>
+public interface IDependableTensorData : ITensorData
+{
+    /// <summary>
+    /// Returns job handle that can be used as `dependsOn` argument when scheduling data consumer job.
+    /// Consumer job will start execution once Tensor data is ready for read access.
+    /// </summary>
+    Unity.Jobs.JobHandle fence { get; }
 }
 
 /// <summary>
@@ -348,13 +432,14 @@ public class WorkerFactory
         Compute             = 1 | Device.GPU,
         ComputeRef          = 2 | Device.GPU,
 
-        CSharp              = 0 | Device.CPU,
-        CSharpRef           = 1 | Device.CPU
+        CSharpBurst         = 0 | Device.CPU,
+        CSharp              = 1 | Device.CPU,
+        CSharpRef           = 2 | Device.CPU
     }
 
     /// <summary>
     /// Worker configuration
-    /// `compareAgainstType` if different than the worker `type`, the model will be run on both backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// `compareAgainstType` if different than the worker `type`, the model will be run on both backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
     /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// `compareLogLevel` define how difference will be reported (default == Warning).
     /// `compareEpsilon` the maximum tolerance before a difference is reported (default == 0.0001f).
@@ -380,7 +465,7 @@ public class WorkerFactory
     /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
     /// `trimOutputs` are the outputs not discard even if they are specified by the model.
     /// `verbose` will log scheduling of layers execution to the console.
-    /// `compareAgainstType` if different than `type` model will be run on those two backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// `compareAgainstType` if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
     /// `differenceAsError` if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise.
     /// </summary>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, bool verbose, Type compareAgainstType, CompareOpsUtils.LogLevel differenceLogLevel=CompareOpsUtils.LogLevel.Warning)
@@ -463,7 +548,7 @@ public class WorkerFactory
     /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
     /// `model` is the associated model. See ModelLoader.cs.
     /// `verbose` will log scheduling of layers execution to the console.
-    /// `compareAgainstType` if different than `type` model will be run on those two backend and the result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
+    /// `compareAgainstType` if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
     /// `differenceAsError` if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise.
     /// </summary>
     public static IWorker CreateWorker(Type type, Model model, bool verbose, Type compareAgainstType, CompareOpsUtils.LogLevel differenceLogLevel=CompareOpsUtils.LogLevel.Warning)
@@ -607,6 +692,37 @@ public class WaitForCompletion : CustomYieldInstruction
     }
 }
 
+public static class ModelExtensions
+{
+    /// <summary>
+    /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
+    /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
+    /// `model` is the associated Model to execute.
+    /// `device` is the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
+    /// `verbose` will log scheduling of layers execution to the console.
+    /// </summary>
+    public static IWorker CreateWorker(this Model model,
+        WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
+    {
+        return WorkerFactory.CreateWorker(model, device, verbose);
+    }
+
+    /// <summary>
+    /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
+    /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
+    /// `model` is the associated Model to execute.
+    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
+    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
+    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
+    /// `verbose` will log scheduling of layers execution to the console (default == false).
+    /// </summary>
+    public static IWorker CreateWorker(this Model model,
+        string[] additionalOutputs, string[] trimOutputs, WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
+    {
+        return WorkerFactory.CreateWorker(model, additionalOutputs, trimOutputs, device, verbose);
+    }
+}
+
 public static class NNModelExtensions
 {
     /// <summary>
@@ -620,7 +736,7 @@ public static class NNModelExtensions
         WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
     {
         var model = ModelLoader.Load(asset);
-        return WorkerFactory.CreateWorker(model, device, verbose);
+        return model.CreateWorker(device, verbose);
     }
 
     /// <summary>
@@ -636,7 +752,7 @@ public static class NNModelExtensions
         string[] additionalOutputs, string[] trimOutputs, WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
     {
         var model = ModelLoader.Load(asset);
-        return WorkerFactory.CreateWorker(model, additionalOutputs, trimOutputs, device, verbose);
+        return model.CreateWorker(additionalOutputs, trimOutputs, device, verbose);
     }
 }
 

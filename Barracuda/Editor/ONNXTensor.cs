@@ -289,12 +289,12 @@ namespace Unity.Barracuda
             Tensor result = new Tensor(newShape);
 
             // pad to the number of the loops - 4
-            newShape = newShape.Concat(Enumerable.Repeat(1, 4 - newShape.Length)).ToArray(); // we need to keep 1, to visit all elements at least once
+            var newShapeRank4 = newShape.Concat(Enumerable.Repeat(1, 4 - newShape.Length)).ToArray(); // we need to keep 1, to visit all elements at least once
 
-            for (int b = 0; b < newShape[0]; ++b)
-                for (int y = 0; y < newShape[1]; ++y)
-                    for (int x = 0; x < newShape[2]; ++x)
-                        for (int c = 0; c < newShape[3]; ++c)
+            for (int b = 0; b < newShapeRank4[0]; ++b)
+                for (int y = 0; y < newShapeRank4[1]; ++y)
+                    for (int x = 0; x < newShapeRank4[2]; ++x)
+                        for (int c = 0; c < newShapeRank4[3]; ++c)
                         {
                             if (axis == 0)
                                 result[b, y, x, c] = m_Data[indices[b], y, x, c];

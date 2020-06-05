@@ -52,7 +52,7 @@ float2 Unpack(SharedTensor t, uint y, uint x)
 NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
 void KERNEL_FUNC(DenseFP16Div2)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth/2, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth/2, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     uint x = dispatchThreadID.x;

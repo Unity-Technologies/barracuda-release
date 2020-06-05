@@ -12,7 +12,7 @@ namespace Unity.Barracuda {
 
 public class ModelAnalyzer
 {
-    static public string GetDefaultInputName(Model model)
+    public static string GetDefaultInputName(Model model)
     {
         bool modelHasOnlyOneInput = model.inputs.Count == 1;
         if (modelHasOnlyOneInput)
@@ -60,13 +60,13 @@ public class ModelAnalyzer
         return "";
     }
 
-    static public TensorShape?[] ListTemporaryTensorShapes(Model model, IDictionary<string, TensorShape> inputShapes)
+    public static TensorShape?[] ListTemporaryTensorShapes(Model model, IDictionary<string, TensorShape> inputShapes)
     {
         IDictionary<string, TensorShape?> shapesByName;
         return ListTemporaryTensorShapes(model, inputShapes, out shapesByName);
     }
 
-    static public TensorShape?[] ListTemporaryTensorShapes(Model model, IDictionary<string, TensorShape> inputShapes,
+    public static TensorShape?[] ListTemporaryTensorShapes(Model model, IDictionary<string, TensorShape> inputShapes,
         out IDictionary<string, TensorShape?> shapesByName)
     {
         Profiler.BeginSample ("Barracuda.ListTemporaryTensorShapes");
@@ -433,7 +433,7 @@ public class ModelAnalyzer
         return shapes.ToArray();
     }
 
-    static public bool TryGetOutputTensorShape(Model model, IDictionary<string, TensorShape> inputShapes, string output, out TensorShape shape)
+    public static bool TryGetOutputTensorShape(Model model, IDictionary<string, TensorShape> inputShapes, string output, out TensorShape shape)
     {
         shape = new TensorShape();
         IDictionary<string, TensorShape?> shapesByName;
@@ -446,7 +446,7 @@ public class ModelAnalyzer
         return found;
     }
 
-    static public bool TryGetOutputTensorShape(Model model, string output, out TensorShape shape)
+    public static bool TryGetOutputTensorShape(Model model, string output, out TensorShape shape)
     {
         var inputShapes = new Dictionary<string, TensorShape>();
         foreach (var i in model.inputs)
@@ -454,7 +454,7 @@ public class ModelAnalyzer
         return TryGetOutputTensorShape(model, inputShapes, output, out shape);
     }
 
-    static public HashSet<Layer> FindLayersThatRequireStorage(Model model)
+    public static HashSet<Layer> FindLayersThatRequireStorage(Model model)
     {
         var allInputsExceptFromPreviousLayer = new HashSet<string>();
         Layer prevLayer = null;
@@ -493,7 +493,7 @@ public class ModelAnalyzer
         return requireStorage;
     }
 
-    static public HashSet<Layer> FindUpstreamLayers(Model model, string[] outputs)
+    public static HashSet<Layer> FindUpstreamLayers(Model model, string[] outputs)
     {
         // TODO: replace with var layersByName = model.layers.ToDictionary(i => i.name, i => i);
         var layersByName = new Dictionary<string, Layer>();
@@ -525,7 +525,7 @@ public class ModelAnalyzer
         return connected;
     }
 
-    static public TensorShape FindLargestNecessaryTensorShape(Model model, IDictionary<string, TensorShape> inputShapes)
+    public static TensorShape FindLargestNecessaryTensorShape(Model model, IDictionary<string, TensorShape> inputShapes)
     {
         Profiler.BeginSample ("Barracuda.FindLargestNecessaryTensorShape");
 
@@ -541,7 +541,7 @@ public class ModelAnalyzer
         return maxTensorShape;
     }
 
-    static public TensorShape FindLargestArgumentTensorShape(Model model)
+    public static TensorShape FindLargestArgumentTensorShape(Model model)
     {
         TensorShape maxTensorShape = new TensorShape(1,1,1,1);
         foreach (var layer in model.layers)
@@ -552,7 +552,7 @@ public class ModelAnalyzer
         return maxTensorShape;
     }
 
-    static public string[] FindUnusedLayers(Model model)
+    public static string[] FindUnusedLayers(Model model)
     {
         var layerUsageByName = model.layers.ToDictionary(i => i.name, i => false);
         foreach (var layer in model.layers)
@@ -568,7 +568,7 @@ public class ModelAnalyzer
         return layerUsageByName.Where(keyValue => !keyValue.Value).Select(keyValue => keyValue.Key).ToArray();
     }
 
-    static public string[] FindBrokenLinks(Model model, HashSet<string> links)
+    private static string[] FindBrokenLinks(Model model, HashSet<string> links)
     {
         var allVariables = new HashSet<string>(model.layers.Select(i => i.name));
         var globalInputs = new HashSet<string>(model.inputs.Select(i => i.name));
@@ -581,12 +581,12 @@ public class ModelAnalyzer
         return brokenLinks.ToArray();
     }
 
-    static public string[] FindBrokenLinks(Model model, string[] links)
+    private static string[] FindBrokenLinks(Model model, string[] links)
     {
         return FindBrokenLinks(model, new HashSet<string>(links));
     }
 
-    static public string[] FindBrokenLinks(Model model)
+    public static string[] FindBrokenLinks(Model model)
     {
         // check global outputs
         var linksToInspect = new HashSet<string>(model.outputs);
@@ -599,7 +599,7 @@ public class ModelAnalyzer
         return FindBrokenLinks(model, linksToInspect);
     }
 
-    static public string[] FindUnconnectedInputs(Model model)
+    public static string[] FindUnconnectedInputs(Model model)
     {
         var unconnected = model.inputs.ToDictionary(i => i.name, i => true);
 

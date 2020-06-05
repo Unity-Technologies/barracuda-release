@@ -36,12 +36,6 @@ public class CompareOps : IOps, IModelCompiler
             ((IModelCompiler)m_Ops1).PreExecuteLayer(layer, inputs);
     }
 
-    public virtual void WaitForCompletion(Tensor x)
-    {
-        m_Ops1.WaitForCompletion(x);
-        m_Ops2.WaitForCompletion(x);
-    }
-
     Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor W, bool wTranspose)
     {
         var Y = m_Ops1.MatMul(X, xTranspose, W, wTranspose);
@@ -64,17 +58,17 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Conv2D);
         return Y;
     }
-    Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
-        var Y = m_Ops1.DepthwiseConv2D(X, K, B, stride, pad);
-        var Z = m_Ops2.DepthwiseConv2D(X, K, B, stride, pad);
+        var Y = m_Ops1.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
+        var Z = m_Ops2.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
         CheckSame(Y, Z, Layer.Type.DepthwiseConv2D);
         return Y;
     }
-    Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
-        var Y = m_Ops1.Conv2DTrans(X, K, B, stride, pad, outputAdjustment);
-        var Z = m_Ops2.Conv2DTrans(X, K, B, stride, pad, outputAdjustment);
+        var Y = m_Ops1.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
+        var Z = m_Ops2.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
         CheckSame(Y, Z, Layer.Type.Conv2DTrans);
         return Y;
     }

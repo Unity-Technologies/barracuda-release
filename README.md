@@ -1,11 +1,16 @@
+![Image description](Documentation~/images/barracuda-landing-image.png)
+
 # Unity Barracuda
 
-**Unity Barracuda** is a lightweight and **cross-platform** Neural Net **inference library for Unity**. Barracuda can run Neural Nets both on GPU and CPU. Currently Barracuda is in the preview development stage, so adventures are expected.
-More documentation is available in `Documentation~` folder.
+**Unity Barracuda** is a lightweight **cross-platform** Neural Networks **inference library for Unity**. \
+Barracuda can run Neural Networks both on GPU and CPU. For details, please look for [Supported Platforms](Documentation~/SupportedPlatforms.md).
+
+Currently Barracuda is **production ready** for use with ML-Agents and **preview** for use cases outside of ML-Agents.
+
 
 # Installation
 
-Barracuda model conversion tools require `Python 3.6` and depend on few of Python libraries, detailed list can be found in `Tools/requirements.txt` file. 
+[Installing Barracuda](Documentation~/Installing.md) goes through how to install Barracuda, both locally and remotely. 
 
 # Reporting issues
 

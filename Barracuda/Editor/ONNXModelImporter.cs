@@ -32,7 +32,7 @@ namespace Unity.Barracuda
         // - Tensorflow appends :0 to all node names
         bool fixTF2ONNXExportIssues = false;
 
-        private const string iconName = "ONNXModelIcon";
+        public const string iconName = "ONNXModelIcon";
 
         private readonly Dictionary<string, ONNXTensor> m_OverrideGlobalInputs = new Dictionary<string, ONNXTensor>()
         {
@@ -558,9 +558,7 @@ namespace Unity.Barracuda
                 else
                 {
                     if (Enumerable.SequenceEqual(permutations, new[] {0, 3, 1, 2}) || // NHWC -> NCHW
-                        Enumerable.SequenceEqual(permutations, new[] {0, 2, 3, 1}) && // NCHW -> NHWC
-                        fixTF2ONNXExportIssues
-                        )
+                        Enumerable.SequenceEqual(permutations, new[] {0, 2, 3, 1}))   // NCHW -> NHWC
                     {
                         // @TODO: reorder uptream nodes and global input dimensions accordingly from NHWC -> NCHW
                         net.Identity(node.Name, node.Input0);
@@ -630,9 +628,13 @@ namespace Unity.Barracuda
                 Output(node, features:weights.channels, rank:2); // MatMul forces flatten of the input to rank 2
             });
             Add("Conv", (net, node)     => {
-                node.UnsupportedAttribute("dilations", new[] {1, 1});
+                var dilations = node.DilatationsOptional(new[] {1, 1}); // @TODO trap on wrong values
                 node.IgnoredAttribute("kernel_shape", "Kernel shape is derived from K tensor weights instead");
                 var kernels = node.Input1Constant(onnxLayout:"KCHW", name:"W");
+                Debug.Assert(dilations.Length == 2);
+                if(dilations[0] != 1 || dilations[1] != 1)
+                    kernels = DilateKernel(kernels, dilations); // @TODO inefficient method. Support dilatation in kernel code properly
+
                 var biases  = node.Input2ConstantOptional(Bias(kernels.shape), 0.0f, onnxLayout:"C", name:"B");
 
                 if (node.GroupOptional() > 1)
@@ -688,10 +690,15 @@ namespace Unity.Barracuda
                 if (scale.channels != node.Input0Features && node.Input0Features > 0)
                 {
                     Warn(net, node, $"Number of elements in InstanceNorm must match features from the previous layer. Was expecting {node.Input0Features}, but got {scale.channels}.");
-                    scale = new Tensor(1, node.Input0Features, scale.readonlyArray);
-                    bias = new Tensor(1, node.Input0Features, bias.readonlyArray);
+                    scale = new Tensor(1, node.Input0Features, scale.ToReadOnlyArray());
+                    bias = new Tensor(1, node.Input0Features, bias.ToReadOnlyArray());
                 }
                 net.Normalization(node.Name, node.Input0, scale, bias, node.EpsilonOptional());
+            });
+            Add("LRN", (net, node) => {
+                float bias = node.GetOptionalFloat("bias", 1.0f);
+                int size = node.GetRequiredInt("size");
+                net.LRN(node.Name, node.Input0, node.AlphaOptional(0.0001f), node.BetaOptional(0.75f), bias, size);
             });
             // random ops
             Add("RandomNormal", (net, node) => {
@@ -872,6 +879,43 @@ namespace Unity.Barracuda
                     }
         }
 
+        internal static Tensor DilateKernel(Tensor kernel, int[] dilations)
+        {
+            Debug.Assert(dilations.Length == 2);
+            Debug.Assert(dilations[0] > 0);
+            Debug.Assert(dilations[1] > 0);
+
+            // https://arxiv.org/pdf/1603.07285.pdf
+            Tensor dilatedKernel = new Tensor(new TensorShape(kernel.shape.kernelHeight + (kernel.shape.kernelHeight - 1) * (dilations[0] - 1),
+                                                              kernel.shape.kernelWidth  + (kernel.shape.kernelWidth - 1)  * (dilations[1] - 1),
+                                                              kernel.shape.kernelDepth, kernel.shape.kernelCount));
+
+            for (int c = 0; c < dilatedKernel.kernelDepth; ++c)
+                for (int k = 0; k < dilatedKernel.kernelCount; ++k)
+                    {
+                        for (int y = 0; y < kernel.shape.kernelHeight; ++y)
+                            for (int x = 0; x < kernel.shape.kernelWidth; ++x)
+                            {
+                                int ox = x * dilations[0];
+                                int oy = y * dilations[1];
+
+                                int strideX = x == (kernel.shape.kernelWidth - 1)  ? 1 : dilations[0];
+                                int strideY = y == (kernel.shape.kernelHeight - 1) ? 1 : dilations[1];
+
+                                for (int dx = 0; dx < strideX; dx++)
+                                    for (int dy = 0; dy < strideY; dy++)
+                                    {
+                                        dilatedKernel[oy + dy, ox + dx, c, k] = 0.0f;
+                                    }
+
+                                float v = kernel[y, x, c, k];
+                                dilatedKernel[oy, ox, c, k] = v;
+                        }
+                }
+
+            return dilatedKernel;
+        }
+
         internal static TensorShape Bias(TensorShape shape)
         {
             return new TensorShape(1, 1, 1, shape.channels);
@@ -952,12 +996,8 @@ namespace Unity.Barracuda
                 onnxModel.MergeFrom(inputStream);
 
             fixTF2ONNXExportIssues = (onnxModel.ProducerName == "tf2onnx");
-            if (fixTF2ONNXExportIssues)
-                D.Log("Hot fix for known tf2onnx issues");
 
             var model = ConvertOnnxModel(onnxModel);
-            D.Log($"ONNX v{model.IrVersion}. Producer: {model.ProducerName}. Asset path: {ctx.assetPath}");
-            D.Log($"Barracuda model: {model}");
 
             NNModelData assetData = ScriptableObject.CreateInstance<NNModelData>();
             using (var memoryStream = new MemoryStream())
@@ -1131,16 +1171,17 @@ namespace Unity.Barracuda
             opImportAction(net, node);
 
             // bake
-            var noInputs = new Dictionary<string, Tensor>();
-
             var useCPUforBaking = WorkerFactory.Device.CPU;
-            var worker = WorkerFactory.CreateWorker(model, useCPUforBaking);
-            var result = worker.ExecuteAndWaitForCompletion(noInputs);
+            using (var worker = WorkerFactory.CreateWorker(model, useCPUforBaking))
+            {
+                var bakedConstant = worker.Execute().PeekOutput();
 
-            // convert from Barracuda back into ONNX layout
-            var onnxData = ONNXTensor.Permute(result, new int[] { 0, 3, 1, 2 }); // NHWC -> NCHW
-            var onnxShape = onnxData.shape.ToArray().Select(x => (long)x).ToArray();
-            return new ONNXTensor(onnxData, onnxShape).SqueezeAll();
+                // convert from Barracuda back into ONNX layout
+                var onnxData = ONNXTensor.Permute(bakedConstant, new int[] { 0, 3, 1, 2 }); // NHWC -> NCHW
+                var onnxShape = onnxData.shape.ToArray().Select(x => (long)x).ToArray();
+
+                return new ONNXTensor(onnxData, onnxShape).SqueezeAll();
+            }
         }
 
         static private void Validate(Model model)

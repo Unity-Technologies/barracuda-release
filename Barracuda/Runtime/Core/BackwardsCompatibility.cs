@@ -7,21 +7,57 @@ using UnityEngine.Assertions;
 namespace Unity.Barracuda {
 
 // Deprecated APIs, left here only for backwards compatibility
+public static class DeprecatedTensorExtensions
+{
+    [ObsoleteAttribute("Use UploadToDevice instead.", false)]
+    public static void PinToDeviceAndUploadToIt(this Tensor self, ITensorData onDevice, bool forceInvalidateCache = true)
+    {
+        self.UploadToDevice(onDevice, forceInvalidateCache);
+    }
+
+    [ObsoleteAttribute("Use AttachToDevice instead.", false)]
+    public static void PinToDeviceAndDownloadFromIt(this Tensor self, ITensorData onDevice)
+    {
+        self.AttachToDevice(onDevice);
+    }
+
+    [ObsoleteAttribute("Use DetachFromDevice instead.", false)]
+    public static ITensorData Unpin(this Tensor self, bool disposeUnpinned = true)
+    {
+        return self.DetachFromDevice(disposeUnpinned);
+    }
+
+    [ObsoleteAttribute("Use AttachToDevice instead.", false)]
+    public static void CastOnDevice(this Tensor self, ITensorData onDevice)
+    {
+        self.AttachToDevice(onDevice);
+    }
+
+    #region Tensor
+    // @SEE: Tensor.cs
+    // public ITensorData UnpinAndDisposeTensor()
+    // public float[] readonlyArray { get { PrepareCacheForAccess(); return m_Cache; } }
+    // public int readonlyArrayOffset { get { return 0; } }
+    #endregion
+}
+
+public static class DeprecatedTensorDataExtensions
+{
+    [ObsoleteAttribute("Use maxCapacity instead.", false)]
+    public static int GetMaxCount(this ITensorData self)
+    {
+        return self.maxCapacity;
+    }
+}
+
 public static class DeprecatedWorkerExtensions
 {
     #region Inputs
-    /// <summary>
-    /// Specify single tensor value as the input for the network.
-    /// Useful when network has only one input and caller does not need to know input's name.
-    /// </summary>
     [ObsoleteAttribute("Use SetInput instead.", false)]
     public static void AddInput(this IWorker worker, Tensor x)
     {
         worker.SetInput(x);
     }
-    /// <summary>
-    /// Specify tensor value for the named input of the network.
-    /// </summary>
     [ObsoleteAttribute("Use SetInput instead.", false)]
     public static void AddInput(this IWorker worker, string name, Tensor x)
     {
@@ -30,20 +66,11 @@ public static class DeprecatedWorkerExtensions
     #endregion
 
     #region Outputs
-    /// <summary>
-    /// Returns a reference to the first output tensor.
-    /// Useful when network has only one output.
-    /// IMPORTANT: follow with TakeOwnership() call, if you want tensor to outlive worker or make tensor copy with DeepCopy()
-    /// </summary>
     [ObsoleteAttribute("Use PeekOutput instead.", false)]
     public static Tensor Peek(this IWorker worker)
     {
         return worker.PeekOutput();
     }
-    /// <summary>
-    /// Returns a reference to output tensor by name.
-    /// IMPORTANT: follow with TakeOwnership() call, if you want tensor to outlive worker or make tensor copy with DeepCopy()
-    /// </summary>
     [ObsoleteAttribute("Use PeekOutput instead.", false)]
     public static Tensor Peek(this IWorker worker, string name)
     {
@@ -51,11 +78,49 @@ public static class DeprecatedWorkerExtensions
     }
     #endregion
 
-    #region Non-blocking APIs
-    /// <summary>
-    /// Returns the output tensor and takes ownership of memory to outlive the worker.
-    /// Useful when network has only one output.
-    /// </summary>
+    #region Schedule one layer at a time
+    [ObsoleteAttribute("Use StartManualSchedule instead.", false)]
+    public static IEnumerator ExecuteAsync(this IWorker worker)
+    {
+        return worker.StartManualSchedule();
+    }
+    [ObsoleteAttribute("Use StartManualSchedule instead.", false)]
+    public static IEnumerator ExecuteAsync(this IWorker worker, Tensor input)
+    {
+        return worker.StartManualSchedule(input);
+    }
+    [ObsoleteAttribute("Use StartManualSchedule instead.", false)]
+    public static IEnumerator ExecuteAsync(this IWorker worker, IDictionary<string, Tensor> inputs)
+    {
+        return worker.StartManualSchedule(inputs);
+    }
+    [ObsoleteAttribute("Use FlushSchedule instead.", false)]
+    public static void WaitForCompletion(this IWorker worker)
+    {
+        worker.FlushSchedule(blocking:true);
+    }
+    [ObsoleteAttribute("Use scheduleProgress instead.", false)]
+    public static float GetAsyncProgress(this IWorker worker)
+    {
+        return worker.scheduleProgress;
+    }
+    #endregion
+
+    #region Outputs
+
+    [ObsoleteAttribute("Use Execute followed by CopyOutput and PrepareCacheForAccess instead.", false)]
+    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, Tensor input)
+    {
+        worker.Execute(input);
+        return worker.CopyOutput();
+    }
+    [ObsoleteAttribute("Use Execute followed by CopyOutput and PrepareCacheForAccess instead.", false)]
+    public static Tensor ExecuteAndWaitForCompletion(this IWorker worker, IDictionary<string, Tensor> inputs)
+    {
+        worker.Execute(inputs);
+        return worker.CopyOutput();
+    }
+
     [ObsoleteAttribute("Use PeekOutput followed by TakeOwnership or DeepCopy instead.", false)]
     public static Tensor FetchAndTakeOwnership(this IWorker worker)
     {
@@ -64,9 +129,6 @@ public static class DeprecatedWorkerExtensions
         return output;
 
     }
-    /// <summary>
-    /// Returns output tensor by name and takes ownership of memory to outlive worker.
-    /// </summary>
     [ObsoleteAttribute("Use PeekOutput followed by TakeOwnership or DeepCopy instead.", false)]
     public static Tensor FetchAndTakeOwnership(this IWorker worker, string name)
     {
@@ -74,20 +136,12 @@ public static class DeprecatedWorkerExtensions
         output.TakeOwnership();
         return output;
     }
-    #endregion
 
-    #region Blocking APIs
-    /// <summary>
-    /// This method is a blocking call while FetchAndTakeOwnership() is not.
-    /// </summary>
     [ObsoleteAttribute("Use CopyOutput instead.", false)]
     public static Tensor Fetch(this IWorker worker)
     {
         return worker.CopyOutput();
     }
-    /// <summary>
-    /// This method is a blocking call while FetchAndTakeOwnership() is not.
-    /// </summary>
     [ObsoleteAttribute("Use CopyOutput instead.", false)]
     public static Tensor Fetch(this IWorker worker, string name)
     {
@@ -96,7 +150,6 @@ public static class DeprecatedWorkerExtensions
     #endregion
 }
 
-// Deprecated, left here only for backwards compatibility
 [ObsoleteAttribute("Use WorkerFactory class instead.", false)]
 public class BarracudaWorkerFactory : WorkerFactory
 {
@@ -112,7 +165,6 @@ public class BarracudaWorkerFactory : WorkerFactory
     }
 }
 
-// Deprecated, left here only for backwards compatibility
 [ObsoleteAttribute("Use Tensor.ToRenderTexture method instead.", false)]
 public class BarracudaTextureUtils
 {
@@ -122,9 +174,6 @@ public class BarracudaTextureUtils
         x.ToRenderTexture(target, batch, fromChannel, scale, bias);
     }
 
-    /// <summary>
-    /// Create a RenderTexture from a slice/batch of a tensor.
-    /// </summary>
     public static RenderTexture TensorToRenderTexture(Tensor x,
                                                 int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f)
     {

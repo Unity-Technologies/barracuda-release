@@ -1,23 +1,16 @@
-#pragma kernel Dense_L1Cached64_NHWC CHANNELS_FIRST=0
-#pragma kernel Dense_L1Cached64_NCHW CHANNELS_FIRST=1
-#pragma kernel DenseTiled16x16_NHWC CHANNELS_FIRST=0
-#pragma kernel DenseTiled16x16_NCHW CHANNELS_FIRST=1
-#pragma kernel DenseTiled32x32_NHWC CHANNELS_FIRST=0
-#pragma kernel DenseTiled32x32_NCHW CHANNELS_FIRST=1
-#pragma kernel DenseTiled64x64_NHWC CHANNELS_FIRST=0
-#pragma kernel DenseTiled64x64_NCHW CHANNELS_FIRST=1
+//Important note: For Dense layers NCHW and NHWC as input and output are flattened tensors.
+#pragma kernel Dense_L1Cached64
+#pragma kernel DenseTiled16x16
+#pragma kernel DenseTiled32x32
+#pragma kernel DenseTiled64x64
 
-//#pragma kernel Dense_T8x8_R8x8_NHWC  CHANNELS_FIRST=0 DENSE=1 BLOCK_SIZE=8
-//#pragma kernel Dense_T8x8_R8x8_NCHW  CHANNELS_FIRST=1 DENSE=1 BLOCK_SIZE=8 //TODO support CHW
-#pragma kernel Dense_T8x8_R4x4_NHWC  CHANNELS_FIRST=0 DENSE=1 BLOCK_SIZE=4
-//#pragma kernel Dense_T8x8_R4x4_NCHW  CHANNELS_FIRST=1 DENSE=1 BLOCK_SIZE=4 //TODO support CHW
-#pragma kernel Dense_T16x16_R4x4_NHWC  CHANNELS_FIRST=0 DENSE=1 BLOCK_SIZE=4
-//#pragma kernel Dense_T16x16_R4x4_NCHW  CHANNELS_FIRST=1 DENSE=1 BLOCK_SIZE=4 //TODO support CHW
+//#pragma kernel Dense_T8x8_R8x8_NHWC  DENSE=1 BLOCK_SIZE=8
+#pragma kernel Dense_T8x8_R4x4 DENSE=1 BLOCK_SIZE=4
+#pragma kernel Dense_T16x16_R4x4 DENSE=1 BLOCK_SIZE=4
 
-#pragma kernel Dense_Tilled2x2_Cached_NHWC CHANNELS_FIRST=0
-#pragma kernel Dense_Tilled2x2_Cached_NCHW CHANNELS_FIRST=1
-#pragma kernel Dense_Tilled4x4_Cached_NHWC CHANNELS_FIRST=0
-#pragma kernel Dense_Tilled4x4_Cached_NCHW CHANNELS_FIRST=1
+#pragma kernel Dense_Tilled2x2_Cached
+//Shader compiler goes OOM when compiling this shader in KERNEL_ASSERTS mode on DX11, thus the FORCE_NO_DEBUG.
+#pragma kernel Dense_Tilled4x4_Cached FORCE_NO_DEBUG=1
 
 #include "Tensor.cginc"
 
@@ -29,14 +22,10 @@ TENSOR_DECL_RW(O)
 
 #if DENSE
 float ffma(float a, float b, float c) { return dot(float2(a,c), float2(b,1)); } //return a*b+c;} //fastfma(a,b,c); }
-
-#if CHANNELS_FIRST
-    #define FUNC_NAME(KERNEL, SIZE) KERNEL##SIZE##x##SIZE##_NCHW
-    #define CACHE_NAME(KERNEL, SIZE, TENSOR) KERNEL##SIZE##x##SIZE##_Cache_##TENSOR##_NCHW
-#else
-    #define FUNC_NAME(KERNEL, SIZE) KERNEL##SIZE##x##SIZE##_NHWC
-    #define CACHE_NAME(KERNEL, SIZE, TENSOR) KERNEL##SIZE##x##SIZE##_Cache_##TENSOR##_NCHW
-#endif
+#define FUNC_NAME_CALL(KERNEL, SIZE) KERNEL##SIZE##x##SIZE
+#define FUNC_NAME(KERNEL, SIZE) FUNC_NAME_CALL(KERNEL, SIZE)
+#define CACHE_NAME_CALL(KERNEL, SIZE, TENSOR) KERNEL##SIZE##x##SIZE##_Cache_##TENSOR
+#define CACHE_NAME(KERNEL, SIZE, TENSOR) CACHE_NAME_CALL(KERNEL, SIZE, TENSOR)
 
 //CACHE_DEPTH
 //      T                >>X
@@ -114,7 +103,7 @@ groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, W)[CACHE_DEPTH*16*BLOCK_SI
 [numthreads(16,16,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     int x = (int)dispatchThreadID.x * BLOCK_SIZE;
@@ -624,7 +613,7 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 [numthreads(16,16,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     int x = (int)dispatchThreadID.x * BLOCK_SIZE;
@@ -683,7 +672,7 @@ groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, W)[CACHE_DEPTH*8*BLOCK_SIZ
 [numthreads(8,8,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     int x = (int)dispatchThreadID.x * BLOCK_SIZE;
@@ -1129,7 +1118,7 @@ groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, W)[CACHE_DEPTH*8*BLOCK_SIZ
 [numthreads(8,8,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     int x = (int)dispatchThreadID.x * BLOCK_SIZE;
@@ -1355,7 +1344,7 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 [numthreads(8,8,1)]
 void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     int x = (int)dispatchThreadID.x * BLOCK_SIZE;
@@ -1400,9 +1389,9 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 #define CACHESIZE 64
 groupshared float Dense_L1Cached64_X[CACHESIZE];
 [numthreads(CACHESIZE, 1, 1)]
-void KERNEL_FUNC(Dense_L1Cached64)(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+void Dense_L1Cached64(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     #define X_ Dense_L1Cached64_X
@@ -1412,7 +1401,7 @@ void KERNEL_FUNC(Dense_L1Cached64)(uint3 groupID : SV_GroupID, uint3 groupThread
 
     uint wIndex = W.Index(0, x);
 
-    float acc = B.FastGet(x);
+    float acc = B.FastGet(min(x, O.GetFlatWidth()-1));
     // loop over X columns (flatWidth) and W rows (height) in CACHESIZE steps
     for (uint i = 0; i < X.GetFlatWidth(); i += CACHESIZE)
     {
@@ -1457,9 +1446,9 @@ void KERNEL_FUNC(Dense_L1Cached64)(uint3 groupID : SV_GroupID, uint3 groupThread
 groupshared float DenseTiled_Xcache[TILE_WIDTH][TILE_WIDTH];
 groupshared float DenseTiled_Wcache[TILE_WIDTH][TILE_WIDTH];
 [numthreads(TILE_WIDTH,TILE_WIDTH,1)]
-void KERNEL_FUNC(DenseTiled16x16)(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+void DenseTiled16x16(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth, O.flatHeight, 1);
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     #define X_ DenseTiled_Xcache
@@ -1509,9 +1498,9 @@ void KERNEL_FUNC(DenseTiled16x16)(uint3 groupID : SV_GroupID, uint3 groupThreadI
 groupshared float DenseTiled_Xcache32[2*2][TILE_WIDTH][TILE_WIDTH];
 groupshared float DenseTiled_Wcache32[2*2][TILE_WIDTH][TILE_WIDTH];
 [numthreads(TILE_WIDTH,TILE_WIDTH,1)]
-void KERNEL_FUNC(DenseTiled32x32)(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+void DenseTiled32x32(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth / 2, O.flatHeight / 2, 1);
+    //DISPATCH ARGS(O.flatWidth / 2, O.flatHeight / 2, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     #define X_ DenseTiled_Xcache32
@@ -1595,9 +1584,9 @@ void KERNEL_FUNC(DenseTiled32x32)(uint3 groupID : SV_GroupID, uint3 groupThreadI
 groupshared float DenseTiled_Xcache64[4*4][TILE_WIDTH*TILE_WIDTH];
 groupshared float DenseTiled_Wcache64[4*4][TILE_WIDTH*TILE_WIDTH];
 [numthreads(TILE_WIDTH,TILE_WIDTH,1)]
-void KERNEL_FUNC(DenseTiled64x64)(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
+void DenseTiled64x64(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth / 4, O.flatHeight / 4, 1);
+    //DISPATCH ARGS(O.flatWidth / 4, O.flatHeight / 4, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     #define X_ DenseTiled_Xcache64
@@ -1697,9 +1686,9 @@ void KERNEL_FUNC(DenseTiled64x64)(uint3 groupID : SV_GroupID, uint3 groupThreadI
 #define TILE_WIDTH 16
 
 [numthreads(32, 4, 1)]
-void KERNEL_FUNC(Dense_Tilled2x2_Cached)(uint3 dispatchThreadID : SV_DispatchThreadID)
+void Dense_Tilled2x2_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth / 2, O.flatHeight / 2, 1);
+    //DISPATCH ARGS(O.flatWidth / 2, O.flatHeight / 2, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     uint x = dispatchThreadID.x;
@@ -1735,9 +1724,9 @@ void KERNEL_FUNC(Dense_Tilled2x2_Cached)(uint3 dispatchThreadID : SV_DispatchThr
 #define TILE_WIDTH 16
 
 [numthreads(32, 4, 1)]
-void KERNEL_FUNC(Dense_Tilled4x4_Cached)(uint3 dispatchThreadID : SV_DispatchThreadID)
+void Dense_Tilled4x4_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.flatWidth / 4, O.flatHeight / 4, 1);
+    //DISPATCH ARGS(O.flatWidth / 4, O.flatHeight / 4, 1);
     TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
 
     uint x = dispatchThreadID.x;

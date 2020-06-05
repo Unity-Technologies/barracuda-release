@@ -13,6 +13,11 @@ namespace Unity.Barracuda
     [Preserve]
     public class BurstBLAS : BLASPlugin
     {
+        public bool IsNative()
+        {
+            return false; // not a native fast BLAS implementation
+        }
+
         public bool IsCurrentPlatformSupported()
         {
             try
@@ -32,6 +37,16 @@ namespace Unity.Barracuda
         }
 
         public unsafe void SGEMM(float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
+            int bs,
+            bool transposeA = false, bool transposeB = false)
+        {
+            var noDependencies = new JobHandle();
+            var fence = ScheduleSGEMM(noDependencies, Ap, AN, AM, Bp, BN, BM, Cp, CN, CM, bs, transposeA, transposeB);
+            fence.Complete();
+        }
+
+        public unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
+            float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
             int bs,
             bool transposeA = false, bool transposeB = false)
         {
@@ -65,20 +80,16 @@ namespace Unity.Barracuda
 
             //D.Log($"Matrix mul {AN},{AM} x {BN},{BM}");
 
-            JobHandle fence;
-
             if (AN < BM)
             {
                 job.scheduleRowA = false;
-                fence = job.Schedule((BM / bs) + (BM % bs > 0 ? 1 : 0), 1);
+                return job.Schedule((BM / bs) + (BM % bs > 0 ? 1 : 0), 1, dependsOn);
             }
             else
             {
                 job.scheduleRowA = true;
-                fence = job.Schedule((AN / bs) + (AN % bs > 0 ? 1 : 0), 1);
+                return job.Schedule((AN / bs) + (AN % bs > 0 ? 1 : 0), 1, dependsOn);
             }
-
-            fence.Complete();
         }
     }
 
