@@ -1,5 +1,8 @@
 # Release notes
 
+## [1.0.0] - 2020-06-01
+- First verified release
+
 ## [0.8.0] - 2020-05-28
 - Breaking change: API cleanup, number of internal implementation classes marked as `internal`.
 - API change: `IWorker.ExecuteAsync` renamed to `IWorker.StartManualSchedule`. `IWorker.ExecuteAsync` is marked as obsolete and will issue warning if used.
