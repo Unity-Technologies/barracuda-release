@@ -2,7 +2,7 @@
     "name": "Unity.Barracuda.BurstBLAS",
     "references": [
         "Unity.Barracuda",
-		"Unity.Burst"
+        "Unity.Burst"
     ],
     "optionalUnityReferences": [],
     "includePlatforms": [],

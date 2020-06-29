@@ -55,7 +55,7 @@ internal struct StringStringLongTriplet : IEquatable<StringStringLongTriplet>
     }
 }
 
-public class StringCache
+internal class StringCache
 {
     private Dictionary<StringStringPair, string> m_CacheStringString = new Dictionary<StringStringPair, string>();
     private Dictionary<StringStringLongTriplet, string> m_CacheStringStringLong = new Dictionary<StringStringLongTriplet, string>();

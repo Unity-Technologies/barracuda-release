@@ -13,7 +13,7 @@ namespace Unity.Barracuda {
 
 public class UnsafeArrayTensorData : SharedArrayTensorData
 {
-    protected bool m_Readonly = false;
+    readonly internal bool m_Readonly = false;
 
     // creates new array
     public UnsafeArrayTensorData(int count) : base(new float[count])
@@ -34,6 +34,12 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     public UnsafeArrayTensorData(SharedArrayTensorData sharedArray) : base(sharedArray.array, sharedArray.offset, sharedArray.count)
     {
         m_Readonly = true;
+    }
+
+    // protected constructor
+    protected UnsafeArrayTensorData(float[] data, int offset = 0, int count = -1, bool isReadonly = false) : base(data, offset, count)
+    {
+        m_Readonly = isReadonly;
     }
 
     ~UnsafeArrayTensorData()
@@ -107,22 +113,28 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
 
 public class UnsafeArrayCPUOps : ReferenceCPUOps
 {
-    BLASPlugin blas = null;
-
-    const int BlockSize = 32;
+    BLASPlugin m_Blas = null;
+    protected BLASPlugin blas { get { return m_Blas; } }
 
     internal InnerLoop m_InnerLoop = new InnerLoop();
-
 
     public UnsafeArrayCPUOps(ITensorAllocator allocator = null)
     : base(allocator)
     {
-        blas = BLASPluginFactory.CreateBLASPlugin();
+        m_Blas = BLASPluginFactory.CreateBLASPlugin();
     }
 
     public static UnsafeArrayTensorData Pin(Tensor X)
     {
         X.FlushCache();
+
+        // @TODO: consider abstracting job specific behavior and moving into ITensorData interface
+        var asBurstArray = X.tensorOnDevice as BurstTensorData;
+        if (asBurstArray != null)
+        {
+            asBurstArray.fence.Complete();
+            asBurstArray.reuse.Complete();
+        }
 
         var onDevice = X.tensorOnDevice as UnsafeArrayTensorData;
         if (onDevice == null)
@@ -130,12 +142,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             // try to adopt CPU arrays
             var asSharedArray = X.tensorOnDevice as SharedArrayTensorData;
             var asArray = X.tensorOnDevice as ArrayTensorData;
-            if (asSharedArray != null) X.CastOnDevice(new UnsafeArrayTensorData(asSharedArray)); // adopt unsafe array without copy
-            else if (asArray != null) X.PinToDeviceAndDownloadFromIt(new UnsafeArrayTensorData(asArray)); // @TODO: investigate why CastOnDevice here breaks CachingTensorAllocator,
-                                                                                                          // if recurrent network uses Concat on memories and passes it to the output
-                                                                                                          // see ExecuteWithRecurrentStateAndCheckResults_ConcatMemoriesIntoSeparateOutput for repro case
+            if (asSharedArray != null) X.AttachToDevice(new UnsafeArrayTensorData(asSharedArray));
+            else if (asArray != null) X.AttachToDevice(new UnsafeArrayTensorData(asArray));
             else
-                X.PinToDeviceAndUploadToIt(new UnsafeArrayTensorData(X.shape)); // device is uncompatible, create new array and upload
+                X.UploadToDevice(new UnsafeArrayTensorData(X.shape)); // device is not compatible, create new array and upload
         }
 
         return X.tensorOnDevice as UnsafeArrayTensorData;
@@ -145,7 +155,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     // NOTE: Parallel.For with small number of work items results in varying and often worse performance
     // As a workaround we will fallback to 'for' loop when number of work items is below heuristically determined threshold
-    private static void Parallel_For(long begin, long end, Action<long> body)
+    internal static void Parallel_For(long begin, long end, Action<long> body)
     {
         if (end - begin > 2048) // threshold determined heuristically. If work items < threshold, then for loop is faster than Parallel.For()
             Parallel.For(begin, end, body);
@@ -556,7 +566,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
                 {
                     float v = xPtr[i];
-                    v = MathfEx.tanh(v);
+                    v = MathfEx.Tanh(v);
                     oPtr[i] = v;
                 }
             }
@@ -646,41 +656,24 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_cosInnerLoopDelegate);
     }
 
-    private Tensor GetOutputTensorFromBroadcast(Tensor[] tensors)
-    {
-        Assert.IsTrue(tensors.Length > 0);
-
-        var O = NewTensor(TensorExtensions.MaxShape(tensors));
-        foreach (var t in tensors)
-        {
-            Assert.IsTrue((t.batch    == 1) || (t.batch    == O.batch));
-            Assert.IsTrue((t.height   == 1) || (t.height   == O.height));
-            Assert.IsTrue((t.width    == 1) || (t.width    == O.width));
-            Assert.IsTrue((t.channels == 1) || (t.channels == O.channels));
-        }
-
-        return O;
-    }
-
     private bool CanUseModuloForBroadcasting(TensorShape o, TensorShape a)
     {
+        // last to first: dimensions must be equal. if not equal all rest must be 1
         if (o == a)
            return true;
 
-        int firstDimensionMismatchInMemoryOrder = -1;
-        for (int i=3; i > 0; --i)
+        bool dimensionMismatch = false;
+        for (int i = 3; i >= 0; --i)
         {
-            if (o[i] != a[i])
+            if (dimensionMismatch)
             {
-                firstDimensionMismatchInMemoryOrder = i;
-                break;
+                if (a[i] != 1)
+                    return false;
             }
-        }
-
-        for (int i = firstDimensionMismatchInMemoryOrder; i > 0; --i)
-        {
-            if (a[i] != 1)
-                return false;
+            else
+            {
+                dimensionMismatch = (o[i] != a[i]);
+            }
         }
 
         return true;
@@ -693,7 +686,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float,float,float> opRemainder, Action<long> opInnerLoop, Action<long> opInnerLoopNoBroadcast)
     {
-        var O = GetOutputTensorFromBroadcast(tensors);
+        var O = NewTensorLike(tensors);
         var A = tensors[0];
 
         unsafe
@@ -824,7 +817,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyLogicalOperator(Tensor A, Tensor B, Func<float,float,float> logicalOpRemainder, Action<long> logicalOpInnerLoop, Action<long> logicalOpInnerLoopNoBroadcast)
     {
-        var O = GetOutputTensorFromBroadcast(new Tensor[] { A, B });
+        var O = NewTensorLike(new Tensor[] { A, B });
 
         unsafe
         {
@@ -881,13 +874,14 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 yPtr = &Pin(Y).array[Pin(Y).offset],
                 oPtr = &Pin(O).array[Pin(O).offset])
             {
-                // NOTE: assumes newly created Tensor data is initialized with 0
+                // zero-initialize before SGEMM
+                UnsafeUtility.MemClear(oPtr, O.length * sizeof(float));
 
                 //D.Log(string.Format("===> X.b[{0}] x Y.w[{1}] * Y.h[{2}] x Y.w[{3}] = O.w[{4}] x O.h[{5}]", X.flatHeight, X.flatWidth, Y.flatHeight, Y.flatWidth, O.batch, O.width));
                 blas.SGEMM(
                     xPtr, X.flatHeight, X.flatWidth,
                     yPtr, Y.flatHeight, Y.flatWidth,
-                    oPtr, O.flatHeight, O.flatWidth, 32, xTranspose, yTranspose);
+                    oPtr, O.flatHeight, O.flatWidth, 16, xTranspose, yTranspose);
             }
         }
 
@@ -899,35 +893,44 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         //D.Log(string.Format("X = {0}", X.shape));
         Assert.IsTrue(W.dimensions <= 2);
         Assert.AreEqual(B.flatWidth, B.length);
+        Assert.AreEqual(B.flatWidth, W.flatWidth);
         Assert.AreEqual(X.flatWidth, W.flatHeight);
         var O = NewTensor(X.flatHeight, W.flatWidth);
+
+        var pinX = Pin(X);
+        var pinW = Pin(W);
+        var pinB = Pin(B);
+        var pinO = Pin(O);
 
         unsafe
         {
             fixed (float*
-            xPtr = &Pin(X).array[Pin(X).offset],
-            wPtr = &Pin(W).array[Pin(W).offset],
-            bPtr = &Pin(B).array[Pin(B).offset],
-            oPtr = &Pin(O).array[Pin(O).offset])
+            xPtr = &pinX.array[pinX.offset],
+            wPtr = &pinW.array[pinW.offset],
+            bPtr = &pinB.array[pinB.offset],
+            oPtr = &pinO.array[pinO.offset])
             {
-                    var BOffset = Pin(O).offset;
-                    var BCount = Pin(B).count;
-                    var Barray = Pin(O).array;
+                var oOffset = pinO.offset;
+                var oArray = pinO.array;
+                var count = B.flatWidth;
 
-                    for (int i = 0; i < O.batch; i++)
-                    {
-                        Marshal.Copy((IntPtr)bPtr, Barray, BOffset + i * BCount, BCount);
-                    }
+                for (int i = 0; i < O.flatHeight; i++)
+                {
+                    Marshal.Copy((IntPtr)bPtr, oArray, oOffset + i * count, count);
+                }
 
-                    //X.Print(); W.Print();
-                    blas.SGEMM(xPtr, X.flatHeight, X.flatWidth, wPtr, W.flatHeight, W.flatWidth, oPtr, O.batch, O.channels, 16);
+                //X.Print(); W.Print();
+                blas.SGEMM(
+                    xPtr, X.flatHeight, X.flatWidth,
+                    wPtr, W.flatHeight, W.flatWidth,
+                    oPtr, O.flatHeight, O.flatWidth, 16);
             }
         }
 
         return ApplyFusedActivation(O, fusedActivation);
     }
 
-    private Tensor ApplyFusedActivation(Tensor X, Layer.FusedActivation fusedActivation)
+    protected Tensor ApplyFusedActivation(Tensor X, Layer.FusedActivation fusedActivation)
     {
         switch (fusedActivation)
         {
@@ -1504,8 +1507,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                                         }
                                         else
                                         {
-                                            UnsafeUtility.MemCpyStride(destination: to,     destinationStride:             inChannels * sizeof(float),
-                                                                       source:      from,   sourceStride:      stride[0] * inChannels * sizeof(float),
+                                            UnsafeUtility.MemCpyStride(destination: to,     destinationStride:           inChannels * sizeof(float),
+                                                                       source:      from,   sourceStride:      strideX * inChannels * sizeof(float),
                                                                        elementSize: inChannels * sizeof(float),
                                                                        count:       numberOfPixelsToCopyFromInputRow);
                                             to += inChannels * numberOfPixelsToCopyFromInputRow;
@@ -1525,7 +1528,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                         blas.SGEMM(
                             tPtr, outElements, inChannels,
                             wPtr, inChannels, outChannels,
-                            oPtr, outElements, outChannels, 32);
+                            oPtr, outElements, outChannels, 16);
 
                         wPtr += inChannels * outChannels;
                         Profiler.EndSample();
@@ -1538,8 +1541,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
-
-    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
             throw new NotImplementedException();
@@ -1597,7 +1599,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             }
         }
 
-        return O;
+        return ApplyFusedActivation(O, fusedActivation);
     }
 
     // private static unsafe void DepthwiseConv2DInnerLoop(int[] stride, int[] pad, int oBatch, int oHeight, int oWidth, int kKernelCount,
@@ -2446,10 +2448,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             float* baseXPtr = xPtr + n * unrollSize;
             float* baseOPtr = oPtr + n * unrollSize;
-            float v0  = baseXPtr[0 ];
-            float v1  = baseXPtr[1 ];
-            float v2  = baseXPtr[2 ];
-            float v3  = baseXPtr[3 ];
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
             float v4  = baseXPtr[4 ];
             float v5  = baseXPtr[5 ];
             float v6  = baseXPtr[6 ];
@@ -2989,10 +2991,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             v62 = f1 * v62 + f2 * Math.Abs(v62);
             v63 = f1 * v63 + f2 * Math.Abs(v63);
 
-            baseOPtr[0 ] = v0 ;
-            baseOPtr[1 ] = v1 ;
-            baseOPtr[2 ] = v2 ;
-            baseOPtr[3 ] = v3 ;
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
             baseOPtr[4 ] = v4 ;
             baseOPtr[5 ] = v5 ;
             baseOPtr[6 ] = v6 ;
@@ -3198,10 +3200,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             float v2 = baseXPtr[2];
             float v3 = baseXPtr[3];
 
-            v0 = MathfEx.tanh(v0);
-            v1 = MathfEx.tanh(v1);
-            v2 = MathfEx.tanh(v2);
-            v3 = MathfEx.tanh(v3);
+            v0 = MathfEx.Tanh(v0);
+            v1 = MathfEx.Tanh(v1);
+            v2 = MathfEx.Tanh(v2);
+            v3 = MathfEx.Tanh(v3);
 
             baseOPtr[0] = v0;
             baseOPtr[1] = v1;

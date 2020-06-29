@@ -113,7 +113,7 @@ namespace Unity.Barracuda
             layer.datasets[0].length          = tensor.shape.length;
             layer.datasets[0].offset          = 0;
             layer.weights                     = new float[tensor.shape.length];
-            tensor.readonlyArray.CopyTo(layer.weights, 0);
+            tensor.ToReadOnlyArray().CopyTo(layer.weights, 0);
 
             if (insertionIndex < 0 || insertionIndex >= m_Model.layers.Count)
                 m_Model.layers.Add(layer);
@@ -146,9 +146,42 @@ namespace Unity.Barracuda
             layer.datasets[1].offset          = scale.shape.length;
             layer.weights                     = new float[scale.shape.length + bias.shape.length];
 
-            scale.readonlyArray.CopyTo(layer.weights, 0);
-            bias.readonlyArray.CopyTo(layer.weights, layer.datasets[1].offset);
+            scale.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
 
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Apply Local Response Normalization as described in the AlexNet paper
+        /// https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf
+        /// It normalizes over local input regions, local region being defined across channels.
+        ///
+        /// For an element X[n, h, w, c] in a tensor of shape (N x H x W x C), its region is X[n, h, w, cRange]
+        /// with cRange = [max(0, c - floor((size - 1) / 2)), min(C - 1, c + ceil((size - 1) / 2)].
+        ///
+        /// y = x / Pow( bias + alpha * sum( xOverLocalRange ^ 2 ) / size, beta)
+        ///
+        /// Output shape is same as input.
+        /// </summary>
+        public Layer LRN(string name, object input, float alpha, float beta, float bias, int size)
+        {
+            Layer layer = new Layer(name, Layer.Type.LRN);
+            layer.inputs = new [] {ResolveInput(input)};
+            layer.alpha = alpha;
+            layer.beta = beta;
+            layer.datasets = new Layer.DataSet[1];
+            layer.datasets[0].name            = $"{name}/B";
+            layer.datasets[0].shape           = new TensorShape(1,1,1,1);
+            layer.datasets[0].itemSizeInBytes = 4;
+            layer.datasets[0].length          = 1;
+            layer.datasets[0].offset          = 0;
+            layer.weights = new float[1];
+            layer.weights[0] = bias;
+            layer.pool = new int[1];
+            layer.pool[0] = size;
             m_Model.layers.Add(layer);
 
             return layer;
@@ -179,8 +212,8 @@ namespace Unity.Barracuda
             layer.weights                     = new float[scale.shape.length + bias.shape.length];
             layer.beta                        = epsilon;
 
-            scale.readonlyArray.CopyTo(layer.weights, 0);
-            bias.readonlyArray.CopyTo(layer.weights, layer.datasets[1].offset);
+            scale.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -211,8 +244,8 @@ namespace Unity.Barracuda
             layer.datasets[1].offset          = weight.shape.length;
             layer.weights                     = new float[weight.shape.length + bias.shape.length];
 
-            weight.readonlyArray.CopyTo(layer.weights, 0);
-            bias.readonlyArray.CopyTo(layer.weights, layer.datasets[1].offset);
+            weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -239,8 +272,8 @@ namespace Unity.Barracuda
             layer.datasets[1].offset          = kernel.shape.length;
             layer.weights                     = new float[kernel.shape.length + bias.shape.length];
 
-            kernel.readonlyArray.CopyTo(layer.weights, 0);
-            bias.readonlyArray.CopyTo(layer.weights, layer.datasets[1].offset);
+            kernel.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 

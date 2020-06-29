@@ -1,19 +1,26 @@
 ﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Unity.Jobs;
 
 namespace Unity.Barracuda
 {
     public interface BLASPlugin
     {
+        bool IsNative();
         bool IsCurrentPlatformSupported();
         unsafe void SGEMM(float* Ap, int AN, int AM,
             float* Bp, int BN, int BM,
             float* Cp, int CN, int CM, int bs,
             bool transposeA = false, bool transposeB = false);
+        unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
+            float* Ap, int AN, int AM,
+            float* Bp, int BN, int BM,
+            float* Cp, int CN, int CM, int bs,
+            bool transposeA = false, bool transposeB = false);
     }
 
-    public class BLASPluginFactory
+    internal class BLASPluginFactory
     {
         public static BLASPlugin CreateBLASPlugin()
         {

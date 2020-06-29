@@ -16,7 +16,7 @@ internal class BarracudaBackendsFactory
         return GetBestTypeForDevice(WorkerFactory.Device.Auto);
     }
 
-    public static WorkerFactory.Type GetBestTypeForDevice(WorkerFactory.Device device)
+    internal static WorkerFactory.Type GetBestTypeForDevice(WorkerFactory.Device device)
     {
         switch (device)
         {
@@ -24,11 +24,11 @@ internal class BarracudaBackendsFactory
             case WorkerFactory.Device.GPU:
                 return WorkerFactory.Type.ComputePrecompiled;
             default:
-                return WorkerFactory.Type.CSharp;
+                return WorkerFactory.Type.CSharpBurst;
         }
     }
 
-    public static WorkerFactory.Type ValidateType(WorkerFactory.Type type)
+    internal static WorkerFactory.Type ValidateType(WorkerFactory.Type type)
     {
         type = ResolveAutoType(type);
         Assert.AreNotEqual(type, WorkerFactory.Type.Auto);
@@ -43,7 +43,7 @@ internal class BarracudaBackendsFactory
         return type;
     }
 
-    public static IOps CreateOps(WorkerFactory.Type type, ITensorAllocator allocator, bool verbose)
+    private static IOps CreateOps(WorkerFactory.Type type, ITensorAllocator allocator, bool verbose)
     {
         switch(type)
         {
@@ -58,6 +58,9 @@ internal class BarracudaBackendsFactory
         case WorkerFactory.Type.ComputeRef:
             return new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels, allocator);
 
+        case WorkerFactory.Type.CSharpBurst:
+            return new BurstCPUOps(allocator);
+
         case WorkerFactory.Type.CSharp:
             return new UnsafeArrayCPUOps(allocator);
 
@@ -66,13 +69,7 @@ internal class BarracudaBackendsFactory
         }
     }
 
-    public static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs = null, string[] trimOutputs = null, bool verbose = false)
-    {
-        var workerConfiguration = new WorkerFactory.WorkerConfiguration(type, verbose);
-        return CreateWorker(type, model, additionalOutputs, trimOutputs, workerConfiguration);
-    }
-
-    public static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerFactory.WorkerConfiguration workerConfiguration)
+    internal static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerFactory.WorkerConfiguration workerConfiguration)
     {
         type = ResolveAutoType(type);
         var compareAgainstType = ResolveAutoType(workerConfiguration.compareAgainstType);
@@ -84,7 +81,7 @@ internal class BarracudaBackendsFactory
         if (WorkerFactory.IsType(type, WorkerFactory.Device.GPU) && !SystemInfo.supportsComputeShaders && !Application.isEditor)
         {
             D.LogWarning("Compute shaders are not supported on current platform. Falling back to CSharpFast.");
-            type = WorkerFactory.Type.CSharp;
+            type = WorkerFactory.Type.CSharpBurst;
         }
 
         IVars vars;
@@ -116,7 +113,7 @@ internal class BarracudaBackendsFactory
         return new GenericWorker(model, ops, vars, workerConfiguration.verbose);
     }
 
-    public static Model PatchModel(Model model, string[] additionalOutputs, string[] trimOutputs = null)
+    internal static Model PatchModel(Model model, string[] additionalOutputs, string[] trimOutputs = null)
     {
         bool trimModel = trimOutputs != null;
 
@@ -162,7 +159,7 @@ internal class BarracudaBackendsFactory
         return model;
     }
 
-    public static Model ValidateModel(Model model)
+    internal static Model ValidateModel(Model model)
     {
         // validate, model contains no broken links
         var brokenLinks = ModelAnalyzer.FindBrokenLinks(model);

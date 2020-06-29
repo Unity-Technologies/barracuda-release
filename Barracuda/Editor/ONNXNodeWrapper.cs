@@ -126,6 +126,7 @@ namespace Unity.Barracuda
         public float MinOptional(float defaultValue) { return GetOptionalFloat("min", defaultValue); }
         public float MaxOptional(float defaultValue) { return GetOptionalFloat("max", defaultValue); }
         public string ModeOptional(string defaultValue) { return GetOptionalString("mode", defaultValue); }
+        public int[] DilatationsOptional(int[] defaultValue) { return GetOptionalIntArray("dilations", defaultValue); }
 
         // ---------------------------------------------------------------------------------
         // Implementation

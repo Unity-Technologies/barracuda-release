@@ -10,7 +10,7 @@ using UnityEngine.Profiling;
 namespace Unity.Barracuda {
 
 
-public class TensorOperatorNewAllocator : ITensorAllocator
+internal class TensorOperatorNewAllocator : ITensorAllocator
 {
     private List<Tensor> m_AllocatedTensors = new List<Tensor>();
     private HashSet<ITensorData> m_AllocatedBuffers = new HashSet<ITensorData>();
@@ -45,16 +45,8 @@ public class TensorOperatorNewAllocator : ITensorAllocator
     {
     }
 
-    public virtual void Repin(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeUnpinnedHint)
+    public virtual void MoveToDevice(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {
-        if (newBuffer != null)
-            m_AllocatedBuffers.Add(newBuffer);
-    }
-
-    public virtual void Cast(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer)
-    {
-        if (oldBuffer != null)
-            m_AllocatedBuffers.Remove(oldBuffer);
         if (newBuffer != null)
             m_AllocatedBuffers.Add(newBuffer);
     }
@@ -66,7 +58,7 @@ public class TensorOperatorNewAllocator : ITensorAllocator
 
     public virtual void WaiveOwnership(Tensor tensor)
     {
-        tensor.Unpin();
+        tensor.DetachFromDevice();
         m_AllocatedTensors.Remove(tensor);
         m_AllocatedBuffers.Remove(tensor.tensorOnDevice);
     }
@@ -103,7 +95,7 @@ public class TensorOperatorNewAllocator : ITensorAllocator
 }
 
 // @TODO: reduce code duplication between TensorCachingByShapeAllocator and TensorCachingAllocator
-public class TensorCachingByShapeAllocator : ITensorAllocator
+internal class TensorCachingByShapeAllocator : ITensorAllocator
 {
     struct Entry
     {
@@ -228,20 +220,20 @@ public class TensorCachingByShapeAllocator : ITensorAllocator
         Profiler.BeginSample("Barracuda.ShapeAllocator.Release");
         Assert.AreEqual(tensor.allocator, this);
 
-        var unpinned = tensor.Invalidate(); // calls Repin(newBuffer=null)
+        var detachedBuffer = tensor.Invalidate(); // calls MoveToDevice(newBuffer=null)
 
         if (!m_BusyTensors.ContainsKey(tensor))
         {
-            if (unpinned == null)
+            if (detachedBuffer == null)
                 return;
 
             foreach (var freeEntry in m_FreeBuffers)
-                if (freeEntry.buffer == unpinned)
+                if (freeEntry.buffer == detachedBuffer)
                     return;
 
             // some operations can create new Tensor and reassign ITensorData to it
             foreach (var busyEntry in m_BusyTensors)
-                if (busyEntry.Value == unpinned)
+                if (busyEntry.Value == detachedBuffer)
                     return; // we have at least another instance ITensorData in m_BusyTensors, nothing to realease
         }
 
@@ -250,7 +242,7 @@ public class TensorCachingByShapeAllocator : ITensorAllocator
         Profiler.EndSample();
     }
 
-    public virtual void Repin(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeUnpinnedHint)
+    public virtual void MoveToDevice(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {
         if (newBuffer == oldBuffer)
             return;
@@ -262,7 +254,7 @@ public class TensorCachingByShapeAllocator : ITensorAllocator
         AddRef(newBuffer);
         DecRef(oldBuffer,
             (freeBuffer) => {
-                if (disposeUnpinnedHint)
+                if (disposeDetachedBufferHint)
                     freeBuffer.Dispose();
                 else
                     AdoptFreeBuffer(tensor.shape, freeBuffer);
@@ -325,9 +317,9 @@ public class TensorCachingByShapeAllocator : ITensorAllocator
             {
                 Assert.AreEqual(m_BusyTensors[busyTensor], buffer);
 
-                var unpinned = busyTensor.Unpin(false);
+                var oldBuffer = busyTensor.DetachFromDevice(false);
                 var newBuffer = busyTensor.tensorOnDevice;
-                Assert.IsTrue(unpinned == buffer);
+                Assert.IsTrue(oldBuffer == buffer);
                 Assert.IsTrue(newBuffer != buffer);
                 m_BusyTensors[busyTensor] = newBuffer;
                 AddRef(newBuffer);
@@ -417,7 +409,7 @@ public class TensorCachingAllocator : ITensorAllocator
     static protected int GetAllocationMaxCount(Tensor tensor)
     {
         return (tensor.tensorOnDevice != null) ?
-            tensor.tensorOnDevice.GetMaxCount():
+            tensor.tensorOnDevice.maxCapacity:
             tensor.length;
     }
 
@@ -450,7 +442,7 @@ public class TensorCachingAllocator : ITensorAllocator
     protected void AdoptFreeBuffer(ITensorData buffer)
     {
         // insert into the sorted array
-        var size = buffer.GetMaxCount();
+        var size = buffer.maxCapacity;
         var newEntry = new Entry { size = size, buffer = buffer, free = true };
         bool found = false;
         for (int i = 0; !found && i < m_AllocatedBuffers.Count; ++i)
@@ -540,20 +532,20 @@ public class TensorCachingAllocator : ITensorAllocator
         Profiler.BeginSample("Barracuda.SizeAllocator.Release");
         Assert.AreEqual(tensor.allocator, this);
 
-        var unpinned = tensor.Invalidate(); // calls Repin(newBuffer=null)
+        var detachedBuffer = tensor.Invalidate(); // calls MoveToDevice(newBuffer=null)
 
         if (!m_BusyTensors.ContainsKey(tensor))
         {
-            if (unpinned == null)
+            if (detachedBuffer == null)
                 return;
 
             foreach (var entry in m_AllocatedBuffers)
-                if (entry.buffer == unpinned && entry.free)
+                if (entry.buffer == detachedBuffer && entry.free)
                     return;
 
             // some operations can create new Tensor and reassign ITensorData to it
             foreach (var busyEntry in m_BusyTensors)
-                if (busyEntry.Value == unpinned)
+                if (busyEntry.Value == detachedBuffer)
                     return; // we have original ITensorData in m_BusyTensors, nothing to realease
         }
 
@@ -563,7 +555,7 @@ public class TensorCachingAllocator : ITensorAllocator
         Profiler.EndSample();
     }
 
-    public virtual void Repin(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeUnpinnedHint)
+    public virtual void MoveToDevice(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {
         if (newBuffer == oldBuffer)
             return;
@@ -574,7 +566,7 @@ public class TensorCachingAllocator : ITensorAllocator
 
         AddRef(newBuffer);
 
-        if (disposeUnpinnedHint)
+        if (disposeDetachedBufferHint)
             DecRef(oldBuffer, disposeAllocatedBufferDelegate);
         else
             DecRef(oldBuffer, adoptFreeBufferDelegate);
@@ -639,9 +631,9 @@ public class TensorCachingAllocator : ITensorAllocator
             {
                 Assert.AreEqual(m_BusyTensors[busyTensor], buffer);
 
-                var unpinned = busyTensor.Unpin(false);
+                var oldBuffer = busyTensor.DetachFromDevice(false);
                 var newBuffer = busyTensor.tensorOnDevice;
-                Assert.IsTrue(unpinned == buffer);
+                Assert.IsTrue(oldBuffer == buffer);
                 Assert.IsTrue(newBuffer != buffer);
                 m_BusyTensors[busyTensor] = newBuffer;
                 AddRef(newBuffer);

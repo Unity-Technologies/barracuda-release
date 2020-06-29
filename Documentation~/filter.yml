@@ -3,3 +3,13 @@ apiRules:
       # Exclude types from Onnx.* namespace
       uidRegex: ^Onnx\..*$
       type: Type
+
+  - exclude:
+      # Exclude types from Unity.Barracuda.Editor.Tests.* namespace
+      uidRegex: ^Unity\.Barracuda\.Editor\.Tests\..*$
+      type: Type
+
+  - exclude:
+      # Exclude types from Unity.Barracuda.TensorCachingAllocator type
+      uidRegex: ^Unity\.Barracuda\.TensorCachingAllocator$
+      type: Type

@@ -1,8 +1,5 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using UnityEngine;
 
 namespace Unity.Barracuda {
 
@@ -15,8 +12,8 @@ public interface IOps
     Tensor MatMul(Tensor x, bool xTranspose, Tensor y, bool yTranspose);// @TODO: consider MatMulAdd instead
     Tensor Dense(Tensor x, Tensor w, Tensor b, Layer.FusedActivation fusedActivation);
     Tensor Conv2D(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, Layer.FusedActivation fusedActivation);
-    Tensor DepthwiseConv2D(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad);
-    Tensor Conv2DTrans(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, int[] outputAdjustment);
+    Tensor DepthwiseConv2D(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, Layer.FusedActivation fusedActivation);
+    Tensor Conv2DTrans(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation);
     Tensor Upsample2D(Tensor x, int[] scale, bool bilinear);
     Tensor Resample2D(Tensor x, int[] size, bool bilinear);
     Tensor DepthToSpace(Tensor x, int[] scale, Layer.DepthToSpaceMode mode);
@@ -108,12 +105,6 @@ public interface IOps
     Tensor Prepare(Tensor x);
 
     /// <summary>
-    /// Waits for previously scheduled OP to complete
-    /// Tensor x is the destination of that OP
-    /// </summary>
-    void WaitForCompletion(Tensor x);
-
-    /// <summary>
     /// Reset internal allocator
     /// </summary>
     void ResetAllocator(bool keepCachedMemory = true);
@@ -122,7 +113,7 @@ public interface IOps
 /// <summary>
 /// Interfaces for model compiler
 /// </summary>
-public interface IModelCompiler
+internal interface IModelCompiler
 {
     void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes);
     void PreExecuteLayer(Layer layer, Tensor[] inputs);
@@ -152,14 +143,9 @@ public interface ITensorAllocator : IDisposable
     Tensor Alloc(TensorShape shape);
     Tensor Alloc(TensorShape shape, ITensorData buffer);
 
-    // Repin() callback is called from the following Tensor methods:
-    //  PinToDeviceAndUploadToIt(), PinToDeviceAndDownloadFromIt(),
-    //  Unpin() and UnpinAndDisposeTensor()
-    void Repin(Tensor x, ITensorData newBuffer, ITensorData oldBuffer, bool disposeUnpinnedHint);
-
-    // Cast() callback is called from the following Tensor methods:
-    //  CastOnDevice()
-    void Cast(Tensor x, ITensorData newBuffer, ITensorData oldBuffer);
+    // MoveToDevice() callback is called from the following Tensor methods:
+    // UploadToDevice(), AttachToDevice() and DetachFromDevice()
+    void MoveToDevice(Tensor x, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint);
 
     // NOTE: Release() should be ready to handle edge-case situation when
     //  externally created new Tensor instance is passed with

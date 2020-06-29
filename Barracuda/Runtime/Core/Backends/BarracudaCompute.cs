@@ -72,12 +72,6 @@ namespace Unity.Barracuda {
 internal sealed class ComputeKernelLibrary
 {
     static private StringCache s_StringCache = new StringCache();
-
-    static public int IDivC(int v, int div)
-    {
-        return (v + div - 1) / div;
-    }
-
     static private List<Entry> s_DenseFP16Entries = new List<Entry>(1);
     static private List<Entry> s_DenseFP32Entries = new List<Entry>(10);
     static public List<Entry> Dense(TensorShape X, TensorShape W, TensorShape O, int type)
@@ -149,34 +143,28 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    public enum ChannelMode
+    private enum ChannelMode
     {
         Strict,
         Lax
     }
 
-    public enum KernelMode
+    private enum KernelMode
     {
         Strict,
         Lax
     }
 
-    static public bool IsR8x8KernelUsed(int c, int k, int n, int w, int[] stride)
-    {
-        return IsT8x8_R8x8KernelValid(ChannelMode.Strict, KernelMode.Strict, c, k, n, w, stride) ||
-               IsT2x32_R8x8KernelValid(ChannelMode.Strict, KernelMode.Strict, c, k, n, w, stride) ||
-               IsT2x32_R8x8KernelValid(ChannelMode.Strict, KernelMode.Lax,c, k, n, w, stride) ||
-               IsT2x32_R8x8KernelValid(ChannelMode.Lax, KernelMode.Strict,c, k, n, w, stride);
-    }
-
+    private const int k_MinimumThreads = 4096;//Heuristic to try to avoid R8x8 path when number of GPU threads would be to low for parallelism.
     private const int k_MinimumKernelCountForT8x8_R8x8 = 32;
-    static public bool IsT8x8_R8x8KernelValid(ChannelMode channelMode, KernelMode kernelMode, int c, int k, int n, int w, int[] stride)
+    private const int k_MinimumPixelCountForT8x8_R8x8 = 64;
+    private const int k_MinimumPixelCountForT2x32_R8x8 = k_MinimumPixelCountForT8x8_R8x8 * 4;//T2_32 consume 4x more pixels per TG than T8x8
+    private static bool IsT8x8_R8x8KernelValid(ChannelMode channelMode, KernelMode kernelMode, int c, int k, int h, int w, int n)
     {
         bool valid;
         if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
         {
-            valid = (n == 1) && ComputeInfo.supportsComputeSharedMemory;
-
+            valid = ComputeInfo.supportsComputeSharedMemory;
             if (channelMode==ChannelMode.Strict)
                 valid &= (c % 8) == 0;
 
@@ -193,18 +181,25 @@ internal sealed class ComputeKernelLibrary
             valid = false;
         }
 
-        //Performance wise this kernel will drop fast when k < 64 (efficiency is a factor of k/64).
+        //Performance wise this kernel will drop fast when k < 64 or w*h < 64.
         valid &= k >= k_MinimumKernelCountForT8x8_R8x8;
+        valid &= (w*h) >= k_MinimumPixelCountForT8x8_R8x8;
+
+        //If this kernel can't go wide enough we will probably waste GPU parallelism should prefer another kernel.
+        int numThreadsR8x8 = ComputeHelper.IDivC(k,8 ) * ComputeHelper.IDivC(w * h , 8) * n;
+        valid &= numThreadsR8x8 >= k_MinimumThreads;
+
+        //valid &= (h*w) > (64*64);
 
         return valid;
     }
 
-    static public bool IsT2x32_R8x8KernelValid(ChannelMode channelMode, KernelMode kernelMode, int c, int k, int n, int w, int[] stride)
+    private static bool IsT2x32_R8x8KernelValid(ChannelMode channelMode, KernelMode kernelMode, int c, int k, int h, int w, int n)
     {
         bool valid;
         if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
         {
-            valid = (n == 1) && ComputeInfo.supportsComputeSharedMemory;
+            valid = ComputeInfo.supportsComputeSharedMemory;
             if (channelMode==ChannelMode.Strict)
                 valid &= (c % 4) == 0;
 
@@ -219,11 +214,18 @@ internal sealed class ComputeKernelLibrary
             valid = false;
         }
 
+        //Performance wise this kernel will drop fast when h*w < 128*128.
+        valid &= (h*w) > k_MinimumPixelCountForT2x32_R8x8;
+
+        //If this kernel can't go wide enough we will probably waste GPU parallelism should prefer another kernel.
+        int numThreadsR8x8 = ComputeHelper.IDivC(k,8 ) * ComputeHelper.IDivC(w * h , 8) * n;
+        valid &= numThreadsR8x8 >= k_MinimumThreads;
+
         return valid;
     }
 
-    static private List<Entry> s_Conv2DEntries = new List<Entry>(16);
-    static public List<Entry> Conv2D(TensorShape X, TensorShape K, TensorShape O, int[] stride, int[] pad)
+    private static List<Entry> s_Conv2DEntries = new List<Entry>(16);
+    internal static List<Entry> Conv2D(TensorShape X, TensorShape K, TensorShape O, int[] stride, int[] pad)
     {
         var n = O.batch;
         var h = O.height;
@@ -231,16 +233,13 @@ internal sealed class ComputeKernelLibrary
         var k = K.kernelCount;
         var c = X.channels;
 
-        //Usefull for now to force float R8x8 to be used on PC too.
-        float bigOR8x8Factor = 1.0f;
-
         var entries = s_Conv2DEntries;
         entries.Clear();
 
         // Winograd
         entries.Add(
             new Entry("Conv2DWinograd_2x2_3x3",
-                Int3(k, IDivC(w, 2), IDivC(h, 2)),  BigO(X.channels) * 1 / (2*2.25f),
+                Int3(k, ComputeHelper.IDivC(w, 2), ComputeHelper.IDivC(h, 2)),  BigO(X.channels) * 1 / (2*2.25f),
                 StrictAnd(K.kernelWidth == 3 && K.kernelHeight == 3 && stride[0] == 1 && stride[1] == 1 &&
                           (h % 2) == 0 && (w % 2) == 0),
                 (Application.platform == RuntimePlatform.Android) ||
@@ -250,43 +249,45 @@ internal sealed class ComputeKernelLibrary
         // R8x8_16k
         entries.Add(
             new Entry("Conv2DKernelKxK_LaxC4StrictK16_T2x32_R8x8",
-                Int3(IDivC(k, 8), IDivC(w*h, 8)),      BigO(X.channels) * bigOR8x8Factor * 1.45f,
-                IsT2x32_R8x8KernelValid(ChannelMode.Lax,KernelMode.Strict, c,k,n,w,stride)));
+                Int3(ComputeHelper.IDivC(k, 8), ComputeHelper.IDivC(w*h, 8), n),      BigO(X.channels) * 1.3f,
+                 valid_: IsT2x32_R8x8KernelValid(ChannelMode.Lax,KernelMode.Strict,c,k,h,w,n)));
 
         entries.Add(new Entry("Conv2DKernelKxK_StrictC4LaxK16_T2x32_R8x8",
-                Int3(IDivC(k, 8), IDivC(w*h, 8)),      BigO(X.channels) * bigOR8x8Factor * 1.35f,
-                IsT2x32_R8x8KernelValid(ChannelMode.Strict,KernelMode.Lax, c,k,n,w,stride)));
+                Int3(ComputeHelper.IDivC(k, 8), ComputeHelper.IDivC(w*h, 8), n),      BigO(X.channels) * 1.2f,
+                 valid_: IsT2x32_R8x8KernelValid(ChannelMode.Strict,KernelMode.Lax,c,k,h,w,n)));
 
         entries.Add(new Entry("Conv2DKernelKxK_StrictC4StrictK16_T2x32_R8x8",
-                Int3(IDivC(k, 8), IDivC(w*h, 8)),      BigO(X.channels) * bigOR8x8Factor * 1.25f,
-                IsT2x32_R8x8KernelValid(ChannelMode.Strict,KernelMode.Strict, c,k,n,w,stride)));
+                Int3(ComputeHelper.IDivC(k, 8), ComputeHelper.IDivC(w*h, 8), n),      BigO(X.channels) * 1.1f,
+                 valid_: IsT2x32_R8x8KernelValid(ChannelMode.Strict,KernelMode.Strict,c,k,h,w,n)));
 
         // R8x8_64k
         entries.Add(new Entry("Conv2DKernelKxK_StrictC16StrictK64_T8x8_R8x8",
-                Int3(IDivC(k, 8), IDivC(w*h, 8)),      BigO(X.channels) * bigOR8x8Factor * 1.05f,
-                IsT8x8_R8x8KernelValid(ChannelMode.Strict, KernelMode.Strict,c,k,n,w,stride)));
+                Int3(ComputeHelper.IDivC(k, 8), ComputeHelper.IDivC(w*h, 8), n),      BigO(X.channels) * 0.7f,
+                 valid_: IsT8x8_R8x8KernelValid(ChannelMode.Strict, KernelMode.Strict,c,k,h,w,n)));
 
         entries.Add(new Entry("Conv2DKernelKxK_StrictC16LaxK64_T8x8_R8x8",
-                Int3(IDivC(k, 8), IDivC(w*h, 8)),      BigO(X.channels) * bigOR8x8Factor * 1.10f,
-                IsT8x8_R8x8KernelValid(ChannelMode.Strict, KernelMode.Lax,c,k,n,w,stride)));
+                Int3(ComputeHelper.IDivC(k, 8), ComputeHelper.IDivC(w*h, 8), n),      BigO(X.channels) * 0.75f,
+                 valid_: IsT8x8_R8x8KernelValid(ChannelMode.Strict, KernelMode.Lax,c,k,h,w,n)));
 
         // R4x4
+        int r4x4dispatchY = (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC) ? n * w * h : w * h;
+        int r4x4dispatchZ = (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC) ? 1 : n;
         entries.Add(new Entry("Conv2DKernel1x1_StrictC16K64_T16x16_R4x4",
-                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),    BigO(X.channels) * 0.8f / 4,
+                Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(r4x4dispatchY, 4), r4x4dispatchZ),    BigO(X.channels) * 0.8f / 4,
                 K.kernelWidth == 1 && K.kernelHeight == 1 &&
                 stride[0] == 1 && stride[1] == 1 &&
                 (k % 64) == 0 && (c % 16) == 0 &&
                 ComputeInfo.supportsComputeSharedMemory));
 
         entries.Add(new Entry("Conv2DKernelKxK_StrictC16K64_T16x16_R4x4",
-                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),    BigO(X.channels) * 0.9f / 4,
-            (k % 64) == 0 && (c % 16) == 0 && ComputeInfo.supportsComputeSharedMemory));
+                Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(r4x4dispatchY, 4), r4x4dispatchZ),    BigO(X.channels) * 0.9f / 4,
+                (k % 64) == 0 && (c % 16) == 0 && ComputeInfo.supportsComputeSharedMemory));
 
         entries.Add(new Entry("Conv2DKernelKxK_T16x16_R4x4",
-                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),    BigO(X.channels) * 1.0f / 4,
-            k >= 16 && c >= 16 && ComputeInfo.supportsComputeSharedMemory));
+                Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(r4x4dispatchY, 4), r4x4dispatchZ),    BigO(X.channels) * 1.0f / 4,
+                k >= 16 && c >= 16 && ComputeInfo.supportsComputeSharedMemory));
 //      entries.Add(new Entry("Conv2DKernelKxK_T16x16_R4x4",
-//                Int3(IDivC(k, 4), IDivC(n*w*h, 4)),                 BigO(X.channels) * 1.1f / 4));
+//                Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(n*w*h, 4)),                 BigO(X.channels) * 1.1f / 4));
 
         // Old
 //        entries.Add(new Entry("Conv2D_L1Cached64_RegisterBlock4x4",
@@ -308,8 +309,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_DepthwiseConv2DEntries = new List<Entry>(1);
-    static public List<Entry> DepthwiseConv2D(TensorShape X, TensorShape K, TensorShape O)
+    private static List<Entry> s_DepthwiseConv2DEntries = new List<Entry>(1);
+    internal static List<Entry> DepthwiseConv2D(TensorShape X, TensorShape K, TensorShape O)
     {
         var h = O.height;
         var w = O.width;
@@ -323,8 +324,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_Conv2DTransEntries = new List<Entry>(2);
-    static public List<Entry> Conv2DTrans(TensorShape X, TensorShape K, TensorShape O)
+    private static List<Entry> s_Conv2DTransEntries = new List<Entry>(2);
+    internal static List<Entry> Conv2DTrans(TensorShape X, TensorShape K, TensorShape O)
     {
         var entries = s_Conv2DTransEntries;
         entries.Clear();
@@ -339,8 +340,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_ActivationEntries = new List<Entry>(3);
-    static public List<Entry> Activation(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_ActivationEntries = new List<Entry>(3);
+    internal static List<Entry> Activation(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_ActivationEntries;
         entries.Clear();
@@ -362,8 +363,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_PReluEntries = new List<Entry>(3);
-    static public List<Entry> PRelu(TensorShape X, TensorShape O)
+    private static List<Entry> s_PReluEntries = new List<Entry>(3);
+    internal static List<Entry> PRelu(TensorShape X, TensorShape O)
     {
         var entries = s_PReluEntries;
         entries.Clear();
@@ -380,8 +381,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_SoftmaxEntries = new List<Entry>(1);
-    static public List<Entry> Softmax(TensorShape X, TensorShape O)
+    private static List<Entry> s_SoftmaxEntries = new List<Entry>(1);
+    internal static List<Entry> Softmax(TensorShape X, TensorShape O)
     {
         var entries = s_SoftmaxEntries;
         entries.Clear();
@@ -392,8 +393,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_LogSoftmaxEntries = new List<Entry>(1);
-    static public List<Entry> LogSoftmax(TensorShape X, TensorShape O)
+    private static List<Entry> s_LogSoftmaxEntries = new List<Entry>(1);
+    internal static List<Entry> LogSoftmax(TensorShape X, TensorShape O)
     {
         var entries = s_LogSoftmaxEntries;
         entries.Clear();
@@ -404,8 +405,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_ScaleBiasEntries = new List<Entry>(3);
-    static public List<Entry> ScaleBias(TensorShape X, TensorShape O)
+    private static List<Entry> s_ScaleBiasEntries = new List<Entry>(3);
+    internal static List<Entry> ScaleBias(TensorShape X, TensorShape O)
     {
         var entries = s_ScaleBiasEntries;
         entries.Clear();
@@ -422,8 +423,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_Upsample2DEntries = new List<Entry>(2);
-    static public List<Entry> Upsample2D(TensorShape X, TensorShape O, int[] scale, bool bilinear)
+    private static List<Entry> s_Upsample2DEntries = new List<Entry>(2);
+    internal static List<Entry> Upsample2D(TensorShape X, TensorShape O, int[] scale, bool bilinear)
     {
         var entries = s_Upsample2DEntries;
         entries.Clear();
@@ -449,20 +450,20 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_Pool2DReduceEntries = new List<Entry>(1);
-    static public List<Entry> Pool2DReduce(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_Pool2DReduceEntries = new List<Entry>(1);
+    internal static List<Entry> Pool2DReduce(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_Pool2DReduceEntries;
         entries.Clear();
 
         entries.Add(new Entry(kernelName,
-            Int3(O.channels, IDivC(X.width, 2), IDivC(X.height, 2)), BigO(O.batch)));
+            Int3(O.channels, ComputeHelper.IDivC(X.width, 2), ComputeHelper.IDivC(X.height, 2)), BigO(O.batch)));
 
         return entries;
     }
 
-    static private List<Entry> s_Pool2DEntries = new List<Entry>(1);
-    static public List<Entry> Pool2D(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_Pool2DEntries = new List<Entry>(1);
+    internal static List<Entry> Pool2D(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_Pool2DEntries;
         entries.Clear();
@@ -477,8 +478,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_PoolAvgVar2DEntries = new List<Entry>(1);
-    static public List<Entry> PoolAvgVar2D(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_PoolAvgVar2DEntries = new List<Entry>(1);
+    internal static List<Entry> PoolAvgVar2D(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_PoolAvgVar2DEntries;
         entries.Clear();
@@ -488,13 +489,13 @@ internal sealed class ComputeKernelLibrary
             //    Int3(O.channels, O.width, O.height),            BigO(O.batch)
             //),
             new Entry(kernelName,
-                Int3(O.channels, IDivC(X.width, 2), IDivC(X.height, 2)), BigO(O.batch)));
+                Int3(O.channels, ComputeHelper.IDivC(X.width, 2), ComputeHelper.IDivC(X.height, 2)), BigO(O.batch)));
 
         return entries;
     }
 
-    static private List<Entry> s_GlobalPool2DEntries = new List<Entry>(1);
-    static public List<Entry> GlobalPool2D(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_GlobalPool2DEntries = new List<Entry>(1);
+    internal static List<Entry> GlobalPool2D(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_GlobalPool2DEntries;
         entries.Clear();
@@ -505,8 +506,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_NormalizationTailEntries = new List<Entry>(3);
-    static public List<Entry> NormalizationTail(TensorShape X, TensorShape O)
+    private static List<Entry> s_NormalizationTailEntries = new List<Entry>(3);
+    internal static List<Entry> NormalizationTail(TensorShape X, TensorShape O)
     {
         var entries = s_NormalizationTailEntries;
         entries.Clear();
@@ -524,8 +525,8 @@ internal sealed class ComputeKernelLibrary
     }
 
 
-    static private List<Entry> s_CopyEntries = new List<Entry>(1);
-    static public List<Entry> Copy(TensorShape X, TensorShape O)
+    private static List<Entry> s_CopyEntries = new List<Entry>(1);
+    internal static List<Entry> Copy(TensorShape X, TensorShape O)
     {
         var entries = s_CopyEntries;
         entries.Clear();
@@ -537,8 +538,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_ReshapeFromNHWCModelEntries = new List<Entry>(1);
-    static public List<Entry> ReshapeFromNHWCModel(TensorShape O)
+    private static List<Entry> s_ReshapeFromNHWCModelEntries = new List<Entry>(1);
+    internal static List<Entry> ReshapeFromNHWCModel(TensorShape O)
     {
         var entries = s_ReshapeFromNHWCModelEntries;
         entries.Clear();
@@ -550,8 +551,8 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_PaddingEntries = new List<Entry>(1);
-    static public List<Entry> Padding(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_PaddingEntries = new List<Entry>(1);
+    internal static List<Entry> Padding(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_PaddingEntries;
         entries.Clear();
@@ -562,25 +563,26 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-    static private List<Entry> s_BroadcastEntries = new List<Entry>(1);
-    static public List<Entry> Broadcast(TensorShape X, TensorShape O, string kernelName)
+    private static List<Entry> s_BroadcastEntries = new List<Entry>(1);
+    internal static List<Entry> Broadcast(TensorShape X, TensorShape O, string kernelName)
     {
         var entries = s_BroadcastEntries;
         entries.Clear();
 
-        entries.Add(new Entry(kernelName,
-            Int3(O.channels, O.width, O.height), BigO(O.batch)));
-
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+            entries.Add(new Entry(kernelName, Int3(O.channels, O.width, O.height), BigO(O.batch)));
+        else
+            entries.Add(new Entry(kernelName, Int3(O.width, O.height, O.channels), BigO(O.batch)));
         return entries;
     }
 
     static ValueTuple<int,int,int> Int3(int x, int y = 1, int z = 1) { return ValueTuple.Create(x, y, z); }
     static float BigO(int o) { return (float)o; }
-    public struct StrictDimensions { public bool valid; }
+    internal struct StrictDimensions { public bool valid; }
     static StrictDimensions StrictAnd(bool valid_) { return new StrictDimensions { valid = valid_ }; }
     static StrictDimensions Strict() { return new StrictDimensions { valid = true }; }
 
-    public struct Entry
+    internal struct Entry
     {
         public readonly string name;
         public readonly ValueTuple<int,int,int> dispatch;
@@ -621,7 +623,7 @@ internal sealed class ComputeKernelLibrary
     }
 }
 
-public struct ComputeKernel
+internal struct ComputeKernel
 {
     readonly public ComputeFunc func;
     readonly public ValueTuple<int,int,int> dispatch;
@@ -860,7 +862,7 @@ public class ComputeOps : ReferenceComputeOps
         fn_wk.SetTensor("O", Ktransformed.shape, Pin(Ktransformed).buffer);
         fn_wk.Dispatch();
 
-        var fn_w = new ComputeKernel(new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3"), (Kws.kernelCount, IDivC(O.width, 2), IDivC(O.height, 2)));
+        var fn_w = new ComputeKernel(new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3"), (Kws.kernelCount, ComputeHelper.IDivC(O.width, 2), ComputeHelper.IDivC(O.height, 2)));
 
         fn_w.SetTensor("X", X.shape, Pin(X).buffer);
         fn_w.SetTensor("O", O.shape, Pin(O).buffer);
@@ -917,10 +919,10 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
-            return base.DepthwiseConv2D(X, K, B, stride, pad);
+            return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
@@ -944,12 +946,17 @@ public class ComputeOps : ReferenceComputeOps
 
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
         fn.Dispatch();
+
+        if (!IsFusedActivationSupported(fusedActivation))
+            O = Activation(fusedActivation.ToString(), O);
+
         return O;
     }
 
-    public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -998,7 +1005,7 @@ public class ComputeOps : ReferenceComputeOps
 
         fn_flip.Dispatch();
 
-        var O = Conv2D(Xpadded, Kflipped, Bpacked, new int[] { 1, 1 }, pad, Layer.FusedActivation.None);
+        var O = Conv2D(Xpadded, Kflipped, Bpacked, new int[] { 1, 1 }, pad, fusedActivation);
         buffer.Dispose();
         return O;
     }
@@ -1063,7 +1070,7 @@ public class ComputeOps : ReferenceComputeOps
         string kernelName = "AvgVariancePool2DReduce";
 
         var Oshape = X.shape.ApplyPool(pool, stride, pad, ceilMode: true);
-        var O = NewTensor(new TensorShape(Oshape.batch, IDivC(Oshape.height, 2), IDivC(Oshape.width, 2), Oshape.channels));
+        var O = NewTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
         var O2 = NewTensor(O.shape);
 
         var fn = BestKernel(ComputeKernelLibrary.PoolAvgVar2D(X.shape, O.shape, kernelName));
@@ -1120,7 +1127,7 @@ public class ComputeOps : ReferenceComputeOps
         var pad = new[] { 0, 0, 0, 0 };
 
         var Oshape = X.shape.ApplyPool(pool, stride, pad, ceilMode: true);
-        var O = NewTensor(new TensorShape(Oshape.batch, IDivC(Oshape.height, 2), IDivC(Oshape.width, 2), Oshape.channels));
+        var O = NewTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
         var fn = BestKernel(ComputeKernelLibrary.Pool2DReduce(X.shape, O.shape, kernelName));
 
         if (printKernels)
@@ -1337,6 +1344,26 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    protected int[] GetInputTensorStridesOnDevice(TensorShape shape)
+    {
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+        {
+            return new int[4] {
+                (shape.batch == 1) ? 0 : shape.height * shape.width * shape.channels,
+                (shape.height == 1) ? 0 : shape.width * shape.channels,
+                (shape.width == 1) ? 0 : shape.channels,
+                (shape.channels == 1) ? 0 : 1 };
+        }
+        else
+        {
+            return new int[4] {
+                (shape.batch == 1) ? 0 : shape.height * shape.width * shape.channels,
+                (shape.height == 1) ? 0 : shape.width,
+                (shape.width == 1) ? 0 : 1,
+                (shape.channels == 1) ? 0 : shape.height * shape.width };
+        }
+    }
+
     protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         Assert.IsTrue(tensors.Length > 0);
@@ -1358,8 +1385,11 @@ public class ComputeOps : ReferenceComputeOps
             fn.SetTensor("X", X.shape, Pin(X).buffer);
             fn.SetTensor("O", O.shape, Pin(O).buffer);
             fn.SetTensor("B", B.shape, Pin(B).buffer, Pin(B).offset);
-            fn.shader.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
+            fn.shader.SetFloat("_Alpha", 1.0f / (float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
+
+            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape));
+            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape));
 
             fn.Dispatch();
 
@@ -1367,6 +1397,8 @@ public class ComputeOps : ReferenceComputeOps
             isFirstDispatch = false;
         }
 
+        if (O != outputTensor1) outputTensor1.Dispose();
+        if (O != outputTensor2) outputTensor2?.Dispose();
         return O;
     }
 
@@ -1454,7 +1486,7 @@ public class ComputeOps : ReferenceComputeOps
     }
 }
 
-public class ComputeVarsWithSharedModel : DefaultVars
+internal class ComputeVarsWithSharedModel : DefaultVars
 {
     private Dictionary<string, ComputeBuffer> m_ModelBuffers = new Dictionary<string, ComputeBuffer>();
     private Dictionary<string, Int64> m_OffsetsIntoModelWeights = new Dictionary<string, long>();

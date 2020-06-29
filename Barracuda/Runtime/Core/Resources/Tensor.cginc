@@ -1,3 +1,5 @@
+#include "DebugUtils.cginc"
+
 #define BARRACUDA_MAX_THREAD_COUNT 64
 #if (BARRACUDA_MAX_THREAD_COUNT>=256)
 #define NUMTHREADS(t256,t128,t64) [numthreads t256]
@@ -137,10 +139,13 @@ struct ReadonlyTensor : Tensor
     float Get(uint b, uint h, uint w, uint ch)
     {
         #if CHANNELS_FIRST
-            return data[IndexCHW(b,h,w,ch)];
+            uint index = IndexCHW(b,h,w,ch);
         #else
-            return data[IndexHWC(b,h,w,ch)];
+            uint index = IndexHWC(b,h,w,ch);
         #endif
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
     }
     float Get(uint b, uint2 pos, uint ch)
     {
@@ -149,18 +154,26 @@ struct ReadonlyTensor : Tensor
     float Get(uint b, uint i, uint ch)
     {
         #if CHANNELS_FIRST
-            return data[IndexCHW(b, i, ch)];
+            uint index = IndexCHW(b, i, ch);
         #else
-            return data[IndexHWC(b, i, ch)];
+            uint index = IndexHWC(b, i, ch);
         #endif
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
     }
     float Get(uint b, uint i)
     {
-        return data[Index(b,i)];
+        uint index = Index(b,i);
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
     }
     float FastGet(uint i)
     {
-        return data[i];
+        float value;
+        TENSOR_READ(value, i, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
     }
 
     float BroadcastGet(uint b, uint h, uint w, uint ch)
@@ -201,6 +214,10 @@ struct ReadonlyTensor : Tensor
         return FastGet(i);
     }
 
+    float SafeGetHW(uint b, uint h, uint w, uint c, float def = 0.0f)
+    {
+        return (h >= height || w >= width) ? def : Get(b, min(h, height-1), min(w, width-1), c);
+    }
     float SafeGet(uint b, uint2 pos, uint ch, uint2 pad, float def = 0)
     {
         bool cond =
@@ -213,9 +230,24 @@ struct ReadonlyTensor : Tensor
         else
             return Get(b, pos - pad, ch);
     }
+    float SafeGet(uint b, uint2 pos, uint ch, float def = 0)
+    {
+        bool cond =
+            (b >= batch || ch >= channels ||
+            any(pos >= uint2(width, height)));
+
+        if (cond)
+            return def;
+        else
+            return Get(b, pos, ch);
+    }
     float SafeGet(uint b, uint h, uint w, uint ch, uint2 pad, float def = 0)
     {
         return SafeGet(b, uint2(w, h), ch, pad, def);
+    }
+    float SafeGet(uint b, uint h, uint w, uint ch, float def = 0)
+    {
+        return SafeGet(b, uint2(w, h), ch, def);
     }
     float SafeGet(uint b, uint i, float def = 0)
     {
@@ -262,10 +294,13 @@ struct ReadWriteTensor : Tensor
     float Get(uint b, uint h, uint w, uint ch)
     {
         #if CHANNELS_FIRST
-            return data[IndexCHW(b,h,w,ch)];
+            uint index = IndexCHW(b,h,w,ch);
         #else
-            return data[IndexHWC(b,h,w,ch)];
+            uint index = IndexHWC(b,h,w,ch);
         #endif
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READWRITE_READ);
+        return value;
     }
     float Get(uint b, uint2 pos, uint ch)
     {
@@ -273,11 +308,16 @@ struct ReadWriteTensor : Tensor
     }
     float Get(uint b, uint i)
     {
-        return data[Index(b,i)];
+        uint index = Index(b,i);
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READWRITE_READ);
+        return value;
     }
     float FastGet(uint i)
     {
-        return data[i];
+        float value;
+        TENSOR_READ(value, i, KERNEL_ASSERT_CONTEXT_READWRITE_READ);
+        return value;
     }
 
     float BroadcastGet(uint b, uint h, uint w, uint ch)
@@ -335,10 +375,11 @@ struct ReadWriteTensor : Tensor
     void Set(uint b, uint h, uint w, uint ch, float v)
     {
         #if CHANNELS_FIRST
-            data[IndexCHW(b,h,w,ch)] = v;
+            uint index = IndexCHW(b,h,w,ch);
         #else
-            data[IndexHWC(b,h,w,ch)] = v;
+            uint index = IndexHWC(b,h,w,ch);
         #endif
+        TENSOR_WRITE(v, index, KERNEL_ASSERT_CONTEXT_READWRITE_WRITE);
     }
     void Set(uint b, uint2 pos, uint ch, float v)
     {
@@ -347,10 +388,11 @@ struct ReadWriteTensor : Tensor
     void Set(uint b, uint i, uint ch, float v)
     {
         #if CHANNELS_FIRST
-            data[IndexCHW(b, i, ch)] = v;
+            uint index = IndexCHW(b, i, ch);
         #else
-            data[IndexHWC(b, i, ch)] = v;
+            uint index = IndexHWC(b, i, ch);
         #endif
+        TENSOR_WRITE(v, index, KERNEL_ASSERT_CONTEXT_READWRITE_WRITE);
     }
     void Set(uint y, uint x, float v)
     {
@@ -358,7 +400,7 @@ struct ReadWriteTensor : Tensor
     }
     void FastSet(uint i, float v)
     {
-        data[i] = v;
+        TENSOR_WRITE(v, i, KERNEL_ASSERT_CONTEXT_READWRITE_WRITE);
     }
 
     void SetWithActivation(uint b, uint h, uint w, uint ch, float v)
@@ -402,7 +444,10 @@ struct SharedTensor : Tensor
 
     float Get(uint b, uint h, uint w, uint ch)
     {
-        return data[IndexHWC(b,h,w,ch) + offset];
+        uint index = IndexHWC(b,h,w,ch) + offset;
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_SHARED_READ);
+        return value;
     }
     float Get(uint b, uint2 pos, uint ch)
     {
@@ -410,11 +455,16 @@ struct SharedTensor : Tensor
     }
     float Get(uint b, uint i)
     {
-        return data[Index(b,i) + offset];
+        uint index = Index(b,i) + offset;
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_SHARED_READ);
+        return value;
     }
     float FastGet(uint i)
     {
-        return data[i + offset];
+        float value;
+        TENSOR_READ(value, i + offset, KERNEL_ASSERT_CONTEXT_SHARED_READ);
+        return value;
     }
 
     float BroadcastGet(uint b, uint h, uint w, uint ch)
@@ -431,7 +481,10 @@ struct SharedTensor : Tensor
     }
     float FastBroadcastGet(uint i)
     {
-        return data[i % GetFlatWidth()];
+        uint index = i % GetFlatWidth() + offset;
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_SHARED_READ);
+        return value;
     }
 
     float SafeGet(uint b, uint2 pos, uint ch, uint2 pad, float def = 0)
@@ -480,14 +533,14 @@ struct SharedTensor : Tensor
 #endif
 
 #define TENSOR_DECL(X) uint4 X##declShape; uint4 X##declInfo; StructuredBuffer<float> X##data;
-#define TENSOR_DECL_RW(X) uint4 X ## declShape; uint4 X ## declInfo; RWStructuredBuffer<float> X ## data;
+#define TENSOR_DECL_RW(X) uint4 X##declShape; uint4 X##declInfo; RWStructuredBuffer<float> X##data;
 
 // readonly with channel order support (for inputs).
-#define TENSOR_ARG(X) ReadonlyTensor X; X##.Init(X##declShape, X##data);
+#define TENSOR_ARG(X) ReadonlyTensor X; X.Init(X##declShape, X##data);
 // readonly with offset, no channel order support (for weights and biases).
-#define TENSOR_MODEL(X) SharedTensor X; X##.Init(X##declShape, X##declInfo, X##data);
+#define TENSOR_MODEL(X) SharedTensor X; X.Init(X##declShape, X##declInfo, X##data);
 // read/write with channel order support (for outputs).
-#define TENSOR_ARG_RW(X) ReadWriteTensor X; X##.Init(X##declShape, X##data);
+#define TENSOR_ARG_RW(X) ReadWriteTensor X; X.Init(X##declShape, X##data);
 
 #define TENSOR_ARGS2(X, O) TENSOR_ARG(X); TENSOR_ARG_RW(O);
 #define TENSOR_ARGS3(X, A, O) TENSOR_ARG(X); TENSOR_MODEL(A); TENSOR_ARG_RW(O);
@@ -495,12 +548,14 @@ struct SharedTensor : Tensor
 #define TENSOR_ARGS4(X, A, B, O) TENSOR_ARG(X); TENSOR_MODEL(A); TENSOR_MODEL(B); TENSOR_ARG_RW(O);
 
 // shared model tensors
-#define TENSOR_SHARED_MODEL(X, S) SharedTensor X; X##.Init(X##declShape, X##declInfo, S##data);
+#define TENSOR_SHARED_MODEL(X, S) SharedTensor X; X.Init(X##declShape, X##declInfo, S##data);
 #define TENSOR_SHARED2_ARGS4(X, A, B, S, O) TENSOR_ARG(X); TENSOR_SHARED_MODEL(A, S); TENSOR_SHARED_MODEL(B, S); TENSOR_ARG_RW(O);
 
 
-// purely informational - declares contract between caller of Dispatch() and kernel
-#define DISPATCH_ARGS(threadGroupsX, threadGroupsY, threadGroupsZ)
+// Purely informational - declares contract between caller of Dispatch() and kernel
+// Temporarily disabled due to failure in shader preprocessor in 2020.2
+// @TODO: reenable
+//#define DISPATCH_ARGS(threadGroupsX, threadGroupsY, threadGroupsZ)
 
 
 // @TODO: move all code below into a separate and appropriately named file(s)

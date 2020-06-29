@@ -50,11 +50,6 @@ public class StatsOps : IOps, IModelCompiler
             ((IModelCompiler)m_Ops).PreExecuteLayer(layer, inputs);
     }
 
-    public virtual void WaitForCompletion(Tensor x)
-    {
-        m_Ops.WaitForCompletion(x);
-    }
-
     Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         var O = m_Ops.MatMul(X, xTranspose, Y, yTranspose);
@@ -79,9 +74,9 @@ public class StatsOps : IOps, IModelCompiler
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
         return O;
     }
-    Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
-        var O = m_Ops.DepthwiseConv2D(X, K, B, stride, pad);
+        var O = m_Ops.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
         long m = (long)O.batch * (long)O.width * (long)O.height;
         long n = (long)X.channels;
         long k = (long)K.kernelWidth * (long)K.kernelHeight;
@@ -89,9 +84,9 @@ public class StatsOps : IOps, IModelCompiler
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
         return O;
     }
-    Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
-        var O = m_Ops.Conv2DTrans(X, K, B, stride, pad, outputAdjustment);
+        var O = m_Ops.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
         long m = (long)O.batch * (long)O.width * (long)O.height;
         long n = (long)X.channels;
         long k = (long)(K.kernelWidth/stride[1]) * (long)(K.kernelHeight/stride[0]) * (long)K.channels;
@@ -197,7 +192,10 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
         var O = m_Ops.LRN(X, alpha, beta, bias, size);
-        // @TODO: not implemented
+        //A bit over conservative. Number of read/alu is lower than `size` when normalisation windows is too large for data at current index.
+        long sizeL = size;
+        m_Alu += (long)X.length * (5L + sizeL * 2L);
+        m_Mem += (long)X.length * (sizeL + 2L);
         return O;
     }
     Tensor IOps.Dropout(Tensor X, float alpha)

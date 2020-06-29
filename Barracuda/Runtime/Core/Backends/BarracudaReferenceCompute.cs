@@ -9,9 +9,20 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 
+[assembly: InternalsVisibleTo("Barracuda.EditorTests")]
 
 namespace Unity.Barracuda {
+
+public static class ComputeHelper
+{
+    public static int IDivC(int v, int div)
+    {
+        return (v + div - 1) / div;
+    }
+}
 
 public class ComputeTensorData : ITensorData
 {
@@ -70,7 +81,7 @@ public class ComputeTensorData : ITensorData
         if (!m_DisposeBufferAfterUse)
             return;
 
-        D.LogWarning("Found undisposed " + ToString() + ". Disposing!");
+        D.LogWarning($"Found unreferenced, but undisposed Tensor data which might lead to GPU resource leak: {ToString()}");
 
         Dispose();
     }
@@ -87,7 +98,7 @@ public class ComputeTensorData : ITensorData
 
     public virtual void Reserve(int count)
     {
-        if (m_Offset + count > GetMaxCount())
+        if (m_Offset + count > maxCapacity)
             throw new ArgumentException("ComputeTensorData buffer is too small to reserve " + count + " elements.");
     }
 
@@ -163,39 +174,112 @@ public class ComputeTensorData : ITensorData
     }
     #endif
 
+    private ConvertFromOnDeviceFormatHelper m_ConvertFromOnDeviceFormatHelper = new ConvertFromOnDeviceFormatHelper();
     private float[] ConvertFromOnDeviceFormat(TensorShape shape, float[] data)
     {
-        if (shape.length != 0 && m_OnDeviceChannelsOrder == ComputeInfo.ChannelsOrder.NCHW)
-        {
+        return m_ConvertFromOnDeviceFormatHelper.GetNHWCData(shape, data, m_OnDeviceChannelsOrder);
+    }
 
-            //Transpose from CHW to HWC, TODO use a compute shader or threaded code.
-            float[] hwcData = new float[data.Length];
-            for (int readIndex=0; readIndex < data.Length; ++readIndex)
+    private unsafe class ConvertFromOnDeviceFormatHelper
+    {
+        private float* oPtr;
+        private float* xPtr;
+        private TensorShape shape;
+        private int unrollSize = 4;
+        public Action<long> unrolledInnerLoopDelegate;
+
+        internal ConvertFromOnDeviceFormatHelper()
+        {
+            unrolledInnerLoopDelegate = UnrolledInnerLoop;
+        }
+
+        internal float[] GetNHWCData(TensorShape shape, float[] data, ComputeInfo.ChannelsOrder onDeviceFormat, bool useRefImplementation = false)
+        {
+            //tensor is HWC on device, no need to concert.
+            if (onDeviceFormat == ComputeInfo.ChannelsOrder.NHWC)
+                return data;
+
+            //tensor is flat in regard to CHW, no need to convert.
+            var channelOrderRelatedDimensions = (shape.height > 1 ? 1 : 0) + (shape.width > 1 ? 1 : 0) + (shape.channels > 1 ? 1 : 0);
+            if (channelOrderRelatedDimensions < 2)
+                return data;
+
+            //else allocate new buffer, apply conversion and return it.
+            float[] hwcData = new float[shape.length];
+            if (!useRefImplementation)
             {
-                int b = 0, h = 0, w = 0, ch = 0;
-                shape.GetPositionsFromIndexNCHW(readIndex, ref b, ref h, ref w, ref ch);
-                int writeIndex = shape.Index(b, h, w, ch);
-                hwcData[writeIndex] = data[readIndex];
+                unsafe
+                {
+                    fixed (float* xPtr = &data[0], oPtr = &hwcData[0])
+                    {
+                        this.oPtr = oPtr;
+                        this.xPtr = xPtr;
+                        this.shape = shape;
+                        ApplyConversion();
+                    }
+                }
             }
+            else
+            {
+                for (int readIndex=0; readIndex < data.Length; ++readIndex)
+                {
+                    int b = 0, h = 0, w = 0, ch = 0;
+                    shape.GetPositionsFromIndexNCHW(readIndex, ref b, ref h, ref w, ref ch);
+                    int writeIndex = shape.Index(b, h, w, ch);
+                    hwcData[writeIndex] = data[readIndex];
+                }
+            }
+
             return hwcData;
         }
-        else
+
+        private void ApplyConversion()
         {
-            return data;
+            UnsafeArrayCPUOps.Parallel_For(0L, shape.length / unrollSize, unrolledInnerLoopDelegate);
+
+            // Remainder
+            for (int i = (shape.length / unrollSize) * unrollSize; i < shape.length; ++i)
+            {
+                int b = 0, h = 0, w = 0, ch = 0;
+                shape.GetPositionsFromIndexNCHW(i, ref b, ref h, ref w, ref ch);
+                int writeIndex = shape.Index(b, h, w, ch);
+                oPtr[writeIndex] = xPtr[i];
+            }
+        }
+
+        private void UnrolledInnerLoop(long n)
+        {
+            int baseIndex = (int)n * 4;
+            int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
+            int b1 = 0, h1 = 0, w1 = 0, ch1 = 0;
+            int b2 = 0, h2 = 0, w2 = 0, ch2 = 0;
+            int b3 = 0, h3 = 0, w3 = 0, ch3 = 0;
+            shape.GetPositionsFromIndexNCHW(baseIndex+0, ref b0, ref h0, ref w0, ref ch0);
+            shape.GetPositionsFromIndexNCHW(baseIndex+1, ref b1, ref h1, ref w1, ref ch1);
+            shape.GetPositionsFromIndexNCHW(baseIndex+2, ref b2, ref h2, ref w2, ref ch2);
+            shape.GetPositionsFromIndexNCHW(baseIndex+3, ref b3, ref h3, ref w3, ref ch3);
+            int writeIndex0 = shape.Index(b0, h0, w0, ch0);
+            int writeIndex1 = shape.Index(b1, h1, w1, ch1);
+            int writeIndex2 = shape.Index(b2, h2, w2, ch2);
+            int writeIndex3 = shape.Index(b3, h3, w3, ch3);
+            oPtr[writeIndex0] = xPtr[baseIndex+0];
+            oPtr[writeIndex1] = xPtr[baseIndex+1];
+            oPtr[writeIndex2] = xPtr[baseIndex+2];
+            oPtr[writeIndex3] = xPtr[baseIndex+3];
         }
     }
 
     public virtual float[] Download(TensorShape shape)
     {
         //;;D.logStackTraceEnabled = true;
-        //;;Debug.Log("Download ComputeTensorData " + name + + GetMaxCount() + " " + count);
+        //;;Debug.Log("Download ComputeTensorData " + name + " " + maxCapacity + " " + count);
         //;;D.logStackTraceEnabled = false;
 
         var count = shape.length;
 
         Profiler.BeginSample("Barracuda.DownloadDataFromGPU");
-        Assert.IsTrue(GetMaxCount() >= count);
-        count = Math.Min(GetMaxCount(), count);
+        Assert.IsTrue(maxCapacity >= count);
+        count = Math.Min(maxCapacity, count);
 
         m_AsyncDownloadSchedulingFrame = -1;
         #if UNITY_2018_2_OR_NEWER
@@ -229,13 +313,13 @@ public class ComputeTensorData : ITensorData
     public virtual float[] SharedAccess(out int offset)
     {
         offset = m_Offset;
-        return Download(new TensorShape(0,0,0,GetMaxCount()));
+        return Download(new TensorShape(0,0,0,maxCapacity));
     }
 
-    public virtual int GetMaxCount()
+    public virtual int maxCapacity { get
     {
         return m_Buffer.count;
-    }
+    } }
 
     public override string ToString()
     {
@@ -250,19 +334,22 @@ public class ComputeTensorData : ITensorData
     }
 }
 
-public class SharedComputeTensorData : ComputeTensorData
+internal class SharedComputeTensorData : ComputeTensorData
 {
     public SharedComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset = 0, string buffername = "", ComputeInfo.ChannelsOrder channelsOrder = ComputeInfo.ChannelsOrder.NHWC) : base(buffer, shape, offset, buffername, channelsOrder) {}
 }
 
-public class TextureFormatUtils
+internal class TextureFormatUtils
 {
     public static bool IsRedOnly(TextureFormat format)
     {
         return  format == TextureFormat.R8 ||
                 format == TextureFormat.R16 ||
                 format == TextureFormat.RHalf ||
-                format == TextureFormat.RFloat;
+                format == TextureFormat.RFloat ||
+                format == TextureFormat.BC4 ||
+                format == TextureFormat.EAC_R ||
+                format == TextureFormat.EAC_R_SIGNED;
     }
 
     public static bool IsRedOnly(RenderTextureFormat format)
@@ -277,7 +364,10 @@ public class TextureFormatUtils
     {
         return  format == TextureFormat.RG16 ||
                 format == TextureFormat.RGHalf ||
-                format == TextureFormat.RGFloat;
+                format == TextureFormat.RGFloat ||
+                format == TextureFormat.BC5 ||
+                format == TextureFormat.EAC_RG ||
+                format == TextureFormat.EAC_RG_SIGNED;
     }
 
     public static bool IsRedGreen(RenderTextureFormat format)
@@ -285,6 +375,36 @@ public class TextureFormatUtils
         return  format == RenderTextureFormat.RG16 ||
                 format == RenderTextureFormat.RGHalf ||
                 format == RenderTextureFormat.RGFloat;
+    }
+
+    public static bool IsRedGreenBlue(TextureFormat format)
+    {
+        return  format == TextureFormat.RGB565 ||
+                format == TextureFormat.RGB24 ||
+                format == TextureFormat.DXT1 ||
+                #if !UNITY_IOS
+                format == TextureFormat.DXT1Crunched ||
+                #endif
+                format == TextureFormat.PVRTC_RGB2 ||
+                format == TextureFormat.PVRTC_RGB4 ||
+                format == TextureFormat.ETC_RGB4 ||
+                #if !UNITY_IOS
+                format == TextureFormat.ETC_RGB4Crunched ||
+                #endif
+                format == TextureFormat.ETC2_RGB ||
+                format == TextureFormat.ASTC_RGB_4x4 ||
+                format == TextureFormat.ASTC_RGB_5x5 ||
+                format == TextureFormat.ASTC_RGB_6x6 ||
+                format == TextureFormat.ASTC_RGB_8x8 ||
+                format == TextureFormat.ASTC_RGB_10x10 ||
+                format == TextureFormat.ASTC_RGB_12x12 ||
+                format == TextureFormat.BC6H;
+    }
+
+    public static bool IsRedGreenBlue(RenderTextureFormat format)
+    {
+        return  format == RenderTextureFormat.RGB565 ||
+                format == RenderTextureFormat.BGR101010_XR;
     }
 
     public static bool IsAlphaOnly(Texture tex)
@@ -340,6 +460,37 @@ public class TextureFormatUtils
             return false;
     }
 
+    public static bool IsRedGreenBlue(Texture tex)
+    {
+        var tex2D = tex as Texture2D;
+        var texArr = tex as Texture2DArray;
+        var tex3D = tex as Texture3D;
+        var rt = tex as RenderTexture;
+
+        if (tex2D != null)
+            return IsRedGreenBlue(tex2D.format);
+        else if (texArr != null)
+            return IsRedGreenBlue(texArr.format);
+        else if (tex3D != null)
+            return IsRedGreenBlue(tex3D.format);
+        else if (rt != null)
+            return IsRedGreenBlue(rt.format);
+        else
+            return false;
+    }
+
+    public static int FormatToChannelCount(Texture tex)
+    {
+        if (IsRedOnly(tex))
+            return 1;
+        if (IsAlphaOnly(tex))
+            return 1;
+        if (IsRedGreen(tex))
+            return 2;
+        if (IsRedGreenBlue(tex))
+            return 3;
+        return 4;
+    }
 
     public static Color FormatToChannelMask(Texture tex, int interpretPixelAsChannels)
     {
@@ -409,16 +560,26 @@ public class TextureAsTensorData : ITensorData
     public Flip flip { get { return m_Flip; } }
 
 
-    public TextureAsTensorData(Texture[] textures, int interpretPixelAsChannels = 3,
+    public TextureAsTensorData(Texture[] textures, int interpretPixelAsChannels = -1,
         Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels)
     {
+        if (textures.Length < 1)
+            throw new ArgumentException("Textures array must be non empty");
+
+        if (interpretPixelAsChannels < 0)
+        {
+            interpretPixelAsChannels = TextureFormatUtils.FormatToChannelCount(textures[0]);
+
+            // check that all textures have the same number of channels
+            foreach (var tex in textures)
+                if (interpretPixelAsChannels != TextureFormatUtils.FormatToChannelCount(tex))
+                    throw new ArgumentException("All textures must have the same number of channels");
+        }
+
         m_InterpretPixelAsChannels = interpretPixelAsChannels;
         m_InterpretDepthAs = depthAs;
         m_InterpretColorAs = colorAs;
         m_Flip = flip;
-
-        if (textures.Length < 1)
-            throw new ArgumentException("Textures array must be non empty");
 
         var width = textures[0].width;
         var height = textures[0].height;
@@ -456,7 +617,7 @@ public class TextureAsTensorData : ITensorData
         m_Shape = new TensorShape(batch, height, width, channels);
     }
 
-    public TextureAsTensorData(Texture texture, int interpretPixelAsChannels = 3,
+    public TextureAsTensorData(Texture texture, int interpretPixelAsChannels = -1,
         Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels)
     : this(new [] { texture }, interpretPixelAsChannels, flip, depthAs, colorAs) {}
 
@@ -472,112 +633,20 @@ public class TextureAsTensorData : ITensorData
         throw new InvalidOperationException("TextureAsTensorData is readonly");
     }
 
-    static void ProcessLine(Color[] pixels, int srcOffset, int srcWidth, Color srcChannelMask, float[] dstArray, int dstOffset, Color dstChannelMask, int channelStride)
-    {
-        for (var x = 0; x < srcWidth; ++x)
-        {
-            var p = pixels[srcOffset + x];
-            var dst = dstOffset;
-            if (dstChannelMask[0] > 0) dstArray[dst++] = p.r * srcChannelMask[0];
-            if (dstChannelMask[1] > 0) dstArray[dst++] = p.g * srcChannelMask[1];
-            if (dstChannelMask[2] > 0) dstArray[dst++] = p.b * srcChannelMask[2];
-            if (dstChannelMask[3] > 0) dstArray[dst++] = p.a * srcChannelMask[3];
-            var specialCaseWhenChannelMaskIsEmptyStoresAverage = (dst == dstOffset);
-            if (specialCaseWhenChannelMaskIsEmptyStoresAverage)
-                dstArray[dst++] = (p.r + p.g + p.b) / 3;
-
-            dstOffset += channelStride;
-        }
-    }
-
     public virtual bool ScheduleAsyncDownload(int count)
     {
+        // @TODO: cache compute tensor data and request async
         return true;
     }
 
     public virtual float[] Download(TensorShape shape)
     {
-        //;;D.logStackTraceEnabled = true;
-        //;;Debug.Log("Download TextureAsTensorData " + name + " " + count + " @ " + ToString());
-        //;;D.logStackTraceEnabled = false;
-
-        var count = shape.length;
-
-        Assert.AreEqual(shape.length, count);
-        var data = new float[shape.length];
-        int batch = 0;
-        var dstChannel = 0;
-        foreach (var tex in m_Textures)
+        var gpuBackend = new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels);
+        // @TODO: cache compute buffer
+        using(var computeTensorData = gpuBackend.TextureToTensorData(this, "__internalDownloadTextureToTensorData"))
         {
-            var tex2D = tex as Texture2D;
-            var texArr = tex as Texture2DArray;
-            var tex3D = tex as Texture3D;
-            // Source channel mask is a workaround - since Unity API that does not adhere to DX/GL standard when reading from 1 channel textures!
-            var srcChannelMask = TextureFormatUtils.FormatToChannelMask(tex);
-            var dstChannelMask = TextureFormatUtils.FormatToChannelMask(tex, m_InterpretPixelAsChannels);
-
-            if (tex2D)
-            {
-                var pixels = tex2D.GetPixels(0);
-
-                for (var y = 0; y < tex.height; ++y)
-                {
-                    var srcOffset = y * tex.width;
-                    var dstY = (m_Flip == Flip.Y) ? tex.height - y - 1: y;
-                    var dstOffset = shape.Index(batch, dstY, 0, dstChannel);
-                    ProcessLine(pixels, srcOffset, tex.width, srcChannelMask, data, dstOffset, dstChannelMask, shape.channels);
-                }
-
-                if (m_InterpretDepthAs == InterpretDepthAs.Batch)
-                    batch += 1;
-                else if (m_InterpretDepthAs == InterpretDepthAs.Channels)
-                    dstChannel += m_InterpretPixelAsChannels;
-            }
-            else if (texArr)
-            {
-                for (var z = 0; z < texArr.depth; ++z)
-                {
-                    var pixels = texArr.GetPixels(z, 0);
-
-                    D.Log(dstChannel);
-                    for (var y = 0; y < tex.height; ++y)
-                    {
-                        var srcOffset = y * tex.width;
-                        var dstY = (m_Flip == Flip.Y) ? tex.height - y - 1: y;
-                        var dstOffset = shape.Index(batch, dstY, 0, dstChannel);
-                        ProcessLine(pixels, srcOffset, tex.width, srcChannelMask, data, dstOffset, dstChannelMask, shape.channels);
-                    }
-
-                    if (m_InterpretDepthAs == InterpretDepthAs.Batch)
-                        batch += 1;
-                    else if (m_InterpretDepthAs == InterpretDepthAs.Channels)
-                        dstChannel += m_InterpretPixelAsChannels;
-                }
-            }
-            else if (tex3D)
-            {
-                var pixels = tex3D.GetPixels(0);
-                for (var z = 0; z < tex3D.depth; ++z)
-                {
-                    for (var y = 0; y < tex.height; ++y)
-                    {
-                        var srcOffset = z * tex.height + y * tex.width;
-                        var dstY = (m_Flip == Flip.Y) ? tex.height - y - 1: y;
-                        var dstOffset = shape.Index(batch, dstY, 0, dstChannel);
-                        ProcessLine(pixels, srcOffset, tex.width, srcChannelMask, data, dstOffset, dstChannelMask, shape.channels);
-                    }
-
-                    if (m_InterpretDepthAs == InterpretDepthAs.Batch)
-                        batch += 1;
-                    else if (m_InterpretDepthAs == InterpretDepthAs.Channels)
-                        dstChannel += m_InterpretPixelAsChannels;
-                }
-            }
-            else
-                throw new InvalidOperationException("Unsupported texture type for automatic readback to CPU");
+            return computeTensorData.Download(shape);
         }
-
-        return data;
     }
 
     public virtual float[] SharedAccess(out int offset)
@@ -586,10 +655,10 @@ public class TextureAsTensorData : ITensorData
         return Download(shape);
     }
 
-    public virtual int GetMaxCount()
+    public virtual int maxCapacity { get
     {
         return m_Shape.length;
-    }
+    } }
 
     public virtual void Dispose()
     {
@@ -599,7 +668,6 @@ public class TextureAsTensorData : ITensorData
 public class ReferenceComputeOps : ReferenceCPUOps
 {
     private ComputeShader[] m_Kernels;
-    private float[] m_SyncBuffer = new float[1];
 
     public ReferenceComputeOps(ComputeShader kernels, ITensorAllocator allocator = null)
     : base(allocator)
@@ -616,9 +684,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         {
             var asTexture = X.tensorOnDevice as TextureAsTensorData;
             if (asTexture != null)
-                X.PinToDeviceAndDownloadFromIt(TextureToTensorData(asTexture, X.name));
+                X.AttachToDevice(TextureToTensorData(asTexture, X.name));
             else
-                X.PinToDeviceAndUploadToIt(new ComputeTensorData(X.shape, X.name, ComputeInfo.channelsOrder));
+                X.UploadToDevice(new ComputeTensorData(X.shape, X.name, ComputeInfo.channelsOrder));
         }
 
         Assert.IsNotNull(X.tensorOnDevice as ComputeTensorData);
@@ -649,7 +717,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
     // ---------------------------------------------------------------------------------
 
-    protected ITensorData TextureToTensorData(TextureAsTensorData texData, string name)
+    internal ITensorData TextureToTensorData(TextureAsTensorData texData, string name)
     {
         var fn = new ComputeFunc(m_Kernels, "TextureToTensor");
         var tensorData = new ComputeTensorData(texData.shape, name, ComputeInfo.channelsOrder, false);
@@ -786,11 +854,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
-    static protected int IDivC(int v, int div)
-    {
-        return (v + div - 1) / div;
-    }
-
     private Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -810,7 +873,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, K.kernelCount, IDivC(Oshape.width, 2), IDivC(Oshape.height, 2));
+        var O = Dispatch(fn, Oshape, K.kernelCount, ComputeHelper.IDivC(Oshape.width, 2), ComputeHelper.IDivC(Oshape.height, 2));
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -851,10 +914,10 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
-    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
-            return base.DepthwiseConv2D(X, K, B, stride, pad);
+            return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
@@ -863,7 +926,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = X.shape.ApplyKernel(K.shape, stride, pad);
+        var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
         var fn = new ComputeFunc(m_Kernels, "DepthwiseConv2D");
 
@@ -872,11 +935,17 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "B", B);
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        return Dispatch(fn, O, K.kernelCount, O.width, O.height);
+        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
+
+        if (!IsFusedActivationSupported(fusedActivation))
+            O = Activation(fusedActivation.ToString(), O);
+
+        return O;
     }
 
-    public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -884,7 +953,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment);
+        var Oshape = X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment);
 
         // one pass version
         pad = new int[]
@@ -900,8 +969,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "B", B);
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        return Dispatch(fn, O, K.kernelCount, O.width, O.height);
+        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
+
+        if (!IsFusedActivationSupported(fusedActivation))
+            O = Activation(fusedActivation.ToString(), O);
+
+        return O;
     }
 
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
@@ -1119,8 +1194,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
     public override Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
-        // @TODO: GPU implementation
-        return base.LRN(X, alpha, beta, bias, size);
+        var O = X.shape;
+        var fn = new ComputeFunc(m_Kernels, "LRN");
+
+        SetTensor(fn, "X", X);
+        fn.shader.SetFloat("_Alpha", alpha);
+        fn.shader.SetFloat("_Beta",  beta);
+        fn.shader.SetFloat("_Epsilon",  bias);
+        fn.shader.SetInt("_Axis", size);
+
+        return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
     // @TODO: debug & fix
@@ -1588,7 +1671,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var fn = new ComputeFunc(m_Kernels, "Gather");
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", indices);
-        fn.shader.SetInts("_Axis", axis);
+        fn.shader.SetInt("_Axis", axis);
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
@@ -1602,16 +1685,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
     {
         Pin(X);
         return X;
-    }
-
-    public override void WaitForCompletion(Tensor x)
-    {
-        var data = x.tensorOnDevice as ComputeTensorData;
-
-        if (data != null)
-        {
-            data.buffer.GetData(m_SyncBuffer, 0, 0, 1);
-        }
     }
 }
 
@@ -1808,7 +1881,13 @@ public struct ComputeFunc
         if (x > SafeDispatchLimit || y > SafeDispatchLimit || z > SafeDispatchLimit)
             D.LogWarning($"Exceeded safe compute dispatch group count limit per dimension [{x}, {y}, {z}] for {kernelName}");
 
+
+        ComputeDebugUtils.PrepareDispatch();
+
         shader.Dispatch(kernelIndex, x, y, z);
+
+        ComputeDebugUtils.VerifyDispatch(kernelName);
+
         Profiler.EndSample();
     }
 

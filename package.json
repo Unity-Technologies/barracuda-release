@@ -1,7 +1,7 @@
 {
     "name": "com.unity.barracuda",
     "displayName": "Barracuda",
-    "version": "0.7.1-preview",
+    "version": "1.0.0",
     "unity": "2018.1",
     "description": "Barracuda is lightweight and cross-platform Neural Net inference library. Barracuda supports inference both on GPU and CPU.",
     "dependencies": {

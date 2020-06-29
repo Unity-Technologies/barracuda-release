@@ -1,5 +1,25 @@
 # Release notes
 
+## [1.0.0] - 2020-06-01
+- First verified release
+
+## [0.8.0] - 2020-05-28
+- Breaking change: API cleanup, number of internal implementation classes marked as `internal`.
+- API change: `IWorker.ExecuteAsync` renamed to `IWorker.StartManualSchedule`. `IWorker.ExecuteAsync` is marked as obsolete and will issue warning if used.
+- API change: `IWorker.WaitForCompletion` renamed to `IWorker.FlushSchedule`. `IWorker.WaitForCompletion` is marked as obsolete and will issue warning if used.
+- API change: `IWorker.GetAsyncProgress` renamed to `IWorker.scheduleProgress`. `IWorker.GetAsyncProgress` is marked as obsolete and will issue warning if used.
+- Performance: Introduced new CPU backend powered by Unity Burst compiler `CSharpBurst`. The new backend runs in parallel to the main thread and is roughly ~2x faster in Standalone and ~5x faster in the Editor. Prefer to use yield instruction `WaitForCompletion(output)` before accessing values of the output tensor to avoid blocking the main thread.
+- Performance: Improved `Conv2d` performance for smaller workloads.
+- Performance: Activation fusion is now supported with `Conv2DTrans` and `DepthwiseConv` layers.
+- Performance: Made Broadcast ops (`Add`, `Sub,`, `Mul`, `Div`, `Mean`) more efficient.
+- ONNX: Fixed `Tranpose` layer import for networks originating from Keras.
+- ONNX: Added `LRN` support.
+- ONNX: Convolutions now support `dilatation`.
+- Fix: Fixed multiple out of bounds reads and writes in compute shaders. Should improve stability on PS4, XB1, Metal and Vulkan platforms.
+- Fix: Fixed memory leak in ComputePrecompiled elementwise broadcast ops.
+- Fix: Fixed broadcast ops for none unit batches
+- Docs: Major documentation overhaul. 
+
 ## [0.7.1] - 2020-05-12
 - ONNX: Added DepthToSpace and SpaceToDepth support (*thanks to latentspace.co!*).
 - ONNX: Added Expand support (*thanks to latentspace.co!*).

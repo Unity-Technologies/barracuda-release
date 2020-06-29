@@ -80,10 +80,10 @@ public class ArrayTensorData : ITensorData
         return m_Array;
     }
 
-    public virtual int GetMaxCount()
+    public virtual int maxCapacity { get
     {
         return m_Array.Length;
-    }
+    } }
 
     public override string ToString()
     {
@@ -163,10 +163,10 @@ public class SharedArrayTensorData : ITensorData
         return m_Array;
     }
 
-    public virtual int GetMaxCount()
+    public virtual int maxCapacity { get
     {
         return m_Array.Length - m_Offset;
-    }
+    } }
 
     public override string ToString()
     {
@@ -200,6 +200,22 @@ public class ReferenceCPUOps : IOps
         return NewTensor(t.shape);
     }
 
+    protected Tensor NewTensorLike(Tensor[] tensors)
+    {
+        Assert.IsTrue(tensors.Length > 0);
+
+        var O = NewTensor(TensorExtensions.MaxShape(tensors));
+        foreach (var t in tensors)
+        {
+            Assert.IsTrue((t.batch    == 1) || (t.batch    == O.batch));
+            Assert.IsTrue((t.height   == 1) || (t.height   == O.height));
+            Assert.IsTrue((t.width    == 1) || (t.width    == O.width));
+            Assert.IsTrue((t.channels == 1) || (t.channels == O.channels));
+        }
+
+        return O;
+    }
+
     protected Tensor NewTensor(int b, int ch, string name = "")
     {
         return NewTensor(new TensorShape(b, ch), name);
@@ -215,7 +231,7 @@ public class ReferenceCPUOps : IOps
         m_Allocator.Reset(keepCachedMemory);
     }
 
-    protected float ApplyFusedActivation(float v, Layer.FusedActivation fusedActivation)
+    private float ApplyFusedActivation(float v, Layer.FusedActivation fusedActivation)
     {
         switch (fusedActivation)
         {
@@ -225,7 +241,7 @@ public class ReferenceCPUOps : IOps
                 v = Mathf.Max(v, 0.0f);
                 break;
             case Layer.FusedActivation.Tanh:
-                v = MathfEx.tanh(v);
+                v = MathfEx.Tanh(v);
                 break;
             case Layer.FusedActivation.Sin:
                 v = Mathf.Sin(v);
@@ -341,38 +357,19 @@ public class ReferenceCPUOps : IOps
 
                                 for (var c = 0; c < X.channels; ++c)
                                 {
-                                    float xv = X[n, oy, ox, c
-                                        //n  * X.height * X.width * X.channels +
-                                        //oy * X.width * X.channels +
-                                        //ox * X.channels +
-                                        //c  +
-                                        //X.offset
-                                    ];
-
-                                    float kv = K[dy, dx, c, k
-                                        //dy * K.height * K.width * K.channels +
-                                        //dx * K.width * K.channels +
-                                        //c  * K.channels +
-                                        //k  +
-                                        //K.offset
-                                    ];
+                                    float xv = X[n, oy, ox, c];
+                                    float kv = K[dy, dx, c, k];
 
                                     v += xv * kv;
                                 }
                             }
                         }
-                        O[n, y, x, k
-                            //n * O.height * O.width * O.channels +
-                            //y * O.width * O.channels +
-                            //x * O.channels +
-                            //k +
-                            //O.offset
-                        ] = ApplyFusedActivation(v, fusedActivation);
+                        O[n, y, x, k] = ApplyFusedActivation(v, fusedActivation);
                     }
         return O;
     }
 
-    public virtual Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    public virtual Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
             throw new NotImplementedException();
@@ -416,12 +413,12 @@ public class ReferenceCPUOps : IOps
                                 float kv = K[dy, dx, 0, k];
                                 v += xv * kv;
                             }
-                        O[n, y, x, k] = v;
+                        O[n, y, x, k] =  ApplyFusedActivation(v, fusedActivation);
                     }
         return O;
     }
 
-    public virtual Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    public virtual Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -465,7 +462,7 @@ public class ReferenceCPUOps : IOps
                                 }
                             }
 
-                        O[n, y, x, k] = v;
+                        O[n, y, x, k] = ApplyFusedActivation(v, fusedActivation);
                     }
         return O;
     }
@@ -948,7 +945,32 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
         // https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf
-        throw new NotImplementedException();
+        // However divide the sum by size to follow onnx and pytorch implementation
+        // ONNX https://github.com/onnx/onnx/blob/master/docs/Operators.md#LRN
+        // PYTORCH https://github.com/pytorch/pytorch/blob/1465970a343e61f2f2b104859ca7f5d7e03f5d02/torch/nn/functional.py#L2069
+        // Tensorflow don't and follow the paper to the letter https://github.com/tensorflow/tensorflow/blob/e6faa845c51bb69465146d93646947fd2ba53efa/tensorflow/python/kernel_tests/lrn_op_test.py#L53
+        // However they bake the division to alpha when exporting to ONNX https://github.com/onnx/tensorflow-onnx/blob/7c37ccb97e0fd478ce093910c4a1411b18e44fd7/tf2onnx/onnx_opset/math.py
+        var O = NewTensorLike(X);
+        float sizef = size;
+
+        for (int b = 0; b < X.batch; ++b)
+            for (int y = 0; y < X.height; ++y)
+                for (int x = 0; x < X.width; ++x)
+                    for (int c = 0; c < X.channels; ++c)
+                    {
+                        float regionCenter = (sizef - 1.0f) / 2.0f;
+                        int regionStart = Math.Max(0, c - (int)Mathf.Floor(regionCenter));
+                        int regionEnd = Math.Min(X.channels, c + (int)Mathf.Ceil(regionCenter)+1);
+                        float sumOfSquared = 0.0f;
+                        for (int ci = regionStart; ci < regionEnd; ++ci)
+                        {
+                            float regionValue = X[b, y, x, ci];
+                            sumOfSquared += regionValue * regionValue;
+                        }
+
+                        O[b, y, x, c] = X[b, y, x, c] / Mathf.Pow(bias + alpha * sumOfSquared / sizef, beta);
+                    }
+        return O;
     }
 
     public virtual Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
@@ -1201,19 +1223,16 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor Softmax(Tensor X)
     {
         var O = NewTensor(X.shape.Flatten());
+        Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         //e_x = np.exp(X - X.max(axis=1, keepdims=True))
         //X = e_x / e_x.sum(axis=1, keepdims=True)
         for (int y = 0; y < X.flatHeight; ++y)
         {
             float maxV = Mathf.NegativeInfinity;
-            for (int x = 0; x < X.channels; ++x)
+            for (int x = 0; x < X.flatWidth; ++x)
             {
-                float v = X[y, x
-                    //b * X.channels +
-                    //x +
-                    //X.offset
-                ];
+                float v = X[y, x];
 
                 if (v > maxV)
                     maxV = v;
@@ -1222,27 +1241,15 @@ public class ReferenceCPUOps : IOps
             float sum = 0.0f;
             for (int x = 0; x < X.flatWidth; ++x)
             {
-                float v = X[y, x
-                    // y * X.channels +
-                    // x +
-                    // X.offset
-                ];
+                float v = X[y, x];
                 sum += Mathf.Exp(v - maxV);
             }
 
             for (int x = 0; x < X.flatWidth; ++x)
             {
-                float v = X[y, x
-                    //y * X.channels +
-                    //x +
-                    //X.offset
-                ];
+                float v = X[y, x];
                 v = Mathf.Exp(v - maxV) / sum;
-                O[y, x
-                    //y * O.width +
-                    //x +
-                    //O.offset
-                ] = v;
+                O[y, x] = v;
             }
         }
 
@@ -1252,19 +1259,16 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor LogSoftmax(Tensor X)
     {
         var O = NewTensor(X.shape.Flatten());
+        Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         //e_x = np.exp(X - X.max(axis=1, keepdims=True))
         //X = log( e_x / e_x.sum(axis=1, keepdims=True) )
         for (int y = 0; y < X.flatHeight; ++y)
         {
             float maxV = Mathf.NegativeInfinity;
-            for (int x = 0; x < X.channels; ++x)
+            for (int x = 0; x < X.flatWidth; ++x)
             {
-                float v = X[y, x
-                    //b * X.channels +
-                    //x +
-                    //X.offset
-                ];
+                float v = X[y, x];
 
                 if (v > maxV)
                     maxV = v;
@@ -1273,27 +1277,15 @@ public class ReferenceCPUOps : IOps
             float sum = 0.0f;
             for (int x = 0; x < X.flatWidth; ++x)
             {
-                float v = X[y, x
-                    // y * X.channels +
-                    // x +
-                    // X.offset
-                ];
+                float v = X[y, x];
                 sum += Mathf.Exp(v - maxV);
             }
 
             for (int x = 0; x < X.flatWidth; ++x)
             {
-                float v = X[y, x
-                    //y * X.channels +
-                    //x +
-                    //X.offset
-                ];
+                float v = X[y, x];
                 v = Mathf.Log( Mathf.Exp(v - maxV) / sum );
-                O[y, x
-                    //y * O.width +
-                    //x +
-                    //O.offset
-                ] = v;
+                O[y, x] = v;
             }
         }
 
@@ -1308,7 +1300,7 @@ public class ReferenceCPUOps : IOps
         var end = X.length;
         for (int i = 0; i < end; ++i)
         {
-            O[i] = MathfEx.tanh(X[i]);
+            O[i] = MathfEx.Tanh(X[i]);
         }
         return O;
     }
@@ -1596,7 +1588,8 @@ public class ReferenceCPUOps : IOps
 
         var srcIndices = new long[tensors.Length];
         for (int i = 0; i < tensors.Length; ++i)
-            srcIndices[i] = tensors[i].readonlyArrayOffset;
+            srcIndices[i] = 0; // NOTE: once we have Tensor.ToReadOnlyArray(ref arrayOffset),
+                               // will need to initialize srcIndices[i] = arrayOffset;
 
         // product of all tensor dimensions starting from axis
         var copyBlockLengths = new long[tensors.Length];
@@ -1613,7 +1606,7 @@ public class ReferenceCPUOps : IOps
             {
                 var copyLength = copyBlockLengths[i];
 
-                Array.Copy(tensors[i].readonlyArray, srcIndices[i], // from
+                Array.Copy(tensors[i].ToReadOnlyArray(), srcIndices[i], // from
                     dstArray, dstIndex, copyLength);                // to
 
                 srcIndices[i] += copyLength;
@@ -1668,7 +1661,7 @@ public class ReferenceCPUOps : IOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float, float, float> operation)
     {
-        var O = GetOutputTensorFromBroadcast(tensors);
+        var O = NewTensorLike(tensors);
         var A = tensors[0];
         for (int t = 1; t < tensors.Length; ++t)
         {
@@ -1751,7 +1744,7 @@ public class ReferenceCPUOps : IOps
         // div by N
         var invN = 1.0f / tensors.Length;
         var end = O.length;
-        for (int i = 0; i < O.length; ++i)
+        for (int i = 0; i < end; ++i)
         {
             float v = O[i];
             v *= invN;
@@ -1860,25 +1853,9 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
-    private Tensor GetOutputTensorFromBroadcast(Tensor[] tensors)
-    {
-        Assert.IsTrue(tensors.Length > 0);
-
-        var O = NewTensor(TensorExtensions.MaxShape(tensors));
-        foreach (var t in tensors)
-        {
-            Assert.IsTrue((t.batch    == 1) || (t.batch    == O.batch));
-            Assert.IsTrue((t.height   == 1) || (t.height   == O.height));
-            Assert.IsTrue((t.width    == 1) || (t.width    == O.width));
-            Assert.IsTrue((t.channels == 1) || (t.channels == O.channels));
-        }
-
-        return O;
-    }
-
     private Tensor ApplyLogicalOperator(Tensor tensorA, Tensor tensorB, Func<float, float, float> logicOp)
     {
-        var O = GetOutputTensorFromBroadcast(new Tensor[] { tensorA, tensorB });
+        var O = NewTensorLike(new Tensor[] { tensorA, tensorB });
         for (int b = 0; b < O.shape.batch; ++b)
         {
             for (int h = 0; h < O.shape.height; ++h)
@@ -2062,32 +2039,27 @@ public class ReferenceCPUOps : IOps
         X.PrepareCacheForAccess();
         return X;
     }
-
-    public virtual void WaitForCompletion(Tensor x)
-    {
-        // do nothing on CPU
-    }
 }
 
-    public class MathfEx
+internal class MathfEx
+{
+    internal static float Tanh(float x)
     {
-        public static float tanh(float x)
-        {
-            // tanh = (exp(2*x) - 1) / (exp(2*x) + 1)
+        // tanh = (exp(2*x) - 1) / (exp(2*x) + 1)
 
-            // Constant taken from http://llvm.org/svn/llvm-project/libclc/trunk/generic/lib/math/tanh.cl
-            // const float large_threshold = 0x1.0a2b24p+3f;
-            const float LargeThreshold = 8.317766f;
+        // Constant taken from http://llvm.org/svn/llvm-project/libclc/trunk/generic/lib/math/tanh.cl
+        // const float large_threshold = 0x1.0a2b24p+3f;
+        const float LargeThreshold = 8.317766f;
 
-            // See also: https://stackoverflow.com/questions/34835641/tanh-returning-nan-for-large-input
+        // See also: https://stackoverflow.com/questions/34835641/tanh-returning-nan-for-large-input
 
-            // Handle edge-cases to prevent NaNs creeping in
-            if (x >= LargeThreshold || x <= -LargeThreshold)
-                return Mathf.Sign(x);
+        // Handle edge-cases to prevent NaNs creeping in
+        if (x >= LargeThreshold || x <= -LargeThreshold)
+            return Mathf.Sign(x);
 
-            float exp2 = Mathf.Exp(2f * x);
-            return (exp2 - 1f) / (exp2 + 1f);
-        }
+        float exp2 = Mathf.Exp(2f * x);
+        return (exp2 - 1f) / (exp2 + 1f);
     }
+}
 
 } // namespace Unity.Barracuda

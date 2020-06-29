@@ -1,5 +1,3 @@
-using System;
-using UnityEngine;
 using System.Collections.Generic;
 
 namespace Unity.Barracuda {
@@ -27,11 +25,6 @@ public class VerboseOps : IOps, IModelCompiler
             ((IModelCompiler)m_Ops).PreExecuteLayer(layer, inputs);
     }
 
-    public virtual void WaitForCompletion(Tensor x)
-    {
-        m_Ops.WaitForCompletion(x);
-    }
-
     Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         D.Log("(" + X.flatHeight + "," + X.flatWidth + ")" + (xTranspose?".T":"") +
@@ -54,17 +47,17 @@ public class VerboseOps : IOps, IModelCompiler
         O.PrintDataPart(32, Prefix + "Conv2D");
         return O;
     }
-    Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         D.Log(X.shape + " ∆ " + K.shape + " + (" + B.flatWidth + ")");
-        var O = m_Ops.DepthwiseConv2D(X, K, B, stride, pad);
+        var O = m_Ops.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
         O.PrintDataPart(32, Prefix + "DepthwiseConv2D");
         return O;
     }
-    Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment)
+    Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         D.Log(X.shape + " @ " + K.shape + " + (" + B.flatWidth + ")");
-        var O = m_Ops.Conv2DTrans(X, K, B, stride, pad, outputAdjustment);
+        var O = m_Ops.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
         O.PrintDataPart(32, Prefix + "Conv2DTrans");
         return O;
     }

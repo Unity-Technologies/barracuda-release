@@ -21,7 +21,7 @@ float _Beta;
 NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
 void KERNEL_FUNC(Border2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -61,7 +61,7 @@ void ClampHWToTensorShape(uint2 Xshape, inout int height, inout int width)
 NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
 void KERNEL_FUNC(Pad2DEdge)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -88,7 +88,7 @@ void KERNEL_FUNC(Pad2DEdge)(uint3 dispatchThreadID : SV_DispatchThreadID)
 NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
 void KERNEL_FUNC(Pad2DReflect)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;
@@ -127,7 +127,7 @@ void KERNEL_FUNC(Pad2DReflect)(uint3 dispatchThreadID : SV_DispatchThreadID)
 NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
 void KERNEL_FUNC(Pad2DSymmetric)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    DISPATCH_ARGS(O.channels, O.width, O.height);
+    //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
 
     uint c = dispatchThreadID.x;

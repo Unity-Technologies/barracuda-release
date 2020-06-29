@@ -28,6 +28,8 @@ public class ModelOptimizer
     {
         return layerType == Layer.Type.Dense ||
                layerType == Layer.Type.Conv2D ||
+               layerType == Layer.Type.DepthwiseConv2D ||
+               layerType == Layer.Type.Conv2DTrans ||
                layerType == Layer.Type.Normalization;
     }
 

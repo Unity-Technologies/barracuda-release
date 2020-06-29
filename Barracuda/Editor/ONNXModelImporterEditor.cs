@@ -62,9 +62,27 @@ public class NNModelEditor : Editor
     private Vector2 m_ConstantScrollPosition = Vector2.zero;
     private const float k_Space = 5f;
 
+    private Texture2D m_IconTexture;
+    private Texture2D LoadIconTexture()
+    {
+        if (m_IconTexture != null)
+            return m_IconTexture;
+
+        string[] allCandidates = AssetDatabase.FindAssets(ONNXModelImporter.iconName);
+        if (allCandidates.Length > 0)
+            m_IconTexture = AssetDatabase.LoadAssetAtPath(AssetDatabase.GUIDToAssetPath(allCandidates[0]), typeof(Texture2D)) as Texture2D;
+
+        return m_IconTexture;
+    }
+    public override Texture2D RenderStaticPreview(string assetPath, UnityEngine.Object[] subAssets, int width, int height)
+    {
+        Texture2D tex = new Texture2D(width, height);
+        EditorUtility.CopySerialized(LoadIconTexture(), tex);
+        return tex;
+    }
+
     void OnEnable()
     {
-        // TODO: investigate perf -- method takes 1s the first time you click on the model in the UI
         var nnModel = target as NNModel;
         if (nnModel == null)
             return;
