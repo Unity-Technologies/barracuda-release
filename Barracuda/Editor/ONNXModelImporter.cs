@@ -422,6 +422,8 @@ namespace Unity.Barracuda
             Add("Relu", (net, node)     => { net.Relu(node.Name, node.Input0); });
             Add("Softmax", (net, node)  => { net.Softmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
             Add("Tanh", (net, node)     => { net.Tanh(node.Name, node.Input0); });
+            Add("Sin", (net, node)     => { net.Sin(node.Name, node.Input0); });
+            Add("Cos", (net, node)     => { net.Cos(node.Name, node.Input0); });
             Add("Sqrt", (net, node)     => { net.Sqrt(node.Name, node.Input0); });
             Add("Sigmoid", (net, node)  => { net.Sigmoid(node.Name, node.Input0); });
             Add("Elu", (net, node)      => { net.Elu(node.Name, node.Input0, node.AlphaOptional(1f)); });

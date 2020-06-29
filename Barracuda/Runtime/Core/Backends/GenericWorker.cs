@@ -659,6 +659,14 @@ public class GenericWorker : IWorker
                 {
                     X = m_Ops.Tanh(X);
                 }
+                else if (l.activation == Layer.Activation.Sin)
+                {
+                    X = m_Ops.Sin(X);
+                }
+                else if (l.activation == Layer.Activation.Cos)
+                {
+                    X = m_Ops.Cos(X);
+                }
                 else if (l.activation == Layer.Activation.Sigmoid)
                 {
                     X = m_Ops.Sigmoid(X);

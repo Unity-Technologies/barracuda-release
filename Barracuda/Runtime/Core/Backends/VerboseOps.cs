@@ -245,6 +245,20 @@ public class VerboseOps : IOps, IModelCompiler
         O.PrintDataPart(32, Prefix + "Tanh");
         return O;
     }
+    Tensor IOps.Sin(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Sin(X);
+        O.PrintDataPart(32, Prefix + "Sin");
+        return O;
+    }
+    Tensor IOps.Cos(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Cos(X);
+        O.PrintDataPart(32, Prefix + "Cos");
+        return O;
+    }
     Tensor IOps.Sigmoid(Tensor X)
     {
         D.Log(X.shape + " ()");

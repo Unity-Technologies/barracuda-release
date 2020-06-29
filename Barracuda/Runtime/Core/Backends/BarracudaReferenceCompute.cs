@@ -1195,6 +1195,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Tanh", X);
     }
 
+    public override Tensor Sin(Tensor X)
+    {
+        return Activation("Sin", X);
+    }
+
+    public override Tensor Cos(Tensor X)
+    {
+        return Activation("Cos", X);
+    }
+
     public override Tensor Sigmoid(Tensor X)
     {
         return Activation("Sigmoid", X);

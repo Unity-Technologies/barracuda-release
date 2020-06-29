@@ -250,6 +250,16 @@ public class StatsOps : IOps, IModelCompiler
         Elementwise(X, Transcendental.Trigonometric);
         return m_Ops.Tanh(X);
     }
+    Tensor IOps.Sin(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Sin(X);
+    }
+    Tensor IOps.Cos(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Cos(X);
+    }
     Tensor IOps.Sigmoid(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);

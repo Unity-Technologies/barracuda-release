@@ -60,6 +60,10 @@
 #pragma kernel LogSoftmax_NCHW CHANNELS_FIRST=1
 #pragma kernel Tanh_NHWC CHANNELS_FIRST=0
 #pragma kernel Tanh_NCHW CHANNELS_FIRST=1
+#pragma kernel Sin_NHWC CHANNELS_FIRST=0
+#pragma kernel Sin_NCHW CHANNELS_FIRST=1
+#pragma kernel Cos_NHWC CHANNELS_FIRST=0
+#pragma kernel Cos_NCHW CHANNELS_FIRST=1
 #pragma kernel Sigmoid_NHWC CHANNELS_FIRST=0
 #pragma kernel Sigmoid_NCHW CHANNELS_FIRST=1
 #pragma kernel Relu6_NHWC CHANNELS_FIRST=0
@@ -412,6 +416,42 @@ void KERNEL_FUNC(Tanh)(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         float v = X.Get(n, y, x, c);
         v = tanh(clamp(v,-16.0f,16.0f));//clamp to avoid NaNs for large values.
+
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4,4,4)]
+void KERNEL_FUNC(Sin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = sin(v);
+
+        O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4,4,4)]
+void KERNEL_FUNC(Cos)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    DISPATCH_ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = cos(v);
 
         O.Set(n, y, x, c, v);
     }

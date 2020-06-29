@@ -227,6 +227,12 @@ public class ReferenceCPUOps : IOps
             case Layer.FusedActivation.Tanh:
                 v = MathfEx.tanh(v);
                 break;
+            case Layer.FusedActivation.Sin:
+                v = Mathf.Sin(v);
+                break;
+            case Layer.FusedActivation.Cos:
+                v = Mathf.Cos(v);
+                break;
             case Layer.FusedActivation.Sigmoid:
                 v = 1f / (1f + Mathf.Exp(-v));
                 break;
@@ -1303,6 +1309,32 @@ public class ReferenceCPUOps : IOps
         for (int i = 0; i < end; ++i)
         {
             O[i] = MathfEx.tanh(X[i]);
+        }
+        return O;
+    }
+
+    public virtual Tensor Sin(Tensor X)
+    {
+        // f(x) = sin(x)
+        var O = NewTensorLike(X);
+
+        var end = X.length;
+        for (int i = 0; i < end; ++i)
+        {
+            O[i] = Mathf.Sin(X[i]);
+        }
+        return O;
+    }
+
+    public virtual Tensor Cos(Tensor X)
+    {
+        // f(x) = cos(x)
+        var O = NewTensorLike(X);
+
+        var end = X.length;
+        for (int i = 0; i < end; ++i)
+        {
+            O[i] = Mathf.Cos(X[i]);
         }
         return O;
     }

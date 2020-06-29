@@ -100,6 +100,8 @@ public class Layer
         None = Activation.None,
         Relu = Activation.Relu,
         Tanh = Activation.Tanh,
+        Sin = Activation.Sin,
+        Cos = Activation.Cos,
         Sigmoid = Activation.Sigmoid,
         Relu6 = Activation.Relu6,
         Swish = Activation.Swish,

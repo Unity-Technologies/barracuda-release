@@ -44,6 +44,8 @@ public interface IOps
     Tensor Softmax(Tensor x);
     Tensor LogSoftmax(Tensor x);
     Tensor Tanh(Tensor x);
+    Tensor Sin(Tensor x);
+    Tensor Cos(Tensor x);
     Tensor Sigmoid(Tensor x);
     Tensor Elu(Tensor x, float alpha);
     Tensor Relu6(Tensor x);

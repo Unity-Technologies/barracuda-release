@@ -618,6 +618,22 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Element-wise `Sin` activation function: f(x) = sin(x)
+        /// </summary>
+        public Layer Sin(string name, object input)
+        {
+            return Activation(Layer.Activation.Sin, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Cos` activation function: f(x) = cos(x)
+        /// </summary>
+        public Layer Cos(string name, object input)
+        {
+            return Activation(Layer.Activation.Cos, name, input);
+        }
+
+        /// <summary>
         /// Element-wise `Sigmoid` activation function: f(x) = 1/(1 + e^{-x})
         /// </summary>
         public Layer Sigmoid(string name, object input)

@@ -256,6 +256,20 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Tanh);
         return Y;
     }
+    Tensor IOps.Sin(Tensor X)
+    {
+        var Y = m_Ops1.Sin(X);
+        var Z = m_Ops2.Sin(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sin);
+        return Y;
+    }
+    Tensor IOps.Cos(Tensor X)
+    {
+        var Y = m_Ops1.Cos(X);
+        var Z = m_Ops2.Cos(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Cos);
+        return Y;
+    }
     Tensor IOps.Sigmoid(Tensor X)
     {
         var Y = m_Ops1.Sigmoid(X);
