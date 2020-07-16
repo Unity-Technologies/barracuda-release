@@ -3,7 +3,12 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using UnityEditor;
+#if UNITY_2020_2_OR_NEWER
+using UnityEditor.AssetImporters;
 using UnityEditor.Experimental.AssetImporters;
+#else
+using UnityEditor.Experimental.AssetImporters;
+#endif
 using UnityEngine;
 using System;
 
