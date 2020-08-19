@@ -6,7 +6,7 @@ The Barracuda package is a lightweight cross-platform [neural network](https://e
 
 Barracuda can run neural networks on both the GPU and CPU. For details, see [Supported platforms](SupportedPlatforms.md).
 
-Currently Barracuda is production-ready for use with [machine learning (ML) agents](https://github.com/Unity-Technologies/ml-agents) and [some other network architectures](SupportedArchitectures.md). When you use Barracuda in other scenarios, it is in the preview development stage.
+Currently Barracuda is production-ready for use with [machine learning (ML) agents](https://github.com/Unity-Technologies/ml-agents) and number of [other network architectures](SupportedArchitectures.md). When you use Barracuda in other scenarios, it is in the preview development stage.
 
 # Getting started
 This documentation assumes that you are familiar with neural networks and have already trained a network that needs to be integrated into a Unity-based project. 

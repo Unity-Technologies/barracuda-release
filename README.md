@@ -1,4 +1,4 @@
-![Image description](Documentation~/images/barracuda-landing-image.png)
+![Image description](Documentation~/images/BarracudaLanding.png)
 
 # Unity Barracuda
 

@@ -1,5 +1,9 @@
 # Release notes
 
+## [1.0.2] - 2020-07-30
+- Upgraded Burst dependency to 1.3.4.
+- Docs: Minor fixes. 
+
 ## [1.0.1] - 2020-07-02
 - Fix in regard to package dependencies for Unity 2020.2 and newer.
 
