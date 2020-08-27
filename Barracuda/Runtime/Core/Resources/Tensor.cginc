@@ -124,6 +124,22 @@ struct Tensor
             i;
         return index;
     }
+
+    void GetPositionFromIndexNCHW(uint index, out uint n, out uint h, out uint w, out uint c)
+    {
+        w = index % width;
+        h = (index / width) % height;
+        c = (index / (width * height)) % channels;
+        n = (index / (width * height * channels)) % batch;
+    }
+
+    void GetPositionFromIndexNHWC(uint index, out uint n, out uint h, out uint w, out uint c)
+    {
+        c = index % channels;
+        w = (index / channels) % width;
+        h = (index / (channels * width)) % height;
+        n = (index / (channels * width * height)) % batch;
+    }
 };
 
 struct ReadonlyTensor : Tensor

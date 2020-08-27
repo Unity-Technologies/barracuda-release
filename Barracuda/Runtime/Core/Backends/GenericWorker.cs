@@ -139,7 +139,7 @@ public class GenericWorker : IWorker
     }
 
     public virtual float scheduleProgress
-    {   
+    {
         get
         {
             return m_Progress;
@@ -201,6 +201,13 @@ public class GenericWorker : IWorker
                 Assert.AreEqual(inputs.Length, 3);
                 Profiler.BeginSample ("Barracuda.Dense");
                 X = m_Ops.Dense(X, inputs[1], inputs[2], GetAndVerifyFusedActivation(l));
+            }
+            // MatMul
+            else if (l.type == Layer.Type.MatMul)
+            {
+                Assert.AreEqual(inputs.Length, 2);
+                Profiler.BeginSample ("Barracuda.MatMul");
+                X = m_Ops.MatMul(X, false, inputs[1], false);
             }
             // 2D
             else if (l.type == Layer.Type.Conv2D)
@@ -428,6 +435,21 @@ public class GenericWorker : IWorker
                 float on = l.alpha, off = l.beta;
                 X = m_Ops.OneHot(X, depth, on, off);
             }
+            else if (l.type == Layer.Type.TopKIndices)
+            {
+                Profiler.BeginSample ("Barracuda.TopKIndices");
+
+                bool largest = (l.pad[0] == 1);
+                bool sorted = (l.pad[1] == 1);
+
+                X = m_Ops.TopKIndices(X, (int)inputs[1][0], l.axis, largest, sorted);
+            }
+            else if (l.type == Layer.Type.TopKValues)
+            {
+                Profiler.BeginSample ("Barracuda.TopKValues");
+
+                X = m_Ops.TopKValues(X, inputs[1], l.axis);
+            }
             // Broadcast layers
             else if (l.type == Layer.Type.Add)
             {
@@ -478,35 +500,36 @@ public class GenericWorker : IWorker
                 X = m_Ops.Mean(inputs);
             }
             // Reduction layers
-            else if (l.type == Layer.Type.ReduceMax)
+            else if (l.type == Layer.Type.ReduceMax  || 
+                     l.type == Layer.Type.ReduceMean ||
+                     l.type == Layer.Type.ReduceMin  ||
+                     l.type == Layer.Type.ReduceProd ||
+                     l.type == Layer.Type.ReduceSum)
             {
-                Profiler.BeginSample ("Barracuda.ReduceMax");
+                Profiler.BeginSample ("Barracuda.Reduce");
 
-                X = m_Ops.ReduceMax(X, l.axis);
-            }
-            else if (l.type == Layer.Type.ReduceMean)
-            {
-                Profiler.BeginSample ("Barracuda.ReduceMean");
+                if(X.shape[l.axis] == 1)
+                    break;
 
-                X = m_Ops.ReduceMean(X, l.axis);
-            }
-            else if (l.type == Layer.Type.ReduceMin)
-            {
-                Profiler.BeginSample ("Barracuda.ReduceMin");
-
-                X = m_Ops.ReduceMin(X, l.axis);
-            }
-            else if (l.type == Layer.Type.ReduceProd)
-            {
-                Profiler.BeginSample ("Barracuda.ReduceProd");
-
-                X = m_Ops.ReduceProd(X, l.axis);
-            }
-            else if (l.type == Layer.Type.ReduceSum)
-            {
-                Profiler.BeginSample ("Barracuda.ReduceSum");
-
-                X = m_Ops.ReduceSum(X, l.axis);
+                var Xshape = X.shape;
+                switch (l.type)
+                {
+                    case Layer.Type.ReduceMax:
+                        X = m_Ops.ReduceMax(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceMean:
+                        X = m_Ops.ReduceMean(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceMin:
+                        X = m_Ops.ReduceMin(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceProd:
+                        X = m_Ops.ReduceProd(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceSum:
+                        X = m_Ops.ReduceSum(X, l.axis);
+                        break;
+                }
             }
             else if (
                 l.type == Layer.Type.ReduceL1 ||
@@ -600,14 +623,19 @@ public class GenericWorker : IWorker
                 var newShape = l.pool;
 
                 Assert.IsNotNull(newShape);
-                Assert.AreEqual(newShape.Length, 4);
+                Assert.IsTrue(newShape.Length == 8 || newShape.Length == 4);
 
                 X = m_Ops.Expand(X, new TensorShape(newShape));
             }
             else if (l.type == Layer.Type.Transpose)
             {
                 Profiler.BeginSample ("Barracuda.Transpose");
-                X = m_Ops.Transpose(X);
+
+                var permutations = l.pool;
+                if (permutations == null)
+                    X = m_Ops.Transpose(X);
+                else
+                    X = m_Ops.Transpose(X, permutations);
             }
             else if (l.type == Layer.Type.Gather)
             {
@@ -735,10 +763,49 @@ public class GenericWorker : IWorker
                 {
                     X = m_Ops.Sqrt(X);
                 }
-                else if ((int)l.activation >= (int)Layer.Activation.Acos &&
-                    (int)l.activation <= (int)Layer.Activation.Tan)
+                else if (l.activation == Layer.Activation.Acos)
                 {
-                    throw new NotImplementedException("Trig functions are not implemented yet!");
+                    X = m_Ops.Acos(X);
+                }
+                else if (l.activation == Layer.Activation.Acosh)
+                {
+                    X = m_Ops.Acosh(X);
+                }
+                else if (l.activation == Layer.Activation.Asin)
+                {
+                    X = m_Ops.Asin(X);
+                }
+                else if (l.activation == Layer.Activation.Asinh)
+                {
+                    X = m_Ops.Asinh(X);
+                }
+                else if (l.activation == Layer.Activation.Atan)
+                {
+                    X = m_Ops.Atan(X);
+                }
+                else if (l.activation == Layer.Activation.Atanh)
+                {
+                    X = m_Ops.Atanh(X);
+                }
+                else if (l.activation == Layer.Activation.Cos)
+                {
+                    X = m_Ops.Cos(X);
+                }
+                else if (l.activation == Layer.Activation.Cosh)
+                {
+                    X = m_Ops.Cosh(X);
+                }
+                else if (l.activation == Layer.Activation.Sin)
+                {
+                    X = m_Ops.Sin(X);
+                }
+                else if (l.activation == Layer.Activation.Sinh)
+                {
+                    X = m_Ops.Sinh(X);
+                }
+                else if (l.activation == Layer.Activation.Tan)
+                {
+                    X = m_Ops.Tan(X);
                 }
                 else
                 {

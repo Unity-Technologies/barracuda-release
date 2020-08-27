@@ -1,5 +1,25 @@
 # Release notes
 
+## [1.1.0] - 2020-08-20
+- Performance: Linear Layer Fusing for `Add/Mul/Conv/Dense/ScaleBias` ops.
+- Performance: Improved `InstanceNorm` performance.
+- Performance: Trigonometric activations now could be fused with some layers.
+- Improvement: Now `Transpose` should work in most generic use cases.
+- Improvement: ONNX importer moved to the runtime, now it's possible to directly load ONNX at runtime. Look for `ONNXModelConverter`.
+- Improvement: Added basic 8D tensor support. Work in progress.
+- Improvement: Faster Broadcast ops.
+- ONNX: Improved trigonometric activation support.
+- ONNX: Added `Conv1D` pad/strides/dilatations support.
+- ONNX: Added `MaxPool 1D` support.
+- ONNX: Added support for dynamic `MatMul`.
+- ONNX: Added `TopK` support.
+- ONNX: MatMul can be called with dynamic inputs.
+- Fix: Now `NNModelEditor.RenderStaticPreview` should not throw exceptions when Barracuda package is referenced via filesystem on Unity 2018.4.x. 
+- Fix: Fixed `Concat` behaviour with unusual axis spec.
+- Fix: Fixed `ConvTranspose` when used with `ComputePrecompiled`.
+- Fix: Fixed `Concat` when used with `ComputePrecompiled`.
+- Fix: Fixed issue for some `Squeeze/Unsqueeze` + `ReduceOp` combinations.
+
 ## [1.0.2] - 2020-07-30
 - Upgraded Burst dependency to 1.3.4.
 - Docs: Minor fixes. 
@@ -389,3 +409,4 @@ Python script is not needed to import ONNX models anymore. When loading from scr
 - Paulius Puodžiūnas
 - Florent Guinier
 - Alexandre Ribard
+- Amir Ebrahimi

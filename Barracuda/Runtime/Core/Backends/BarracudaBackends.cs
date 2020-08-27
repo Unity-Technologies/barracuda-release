@@ -36,6 +36,8 @@ public interface IOps
     Tensor RandomUniform(TensorShape s, float mean, float scale, int seed);
     Tensor Multinomial(Tensor x, int count, int seed);
     Tensor OneHot(Tensor x, int depth, float onValue, float offValue);
+    Tensor TopKIndices(Tensor x, int k, int axis, bool largest, bool sorted);
+    Tensor TopKValues(Tensor X, Tensor I, int axis);
 
     Tensor Relu(Tensor x);
     Tensor Softmax(Tensor x);
@@ -59,6 +61,17 @@ public interface IOps
     Tensor Exp(Tensor x);
     Tensor Log(Tensor x);
     Tensor Sqrt(Tensor x);
+    Tensor Acos(Tensor x);
+    Tensor Acosh(Tensor x);
+    Tensor Asin(Tensor x);
+    Tensor Asinh(Tensor x);
+    Tensor Atan(Tensor x);
+    Tensor Atanh(Tensor x);
+    Tensor Cos(Tensor x);
+    Tensor Cosh(Tensor x);
+    Tensor Sin(Tensor x);
+    Tensor Sinh(Tensor x);
+    Tensor Tan(Tensor x);
 
     Tensor Add(Tensor[] tensors);
     Tensor Sub(Tensor[] tensors);
@@ -89,7 +102,7 @@ public interface IOps
     Tensor Reshape(Tensor x, TensorShape shape);
     Tensor Expand(Tensor x, TensorShape shape);
     Tensor Transpose(Tensor x);
-
+    Tensor Transpose(Tensor x, int[] permutations);
     Tensor Concat(Tensor[] tensors, int axis);
     Tensor StridedSlice(Tensor x, int[] starts, int[] ends, int[] stride);
     Tensor Tile(Tensor x, int[] repeats);

@@ -1,6 +1,7 @@
 using System;
 using System.Linq; // Select
 using System.Collections.Generic;
+using UnityEngine.Assertions;
 
 namespace Unity.Barracuda {
 
@@ -41,6 +42,8 @@ public class Layer
         RandomUniform = 65,
         Multinomial = 66,
         OneHot = 67,
+        TopKIndices = 68,
+        TopKValues = 69,
 
         Add = 100,
         Sub = 101,
@@ -106,7 +109,18 @@ public class Layer
         Neg = Activation.Neg,
         Sqrt = Activation.Sqrt,
         Exp = Activation.Exp,
-        Log = Activation.Log
+        Log = Activation.Log,
+        Acos = Activation.Acos,
+        Acosh = Activation.Acosh,
+        Asin = Activation.Asin,
+        Asinh = Activation.Asinh,
+        Atan = Activation.Atan,
+        Atanh = Activation.Atanh,
+        Cos = Activation.Cos,
+        Cosh = Activation.Cosh,
+        Sin = Activation.Sin,
+        Sinh = Activation.Sinh,
+        Tan = Activation.Tan
     }
 
     public enum Activation
@@ -144,17 +158,17 @@ public class Layer
         Exp = 113,
         Log = 114,
 
-        Acos = 200,                 // TODO: NOT IMPLEMENTED
-        Acosh = 201,                // TODO: NOT IMPLEMENTED
-        Asin = 202,                 // TODO: NOT IMPLEMENTED
-        Asinh = 203,                // TODO: NOT IMPLEMENTED
-        Atan = 204,                 // TODO: NOT IMPLEMENTED
-        Atanh = 205,                // TODO: NOT IMPLEMENTED
-        Cos = 206,                  // TODO: NOT IMPLEMENTED
-        Cosh = 207,                 // TODO: NOT IMPLEMENTED
-        Sin = 208,                  // TODO: NOT IMPLEMENTED
-        Sinh = 209,                 // TODO: NOT IMPLEMENTED
-        Tan = 210                   // TODO: NOT IMPLEMENTED
+        Acos = 200,
+        Acosh = 201,
+        Asin = 202,
+        Asinh = 203,
+        Atan = 204,
+        Atanh = 205,
+        Cos = 206,
+        Cosh = 207,
+        Sin = 208,
+        Sinh = 209,
+        Tan = 210
     }
 
     public enum AutoPad
@@ -232,11 +246,19 @@ public class Layer
             Replace("alpha:1, ", "").Replace("beta:0, ", "").Replace("axis:-1, ", "").
             Replace("weights:[]", "");
     }
+
+    public Tensor DataSetToTensor(int index)
+    {
+        Assert.IsTrue(index < datasets.Length);
+        var ds = datasets[index];
+        return new Tensor(ds.shape, new SharedArrayTensorData(weights, (int)ds.offset, (int)ds.shape.length), ds.name);
+    }
 }
 
 public class Model
 {
-    public const int Version = 16;
+    public const int Version = 17;
+    internal const int LastVersionWithout8DSupport = 16;
 
     public struct Input
     {
@@ -344,6 +366,11 @@ public static class ModelMetadataExtensions
         }
 
         throw new System.Collections.Generic.KeyNotFoundException("Shape " + name + " not found!");
+    }
+
+    static public int GetDownStreamLayersCount(this Model model, string name)
+    {
+        return model.layers.Count(x => x.inputs.Contains(name));
     }
 }
 

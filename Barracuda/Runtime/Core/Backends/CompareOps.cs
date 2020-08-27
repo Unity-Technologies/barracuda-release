@@ -222,6 +222,22 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
+    {
+        var Y = m_Ops1.TopKIndices(X, k, axis, largest, sorted);
+        var Z = m_Ops2.TopKIndices(X, k, axis, largest, sorted);
+        CheckSame(Y, Z, Layer.Type.TopKIndices);
+        return Y;
+    }
+
+    public Tensor TopKValues(Tensor X, Tensor I, int axis)
+    {
+        var Y = m_Ops1.TopKValues(X, I, axis);
+        var Z = m_Ops2.TopKValues(X, I, axis);
+        CheckSame(Y, Z, Layer.Type.TopKValues);
+        return Y;
+    }
+
     Tensor IOps.Relu(Tensor X)
     {
         var Y = m_Ops1.Relu(X);
@@ -371,7 +387,83 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sqrt);
         return Y;
     }
-
+    Tensor IOps.Acos(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Acos);
+        return Y;
+    }
+    Tensor IOps.Acosh(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Acosh);
+        return Y;
+    }
+    Tensor IOps.Asin(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Asin);
+        return Y;
+    }
+    Tensor IOps.Asinh(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Asinh);
+        return Y;
+    }
+    Tensor IOps.Atan(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Atan);
+        return Y;
+    }
+    Tensor IOps.Atanh(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Atanh);
+        return Y;
+    }
+    Tensor IOps.Cos(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Cos);
+        return Y;
+    }
+    Tensor IOps.Cosh(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Cosh);
+        return Y;
+    }
+    Tensor IOps.Sin(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sin);
+        return Y;
+    }
+    Tensor IOps.Sinh(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sinh);
+        return Y;
+    }
+    Tensor IOps.Tan(Tensor X)
+    {
+        var Y = m_Ops1.Floor(X);
+        var Z = m_Ops2.Floor(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Tan);
+        return Y;
+    }
     Tensor IOps.Add(Tensor[] tensors)
     {
         var Y = m_Ops1.Add(tensors);
@@ -555,6 +647,13 @@ public class CompareOps : IOps, IModelCompiler
     {
         var Y = m_Ops1.Transpose(X);
         var Z = m_Ops2.Transpose(X);
+        CheckSame(Y, Z, Layer.Type.Transpose);
+        return Y;
+    }
+    Tensor IOps.Transpose(Tensor X, int[] permutations)
+    {
+        var Y = m_Ops1.Transpose(X, permutations);
+        var Z = m_Ops2.Transpose(X, permutations);
         CheckSame(Y, Z, Layer.Type.Transpose);
         return Y;
     }

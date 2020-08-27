@@ -227,6 +227,19 @@ public class StatsOps : IOps, IModelCompiler
         // @TODO: not implemented
         return O;
     }
+    Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
+    {
+        var O = m_Ops.TopKIndices(X, k, axis, largest, sorted);
+        // @TODO: not implemented
+        return O;
+    }
+
+    public Tensor TopKValues(Tensor X, Tensor I, int axis)
+    {
+        var O = m_Ops.TopKValues(X, I, axis);
+        // @TODO: not implemented
+        return O;
+    }
 
     Tensor IOps.Relu(Tensor X)
     {
@@ -308,7 +321,6 @@ public class StatsOps : IOps, IModelCompiler
         Elementwise(X);
         return m_Ops.Floor(X);
     }
-
     Tensor IOps.Reciprocal(Tensor X)
     {
         Elementwise(X, Transcendental.Reciprocal);
@@ -333,6 +345,61 @@ public class StatsOps : IOps, IModelCompiler
     {
         Elementwise(X, Transcendental.Root);
         return m_Ops.Sqrt(X);
+    }
+    Tensor IOps.Acos(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Acos(X);
+    }
+    Tensor IOps.Acosh(Tensor X)
+    {
+        Elementwise(X, Transcendental.Exponent + 1 + Transcendental.Root + 3);
+        return m_Ops.Acosh(X);
+    }
+    Tensor IOps.Asin(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Asin(X);
+    }
+    Tensor IOps.Asinh(Tensor X)
+    {
+        Elementwise(X, Transcendental.Exponent + 1 + Transcendental.Root + 3);
+        return m_Ops.Asinh(X);
+    }
+    Tensor IOps.Atan(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Atan(X);
+    }
+    Tensor IOps.Atanh(Tensor X)
+    {
+        Elementwise(X, 1 + Transcendental.Exponent + 2 + Transcendental.Div);
+        return m_Ops.Atanh(X);
+    }
+    Tensor IOps.Cos(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Cos(X);
+    }
+    Tensor IOps.Cosh(Tensor X)
+    {
+        Elementwise(X, 2 + 2*Transcendental.Exponent);
+        return m_Ops.Cosh(X);
+    }
+    Tensor IOps.Sin(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Sin(X);
+    }
+    Tensor IOps.Sinh(Tensor X)
+    {
+        Elementwise(X, 2 + 2*Transcendental.Exponent);
+        return m_Ops.Sinh(X);
+    }
+    Tensor IOps.Tan(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Tan(X);
     }
 
     Tensor IOps.Add(Tensor[] tensors)
@@ -488,6 +555,11 @@ public class StatsOps : IOps, IModelCompiler
     {
         Elementwise(X);
         return m_Ops.Transpose(X);
+    }
+    Tensor IOps.Transpose(Tensor X, int[] permutations)
+    {
+        Elementwise(X);
+        return m_Ops.Transpose(X, permutations);
     }
     Tensor IOps.Gather(Tensor[] tensors, int axis)
     {

@@ -26,7 +26,19 @@ public class ComputeDebugUtils
         ReadWriteTensor_Read = 1,
         ReadWriteTensor_Write = 2,
         SharedTensor_Read = 3,
-        Assertion = 4
+        Assertion = 4,
+        AssertionWithValue = 5
+    }
+
+    static ComputeDebugUtils()
+    {
+        string[] args = System.Environment.GetCommandLineArgs ();
+        for (int i = 0; i < args.Length; i++) {
+            if (args [i] == "-barracuda-debug-gpu-kernels")
+            {
+                debugKernels = true;
+            }
+        }
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -42,7 +54,7 @@ public class ComputeDebugUtils
             context = data[2];
             index = data[3];
             bufferSize = data[4];
-            padding0 = data[5];
+            debugValue = data[5];
             padding1 = data[6];
             padding2 = data[7];
         }
@@ -52,7 +64,7 @@ public class ComputeDebugUtils
         public readonly uint context;
         public readonly uint index;
         public readonly uint bufferSize;
-        public readonly uint padding0;
+        public readonly uint debugValue;
         public readonly uint padding1;
         public readonly uint padding2;
     }
@@ -81,6 +93,9 @@ public class ComputeDebugUtils
                     break;
                 case (int) KernelAssertContext.Assertion:
                     source = $"Assertion at line {info.lineNumber}";
+                    break;
+                case (int) KernelAssertContext.AssertionWithValue:
+                    source = $"Assertion at line {info.lineNumber}, debug value is {info.debugValue}";
                     break;
                 default:
                     source = "Unknown error";

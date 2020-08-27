@@ -2,7 +2,7 @@
 using System;
 
 // Based on https://sourceforge.net/p/csharp-half/code/HEAD/tree/System.Half/HalfHelper.cs
-namespace Unity.Barracuda
+namespace Unity.Barracuda.ONNX
 {
     /// <summary>
     /// Helper class for Half conversions and some low level operations.

@@ -314,7 +314,7 @@ public class ModelAnalyzer
                     size = shapesByName[l.inputs[1]].Value.ToArray();
                 }
 
-                Assert.AreEqual(size.Length, 4);
+                Assert.IsTrue( (size.Length == 4) || (size.Length == 8));
                 O = X.Reshape(size);
             }
             else if (
@@ -324,14 +324,21 @@ public class ModelAnalyzer
                 var newShape = l.pool;
 
                 Assert.IsNotNull(newShape);
-                Assert.AreEqual(newShape.Length, 4);
+                Assert.IsTrue(newShape.Length == 8 || newShape.Length == 4);
 
                 O = new TensorShape(newShape);
             }
             else if (
                 l.type == Layer.Type.Transpose)
             {
-                O = new TensorShape(X.flatWidth, X.flatHeight);
+                var permutations = l.pool;
+                if (permutations == null)
+                    O = new TensorShape(X.flatWidth, X.flatHeight);
+                else
+                {
+                    Assert.IsTrue(permutations.Length == 8 || permutations.Length == 4);
+                    O = X.Permute(permutations);
+                }
             }
             else if (
                 l.type == Layer.Type.Gather)

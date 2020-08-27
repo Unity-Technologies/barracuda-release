@@ -55,6 +55,39 @@
 #pragma kernel Clip_Flat
 #pragma kernel Clip_FlatStrict
 #pragma kernel Clip_Loop
+#pragma kernel Acos_Flat
+#pragma kernel Acos_FlatStrict
+#pragma kernel Acos_Loop
+#pragma kernel Acosh_Flat
+#pragma kernel Acosh_FlatStrict
+#pragma kernel Acosh_Loop
+#pragma kernel Asin_Flat
+#pragma kernel Asin_FlatStrict
+#pragma kernel Asin_Loop
+#pragma kernel Asinh_Flat
+#pragma kernel Asinh_FlatStrict
+#pragma kernel Asinh_Loop
+#pragma kernel Atan_Flat
+#pragma kernel Atan_FlatStrict
+#pragma kernel Atan_Loop
+#pragma kernel Atanh_Flat
+#pragma kernel Atanh_FlatStrict
+#pragma kernel Atanh_Loop
+#pragma kernel Cos_Flat
+#pragma kernel Cos_FlatStrict
+#pragma kernel Cos_Loop
+#pragma kernel Cosh_Flat
+#pragma kernel Cosh_FlatStrict
+#pragma kernel Cosh_Loop
+#pragma kernel Sin_Flat
+#pragma kernel Sin_FlatStrict
+#pragma kernel Sin_Loop
+#pragma kernel Sinh_Flat
+#pragma kernel Sinh_FlatStrict
+#pragma kernel Sinh_Loop
+#pragma kernel Tan_Flat
+#pragma kernel Tan_FlatStrict
+#pragma kernel Tan_Loop
 
 #pragma kernel PRelu_Flat
 #pragma kernel PRelu_Loop
@@ -170,6 +203,72 @@ PPO_CNN@256
 //#pragma kernel Clip_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
 #pragma kernel Clip_Nyxc_NHWC CHANNELS_FIRST=0
 //#pragma kernel Clip_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Acos_NHWC CHANNELS_FIRST=0
+#pragma kernel Acos_NCHW CHANNELS_FIRST=1
+#pragma kernel Acos_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acos_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Acos_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acos_Nyxc_NHWCCHANNELS_FIRST=1
+#pragma kernel Acosh_NHWC CHANNELS_FIRST=0
+#pragma kernel Acosh_NCHW CHANNELS_FIRST=1
+#pragma kernel Acosh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acosh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Acosh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acosh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Asin_NHWC CHANNELS_FIRST=0
+#pragma kernel Asin_NCHW CHANNELS_FIRST=1
+#pragma kernel Asin_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asin_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Asin_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asin_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Asinh_NHWC CHANNELS_FIRST=0
+#pragma kernel Asinh_NCHW CHANNELS_FIRST=1
+#pragma kernel Asinh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asinh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Asinh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asin_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Atan_NHWC CHANNELS_FIRST=0
+#pragma kernel Atan_NCHW CHANNELS_FIRST=1
+#pragma kernel Atan_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atan_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Atan_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atan_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Atanh_NHWC CHANNELS_FIRST=0
+#pragma kernel Atanh_NCHW CHANNELS_FIRST=1
+#pragma kernel Atanh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atanh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Atanh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atanh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Cos_NHWC CHANNELS_FIRST=0
+#pragma kernel Cos_NCHW CHANNELS_FIRST=1
+#pragma kernel Cos_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cos_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Cos_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cos_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Cosh_NHWC CHANNELS_FIRST=0
+#pragma kernel Cosh_NCHW CHANNELS_FIRST=1
+#pragma kernel Cosh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cosh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Cosh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cosh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Sin_NHWC CHANNELS_FIRST=0
+#pragma kernel Sin_NCHW CHANNELS_FIRST=1
+#pragma kernel Sin_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sin_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Sin_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sin_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Sinh_NHWC CHANNELS_FIRST=0
+#pragma kernel Sinh_NCHW CHANNELS_FIRST=1
+#pragma kernel Sinh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sinh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Sinh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sinh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Tan_NHWC CHANNELS_FIRST=0
+#pragma kernel Tan_NCHW CHANNELS_FIRST=1
+#pragma kernel Tan_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Tan_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Tan_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Tan_Nyxc_NHWC CHANNELS_FIRST=1
 
 #include "Tensor.cginc"
 
@@ -301,6 +400,21 @@ float activation_clip(float v)
 	return clamp(v, _Alpha, _Beta);
 }
 
+float acosh(float v)
+{
+    return log(v + sqrt(v*v - 1.0f));
+}
+
+float asinh(float v)
+{
+    return log(v + sqrt(v*v + 1.0f));
+}
+
+float atanh(float v)
+{
+    return 0.5f * log((1.0f + v) / (1.0f - v));
+}
+
 
 ACTIVATION(Abs, abs)
 ACTIVATION(Neg, neg)
@@ -321,6 +435,17 @@ ACTIVATION(Sqrt, sqrt)
 ACTIVATION(Pow, signed_pow)
 ACTIVATION(LogicalNot, logical_not)
 ACTIVATION(Clip, activation_clip)
+ACTIVATION(Acos, acos)
+ACTIVATION(Acosh, acosh)
+ACTIVATION(Asin, asin)
+ACTIVATION(Asinh, asinh)
+ACTIVATION(Atan, atan)
+ACTIVATION(Atanh, atanh)
+ACTIVATION(Cos, cos)
+ACTIVATION(Cosh, cosh)
+ACTIVATION(Sin, sin)
+ACTIVATION(Sinh, sinh)
+ACTIVATION(Tan, tan)
 
 // -------------------
 
@@ -553,7 +678,6 @@ void KERNEL_FUNC(Pow)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-
 NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
 void KERNEL_FUNC(Clip)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -574,6 +698,248 @@ void KERNEL_FUNC(Clip)(uint3 dispatchThreadID : SV_DispatchThreadID)
 		v = activation_clip(v);
 		O.Set(n, y, x, c, v);
 	}
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Acos)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = acos(v);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Acosh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = log(v + sqrt(v * v - 1.0f));
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Asin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = asin(v);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Asinh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = log(v + sqrt(v*v + 1.0f));
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Atan)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = atan(v);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Atanh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = 0.5f * log((1.0f + v) / (1.0f - v));
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Cos)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = cos(v);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Cosh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = 0.5f * (exp(v) + exp(-v));
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Sin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = sin(v);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Sinh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = 0.5f * (exp(v) - exp(-v));
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Tan)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = tan(v);
+        O.Set(n, y, x, c, v);
+    }
 }
 
 NUMTHREADS((16,16,1), (16,8,1), (16,4,1))
@@ -1059,6 +1425,490 @@ void KERNEL_FUNC(Sqrt_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
 	float v = X.Get(n, y, x, c);
 	v = sqrt(v);
 	O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Acos_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+    
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+    
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+    
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+    
+    float v = X.Get(n, y, x, c);
+    v = acos(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Acos_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = acos(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Acosh_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = log(v + sqrt(v * v - 1.0f));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Acosh_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = log(v + sqrt(v * v - 1.0f));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Asin_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = asin(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Asin_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = asin(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Asinh_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = log(v + sqrt(v*v + 1.0f));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Asinh_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = log(v + sqrt(v*v + 1.0f));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Atan_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = atan(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Atan_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = atan(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Atanh_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = 0.5f * log((1.0f + v) / (1.0f - v));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Atanh_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = 0.5f * log((1.0f + v) / (1.0f - v));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Cos_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = cos(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Cos_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = cos(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Cosh_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = 0.5f * (exp(v) + exp(-v));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Cosh_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = 0.5f * (exp(v) + exp(-v));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Sin_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = sin(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Sin_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = sin(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Sinh_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = 0.5f * (exp(v) - exp(-v));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Sinh_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = 0.5f * (exp(v) - exp(-v));
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Tan_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = tan(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Tan_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = tan(v);
+    O.Set(n, y, x, c, v);
 }
 
 NUMTHREADS((16,16,1), (16,8,1), (16,4,1))

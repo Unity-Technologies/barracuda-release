@@ -1,6 +1,4 @@
-﻿//#if !UNITY_XBOXONE
-#define BARRACUDA_LOG_ENABLED
-//#endif
+﻿#define BARRACUDA_LOG_ENABLED
 
 using UnityEngine;
 

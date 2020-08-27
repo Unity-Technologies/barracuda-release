@@ -787,6 +787,127 @@ public partial class BurstCPUOps
     }
 
     [BurstCompile]
+    unsafe struct AcosJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Acos(X[i]);
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct AcoshJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Log(X[i] + Mathf.Sqrt(X[i]*X[i] - 1.0f));
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct AsinJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Asin(X[i]);
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct AsinhJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Log(X[i] + Mathf.Sqrt(X[i]*X[i] + 1.0f));
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct AtanJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Atan(X[i]);
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct AtanhJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = 0.5f * Mathf.Log((1.0f + X[i])/(1.0f - X[i]));
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct CosJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Cos(X[i]);
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct CoshJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = 0.5f * (Mathf.Exp(X[i]) + Mathf.Exp(-X[i]));
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct SinJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Sin(X[i]);
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct SinhJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = 0.5f * (Mathf.Exp(X[i]) - Mathf.Exp(-X[i]));
+        }
+    }
+
+    [BurstCompile]
+    unsafe struct TanJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Tan(X[i]);
+        }
+    }
+
+    [BurstCompile]
     unsafe struct ElementwiseAddJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;

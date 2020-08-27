@@ -82,7 +82,7 @@ public static class TensorExtensions
 
     static public bool Equals(this Tensor X, Tensor Y)
     {
-        if (X.batch != Y.batch || X.height != Y.height || X.width != Y.width || X.channels != Y.channels)
+        if (X.shape != Y.shape)
             return false;
 
         if (X.length != Y.length)
@@ -99,7 +99,7 @@ public static class TensorExtensions
 
     static public bool Approximately(this Tensor X, Tensor Y, float epsilon = 1e-4f, int count = -1)
     {
-        if (X.batch != Y.batch || X.height != Y.height || X.width != Y.width || X.channels != Y.channels)
+        if (X.shape != Y.shape)
             return false;
 
         if (X.length != Y.length)
@@ -128,43 +128,54 @@ public static class TensorExtensions
         return maxD;
     }
 
-    static public int[] ArgMax(this Tensor X)
-    {
-        int[] result = new int[X.batch];
-        for (int b = 0; b < X.batch; ++b)
-        {
-            float maxV = Mathf.NegativeInfinity;
-            var i = 0;
-            for (int y = 0; y < X.height; ++y)
-                for (int x = 0; x < X.width; ++x)
-                    for (int c = 0; c < X.channels; ++c, ++i)
-                    {
-                        var v = X[b, y, x, c];
-                        if (maxV >= v)
-                            continue;
-                        maxV = v;
-                        result[b] = i;
-                    }
-        }
-        return result;
-    }
-
     static public Tensor Reshape(this Tensor X, int[] size)
     {
         var newShape = X.shape.Reshape(size);
         return X.Reshape(newShape);
     }
 
+    static public int[] ArgMax(this Tensor X)
+    {
+        Assert.AreEqual(TensorShape.DataChannel, TensorShape.MaxRank - 1); // expects channels last layout
+        Assert.IsTrue(X.channels != 0);
+        Assert.AreEqual(X.length % X.channels, 0);
+
+        // reduce over the last dimension - channels
+        var innerLength = X.channels;
+        var outterLength = X.length / innerLength;
+
+        int[] result = new int[outterLength];
+        for (var n = 0; n < outterLength; ++n)
+        {
+            float maxV = Mathf.NegativeInfinity;
+            for (int c = 0; c < innerLength; ++c)
+            {
+                var v = X[n * innerLength + c];
+                if (maxV >= v)
+                    continue;
+                maxV = v;
+                result[n] = c;
+            }
+        }
+        return result;
+    }
+
     static public int[][] ArgSort(this Tensor X)
     {
-        var count = X.height * X.width * X.channels;
+        Assert.AreEqual(TensorShape.DataChannel, TensorShape.MaxRank - 1); // expects channels last layout
+        Assert.IsTrue(X.channels != 0);
+        Assert.AreEqual(X.length % X.channels, 0);
+
+        // reduce over the last dimension - channels
+        var innerLength = X.channels;
+        var outterLength = X.length / innerLength;
+
         var result = new List<int[]>();
-
-        for (int n = 0; n < X.batch; ++n)
+        for (var n = 0; n < outterLength; ++n)
         {
-            int[] indices = Enumerable.Range(0, count).ToArray<int>();
+            int[] indices = Enumerable.Range(0, innerLength).ToArray<int>();
 
-            var sliceOffset = n * count;
+            var sliceOffset = n * innerLength;
             Array.Sort<int>(indices, (a, b) => X[sliceOffset + a].CompareTo(X[sliceOffset + b]));
             result.Add(indices);
         }
@@ -173,12 +184,11 @@ public static class TensorExtensions
 
     static public TensorShape Gather(TensorShape[] shapes, int axis)
     {
-        TensorShape X = shapes[0];
+        TensorShape shape = shapes[0];
         TensorShape indices = shapes[1];
-        int[] shape = X.ToArray();
         shape[axis] = indices.length;
 
-        return new TensorShape(shape);
+        return shape;
     }
 
     static public TensorShape Concat(Tensor[] tensors, int axis)
@@ -194,7 +204,7 @@ public static class TensorExtensions
             var aAxis = tensors[0].shape.Axis(axis);
             var bAxis = tensors[i].shape.Axis(axis);
             a[aAxis] = 0; b[bAxis] = 0;
-            if (a.batch != b.batch || a.height != b.height || a.width != b.width || a.channels != b.channels)
+            if (a != b)
             {
                 foreach (var s in tensors)
                     D.Log(s.shape);
@@ -222,7 +232,7 @@ public static class TensorExtensions
             var aAxis = shapes[0].Axis(axis);
             var bAxis = shapes[i].Axis(axis);
             a[aAxis] = 0; b[bAxis] = 0;
-            if (a.batch != b.batch || a.height != b.height || a.width != b.width || a.channels != b.channels)
+            if (a != b)
             {
                 foreach (var s in shapes)
                     D.Log(s);
@@ -240,44 +250,40 @@ public static class TensorExtensions
     static public TensorShape Max(TensorShape[] shapes)
     {
         Assert.IsTrue(shapes.Length > 0);
-        int batch = 0, height = 0, width = 0, channels = 0;
-        foreach (var s in shapes)
-        {
-            batch =    Math.Max(s.batch, batch);
-            height =   Math.Max(s.height, height);
-            width =    Math.Max(s.width, width);
-            channels = Math.Max(s.channels, channels);
-        }
-        return new TensorShape(batch, height, width, channels);
+
+        var shape = shapes[0];
+        for (var i = 1; i < shapes.Length; ++i)
+            for (var axis = 0; axis < TensorShape.MaxRank; axis++)
+                shape[axis] = Math.Max(shape[axis], shapes[i][axis]);
+
+        return shape;
     }
 
     static public TensorShape MaxShape(Tensor[] tensors)
     {
         Assert.IsTrue(tensors.Length > 0);
-        int batch = 0, height = 0, width = 0, channels = 0;
-        foreach (var t in tensors)
-        {
-            batch =    Math.Max(t.batch, batch);
-            height =   Math.Max(t.height, height);
-            width =    Math.Max(t.width, width);
-            channels = Math.Max(t.channels, channels);
-        }
-        return new TensorShape(batch, height, width, channels);
+        var shape = tensors[0].shape;
+        for (var i = 1; i < tensors.Length; ++i)
+            for (var axis = 0; axis < TensorShape.MaxRank; axis++)
+                shape[axis] = Math.Max(shape[axis], tensors[i].shape[axis]);
+        return shape;
     }
 
     static public TensorShape Scale(this TensorShape shape, TensorShape scale)
     {
-        return new TensorShape(
-            shape.batch * scale.batch,
-            shape.height * scale.height,
-            shape.width * scale.width,
-            shape.channels * scale.channels);
+        var newShape = shape;
+        for (var axis = 0; axis < TensorShape.MaxRank; axis++)
+            newShape[axis] *= scale[axis];
+        return newShape;
     }
 
     static public TensorShape Scale(this TensorShape shape, int[] scale)
     {
-        Assert.AreEqual(scale.Length, 4);
-        return Scale(shape, new TensorShape(scale));
+        scale = Get8DParametersFromNHWCParametersAndShape(shape, scale, 1);
+
+        for (var axis = 0; axis < TensorShape.MaxRank; axis++)
+            shape[axis] *= scale[axis];
+        return shape;
     }
 
     static public TensorShape Reduce(this TensorShape shape, int axis)
@@ -290,7 +296,7 @@ public static class TensorExtensions
 
     static public TensorShape Reshape(this TensorShape shape, int[] size)
     {
-        Assert.AreEqual(size.Length, 4);
+        size = Get8DParametersFromNHWCParametersAndShape(shape, size, 1);
         var newShapeArray = shape.ToArray();
 
         // From: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Reshape
@@ -341,11 +347,16 @@ public static class TensorExtensions
 
     static public TensorShape ApplyBorder(this TensorShape shape, int[] border)
     {
-        return new TensorShape(
-            shape.batch,
-            (shape.height + (border[1]+border[3])),
-            (shape.width  + (border[0]+border[2])),
-            shape.channels);
+        Assert.IsTrue(border.Length > 0);
+        Assert.IsTrue(border.Length % 2 == 0);
+        int featureCount = border.Length / 2;
+        Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
+        for (var i = 0; i < featureCount; ++i)
+        {
+            shape[TensorShape.DataFeatures[i]] += border[i               ];
+            shape[TensorShape.DataFeatures[i]] += border[i + featureCount];
+        }
+        return shape;
     }
 
     static public int[] AdjustPadToKernel(this Tensor tensor, Tensor kernel, int[] stride, int[] pad)
@@ -355,7 +366,7 @@ public static class TensorExtensions
 
     static public int[] AdjustPadToKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
-        return AdjustPadToPool(shape, (kernel.kernelWidth, kernel.kernelHeight ), stride, pad);
+        return AdjustPadToPool(shape, (kernel.kernelWidth, kernel.kernelHeight), stride, pad);
     }
 
     static public int[] AdjustPadToPool(this Tensor tensor, int[] pool, int[] stride, int[] pad)
@@ -373,6 +384,7 @@ public static class TensorExtensions
         return AdjustPadToPool(tensor.shape, pool, stride, pad);
     }
 
+    // @TODO: implement 3D, ND pool suppport
     static public int[] AdjustPadToPool(this TensorShape shape, ValueTuple<int,int> pool, int[] stride, int[] pad)
     {
         // negative pad values mean auto_pad type is used
@@ -422,6 +434,8 @@ public static class TensorExtensions
          return ApplyPool(shape, (pool[0], pool[1]), stride, pad, ceilMode);
     }
 
+    // @TODO: implement 3D, ND pool suppport
+    // @SEE: ApplyBorder() for generic impl
     static public TensorShape ApplyPool(this TensorShape shape, ValueTuple<int,int> pool, int[] stride, int[] pad, bool ceilMode = false)
     {
         Assert.AreEqual(stride.Length, 2);
@@ -437,33 +451,33 @@ public static class TensorExtensions
         //
         //   output_size = (input_size + pad_left + pad_right - kernel_size) / stride + 1
         //
+        var newShape = shape;
         if (ceilMode)
         {
-            return new TensorShape(
-                shape.batch,
-                (shape.height + (pad[1]+pad[3]) - pool.Item2 + stride[1] - 1) / stride[1] + 1,
-                (shape.width  + (pad[0]+pad[2]) - pool.Item1 + stride[1] - 1) / stride[0] + 1,
-                shape.channels);
+            newShape[TensorShape.H] = (shape.height + (pad[1]+pad[3]) - pool.Item2 + stride[1] - 1) / stride[1] + 1;
+            newShape[TensorShape.W] = (shape.width  + (pad[0]+pad[2]) - pool.Item1 + stride[1] - 1) / stride[0] + 1;
+            return newShape;
         }
         // C# automatically rounds down
         // https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/operators/arithmetic-operators
-        return new TensorShape(
-            shape.batch,
-            (shape.height + (pad[1]+pad[3]) - pool.Item2) / stride[1] + 1,
-            (shape.width  + (pad[0]+pad[2]) - pool.Item1) / stride[0] + 1,
-            shape.channels);
+        newShape[TensorShape.H] = (shape.height + (pad[1]+pad[3]) - pool.Item2) / stride[1] + 1;
+        newShape[TensorShape.W] = (shape.width  + (pad[0]+pad[2]) - pool.Item1) / stride[0] + 1;
+        return newShape;
     }
 
     static public TensorShape ApplyKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
-        shape = ApplyPool(shape, (kernel.kernelWidth, kernel.kernelHeight), stride, pad);
-        return new TensorShape(shape.batch, shape.height, shape.width, kernel.kernelCount);
+        int[] shapeArray = ApplyPool(shape, (kernel.kernelWidth, kernel.kernelHeight), stride, pad).ToArray();
+        shapeArray[7] = kernel.kernelCount;
+        return new TensorShape(shapeArray);
     }
 
     static public TensorShape ApplyKernelInverse(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad, int[] outputAdjustment)
     {
-        Assert.AreEqual(stride.Length, 2);
-        Assert.AreEqual(pad.Length, 4);
+        Assert.IsTrue(stride.Length > 0);
+        Assert.IsTrue(stride.Length * 2 == pad.Length);
+        Assert.IsTrue(stride.Length <= TensorShape.KernelSpatials.Length);
+        Assert.IsTrue(stride.Length <= TensorShape.DataFeatures.Length);
 
         // Based on ONNX (ConvTranspose)
         //        https://github.com/onnx/onnx/blob/master/docs/Operators.md
@@ -478,16 +492,27 @@ public static class TensorExtensions
         //
         if (outputAdjustment == null || outputAdjustment.Length == 0)
         {
-            outputAdjustment = new int[] {
-                (shape.width + (pad[0]+pad[2]) - kernel.kernelWidth) % stride[0],
-                (shape.height + (pad[1]+pad[3]) - kernel.kernelHeight) % stride[1]
-            };
+            outputAdjustment = new int[stride.Length];
+            for (var i = 0; i < stride.Length; ++i)
+            {
+                var featureAxis = TensorShape.DataFeatures[i];
+                var kernelAxis = TensorShape.KernelSpatials[i];
+                var padding = pad[i] + pad[stride.Length+i];
+                outputAdjustment[i] = (shape[featureAxis] + padding - kernel[kernelAxis]) % stride[i];
+            }
         }
-        return new TensorShape(
-            shape.batch,
-            (shape.height - 1) * stride[1] - (pad[1]+pad[3]) + kernel.kernelHeight + outputAdjustment[1],
-            (shape.width  - 1) * stride[0] - (pad[0]+pad[2]) + kernel.kernelWidth + outputAdjustment[0],
-            kernel.kernelCount);
+
+        var newShape = shape;
+        for (var i = 0; i < stride.Length; ++i)
+        {
+            var featureAxis = TensorShape.DataFeatures[i];
+            var kernelAxis = TensorShape.KernelSpatials[i];
+            var padding = pad[i] + pad[stride.Length+i];
+            newShape[featureAxis] = (shape[featureAxis] - 1) * stride[i] - padding + kernel[kernelAxis] + outputAdjustment[i];
+        }
+
+        newShape[TensorShape.KernelOutChannel] = kernel.kernelCount;
+        return newShape;
     }
 
     static public int WrapIndex(int i, int length)
@@ -503,17 +528,104 @@ public static class TensorExtensions
         return v < 0 ? (v + length): v;
     }
 
+    static internal bool IsNHWC(this TensorShape shape)
+    {
+        return shape.sequenceLength == 1 &&
+               shape.numberOfDirections == 1 &&
+               shape.extraDimension == 1 &&
+               shape.depth == 1;
+    }
+
+    static internal int NHWCTo8DAxis(int nhwcAxis)
+    {
+        Assert.IsTrue(nhwcAxis < 4);
+        Assert.IsTrue(nhwcAxis > -4);
+        if (nhwcAxis < 0) //backward indexing
+        {
+            return nhwcAxis;
+        }
+        else if (nhwcAxis == 0) //batch
+            return TensorShape.DataBatch;
+        else //H,W,C
+            return nhwcAxis + TensorShape.D;
+    }
+
+    static internal bool Is8DAxisConvertibleToNHWC(int axis)
+    {
+        Assert.IsTrue(axis > -4);
+        Assert.IsTrue(axis < TensorShape.MaxRank);
+        return axis < 0 || axis == TensorShape.DataBatch || axis > TensorShape.D;
+    }
+
+    static public bool AreAllTensorsConvertibleToNCHW(Tensor[] tensors)
+    {
+        for (int i = 0; i < tensors.Length; ++i)
+        {
+            if (!tensors[i].shape.IsNHWC())
+                return false;
+        }
+
+        return true;
+    }
+
+    static internal int Convert8DAxisToNHWC(int axis)
+    {
+        Assert.IsTrue(Is8DAxisConvertibleToNHWC(axis));
+        if (axis < 0) //backward indexing
+        {
+            return axis;
+        }
+        else if (axis == TensorShape.DataBatch) //batch
+            return 0;
+        else //H,W,C
+            return axis - TensorShape.D;
+    }
+
+    static public int[] GetNHWCParametersFrom8DParameterAndShape(TensorShape shape, int[] parameters)
+    {
+        if (parameters.Length == 4)
+            return parameters;
+
+        Assert.IsTrue(shape.IsNHWC(), $"Parameters {parameters} can't be converted to NCHW with a tensor of shape {shape} as it contains other dimensions.");
+        Assert.AreEqual(parameters.Length, TensorShape.MaxRank);
+        return new int[] {parameters[TensorShape.DataBatch], parameters[TensorShape.H], parameters[TensorShape.W], parameters[TensorShape.C] };
+    }
+
+    static public int[] Get8DParametersFromNHWCParametersAndShape(TensorShape shape, int[] parameters, int defaultValue)
+    {
+        if (parameters.Length == TensorShape.MaxRank)
+            return parameters;
+
+        Assert.AreEqual(4, parameters.Length);
+        Assert.IsTrue(shape.IsNHWC(), $"4D NCHW Parameters {parameters} can't be used with a tensor of shape {shape} as it contains other dimensions, please use 8D parameters for this shape.");
+        return new int[] {defaultValue, defaultValue, parameters[0], defaultValue, defaultValue, parameters[1], parameters[2], parameters[3] };
+    }
+
+    static public int[] Get8DPermutationsForNHWCPermutationsAndShape(TensorShape shape, int[] permutations)
+    {
+        if (permutations.Length == TensorShape.MaxRank)
+            return permutations;
+
+        Assert.AreEqual(4, permutations.Length);
+        Assert.IsTrue( shape.IsNHWC(), $"4D NCHW Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        int batchOldAxis = NHWCTo8DAxis(permutations[0]);
+        int heighOldAxis = NHWCTo8DAxis(permutations[1]);
+        int widthOldIndex = NHWCTo8DAxis(permutations[2]);
+        int channeOldIndex = NHWCTo8DAxis(permutations[3]);
+        return new int[] {0, 1, batchOldAxis, 3, 4, heighOldAxis, widthOldIndex, channeOldIndex };
+    }
+
     // TODO: implement negative strides
     static public TensorShape ApplyStridedSlice(this TensorShape shape, int[] starts, int[] ends, int[] stride)
     {
-        Assert.AreEqual(starts.Length, shape.rank);
-        Assert.AreEqual(ends.Length, shape.rank);
-        Assert.AreEqual(stride.Length, shape.rank);
+        starts = Get8DParametersFromNHWCParametersAndShape(shape, starts, 0);
+        ends = Get8DParametersFromNHWCParametersAndShape(shape, ends, 1);
+        stride = Get8DParametersFromNHWCParametersAndShape(shape, stride, 1);
 
         TensorShape counts = shape;
         TensorShape sliced = shape;
 
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < shape.rank; ++i)
         {
             // NOTE: begin=0, end=0, stride=1  <=  full range from the existing axis
             //       begin=0, end=X, stride=1  <=  full range from the existing axis, if X==last element on this axis
@@ -537,7 +649,17 @@ public static class TensorExtensions
                 sliced[i] = 0;
         }
 
-        return new TensorShape(sliced.batch, sliced.height, sliced.width, sliced.channels);
+        return sliced;
+    }
+
+    static public TensorShape Permute(this TensorShape shape, int[] permutations)
+    {
+        permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+
+        var output = new TensorShape();
+        for (var i = 0; i < permutations.Length; ++i)
+            output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+        return output;
     }
 
     static public ITensorData CreateFromTexture(Texture tex, TensorShape shape)

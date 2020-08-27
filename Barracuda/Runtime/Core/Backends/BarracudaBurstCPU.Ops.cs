@@ -169,6 +169,7 @@ public partial class BurstCPUOps
 
     Tensor Conv2DUsingIm2ColSliced(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -384,6 +385,7 @@ public partial class BurstCPUOps
 
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -432,6 +434,7 @@ public partial class BurstCPUOps
 
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -493,6 +496,7 @@ public partial class BurstCPUOps
         if (K.kernelDepth != 1)
             throw new NotImplementedException();
 
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -553,6 +557,9 @@ public partial class BurstCPUOps
 
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
+
         Assert.AreEqual(S.shape, B.shape);
         bool isScalarOp = (S.length == 1);
         bool isSaVector = (S.length == S.channels);
@@ -1186,6 +1193,258 @@ public partial class BurstCPUOps
         }
         return O;
     }
+    public override Tensor Acos(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new AcosJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Acosh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new AcoshJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Asin(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new AsinJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Asinh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new AsinhJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Atan(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new AtanJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Atanh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new AtanhJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Cos(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new CosJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Cosh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new CoshJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Sin(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new SinJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Sinh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new SinhJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+    public override Tensor Tan(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new TanJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
 
     protected virtual Tensor GenericBroadcast(Tensor X, TensorShape broadcastShape)
     {
@@ -1498,6 +1757,9 @@ public partial class BurstCPUOps
     // O = tensors[0] + tensors[1] + ... + tensors[N-1]
     public override Tensor Add(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1512,6 +1774,10 @@ public partial class BurstCPUOps
     // O = tensors[0] - tensors[1] - ... - tensors[N-1]
     public override Tensor Sub(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1526,6 +1792,10 @@ public partial class BurstCPUOps
     // O = tensors[0] * tensors[1] * ... * tensors[N-1]
     public override Tensor Mul(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1540,6 +1810,10 @@ public partial class BurstCPUOps
     // O = tensors[0] / tensors[1] / ... / tensors[N-1]
     public override Tensor Div(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1554,6 +1828,10 @@ public partial class BurstCPUOps
     // O = tensors[0] ^ tensors[1] ^ ... ^ tensors[N-1]
     public override Tensor Pow(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1568,6 +1846,10 @@ public partial class BurstCPUOps
     // O = min(tensors[0], tensors[1],  ... , tensors[N-1])
     public override Tensor Min(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1582,6 +1864,10 @@ public partial class BurstCPUOps
     // O = max(tensors[0], tensors[1],  ... , tensors[N-1])
     public override Tensor Max(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
+
         var O = NewTensorLike(tensors);
         var X = tensors[0];
 
@@ -1596,6 +1882,9 @@ public partial class BurstCPUOps
     // // O = (1/N) * (tensors[0] + tensors[1] + ... + tensors[N-1])
     // public override Tensor Mean(Tensor[] tensors)
     // {
+    //    if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+    //        throw new NotImplementedException();
+
     //     // accumulate
     //     Func<float, float, float> op = (a, b) => a + b;
     //     var O = ApplyElementwiseWithBroadcast(tensors, op);

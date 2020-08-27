@@ -1,13 +1,10 @@
 {
-    "name": "Unity.Barracuda.Editor",
+    "name": "Unity.Barracuda.ONNX",
     "references": [
-        "Unity.Barracuda",
-        "Unity.Barracuda.ONNX"
+        "Unity.Barracuda"
     ],
     "optionalUnityReferences": [],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

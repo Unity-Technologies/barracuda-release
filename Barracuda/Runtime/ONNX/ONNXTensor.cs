@@ -5,10 +5,11 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using UnityEngine.Android;
 
 [assembly: InternalsVisibleToAttribute("Barracuda.EditorTests")]
 
-namespace Unity.Barracuda
+namespace Unity.Barracuda.ONNX
 {
     // Combines information about ONNX tensor and data read from TensorProto
     public struct ONNXTensor
@@ -281,32 +282,37 @@ namespace Unity.Barracuda
 
         public ONNXTensor Gather(int axis, int[] indices)
         {
+            //Atm support up to 4D tensors.
+            Debug.Assert(indices.Length < 5);
+
             // good explanation can be found here:
             // https://stackoverflow.com/questions/50999977/what-does-the-gather-function-do-in-pytorch-in-layman-terms
-            int[] newShape = m_Shape.Select(i => (int)i).ToArray();
-            newShape[axis] = indices.Length;
+            int[] newONNXShape = m_Shape.Select(i => (int)i).ToArray();
+            newONNXShape[axis] = indices.Length;
 
-            Tensor result = new Tensor(newShape);
+            // pad with 1s to visit all elements at least once in the loop.
+            int[] newONNXShapePadded = new int[] {1, 1, 1, 1, 1, 1, 1, 1};
+            for (int d = 0; d < newONNXShape.Length; ++d)
+                newONNXShapePadded[d] = newONNXShape[d];
 
-            // pad to the number of the loops - 4
-            var newShapeRank4 = newShape.Concat(Enumerable.Repeat(1, 4 - newShape.Length)).ToArray(); // we need to keep 1, to visit all elements at least once
+            Tensor result = new Tensor(newONNXShapePadded);
 
-            for (int b = 0; b < newShapeRank4[0]; ++b)
-                for (int y = 0; y < newShapeRank4[1]; ++y)
-                    for (int x = 0; x < newShapeRank4[2]; ++x)
-                        for (int c = 0; c < newShapeRank4[3]; ++c)
+            for (int b = 0; b < newONNXShapePadded[0]; ++b)
+                for (int y = 0; y < newONNXShapePadded[1]; ++y)
+                    for (int x = 0; x < newONNXShapePadded[2]; ++x)
+                        for (int c = 0; c < newONNXShapePadded[3]; ++c)
                         {
                             if (axis == 0)
-                                result[b, y, x, c] = m_Data[indices[b], y, x, c];
+                                result[b, y, x, c, 0, 0, 0, 0] = m_Data[indices[b], y, x, c, 0, 0, 0, 0];
                             else if (axis == 1)
-                                result[b, y, x, c] = m_Data[b, indices[y], x, c];
+                                result[b, y, x, c, 0, 0, 0, 0] = m_Data[b, indices[y], x, c, 0, 0, 0, 0];
                             else if (axis == 2)
-                                result[b, y, x, c] = m_Data[b, y, indices[x], c];
+                                result[b, y, x, c, 0, 0, 0, 0] = m_Data[b, y, indices[x], c, 0, 0, 0, 0];
                             else
-                                result[b, y, x, c] = m_Data[b, y, x, indices[c]];
+                                result[b, y, x, c, 0, 0, 0, 0] = m_Data[b, y, x, indices[c], 0, 0, 0, 0];
                         }
 
-            return new ONNXTensor(result, newShape.Select(x => (long)x).ToArray());
+            return new ONNXTensor(result, newONNXShape.Select(x => (long)x).ToArray());
         }
 
         public Tensor ToBarracuda(string onnxLayout)
@@ -326,10 +332,10 @@ namespace Unity.Barracuda
 
         internal static Tensor Permute(Tensor inTensor, int[] permutations) // TODO: unify Permute() arguments
         {
-            var padPermutationsToBarracudaRank = 4 - permutations.Length;
+            var padPermutationsToBarracudaRank = TensorShape.MaxRank - permutations.Length;
             if (padPermutationsToBarracudaRank > 0)
                 permutations = permutations.Concat(Enumerable.Range(permutations.Length, padPermutationsToBarracudaRank)).ToArray();
-            Debug.Assert(permutations.Length == 4);
+            Debug.Assert(permutations.Length == TensorShape.MaxRank);
 
             // See: https://stackoverflow.com/a/32034565
             Profiler.BeginSample("ONNXTensor.Permute");
@@ -344,28 +350,26 @@ namespace Unity.Barracuda
                 reversePermute[i] = Array.IndexOf(permutations, i);
 
             // outTensor strides
-            var outStrideC   =               outTensor.channels;
-            var outStrideWC  = outStrideC  * outTensor.width;
-            var outStrideHWC = outStrideWC * outTensor.height;
+            var tempOutStrides = new int[TensorShape.MaxRank+1];
+            tempOutStrides[8] = 1;
+            for (int i = 7; i >= 0; --i)
+                tempOutStrides[i] = tempOutStrides[i+1] * outTensor.shape[i];
 
             var outStride = new int[reversePermute.Length];
             for (var i = 0; i < reversePermute.Length; ++i)
-                outStride[i] = new[] {0, outStrideHWC, outStrideWC, outStrideC, 1}[reversePermute[i] + 1];
+                outStride[i] = tempOutStrides[reversePermute[i] + 1];
 
             // inTensor strides
-            var inStrideC   =              inTensor.channels;
-            var inStrideWC  = inStrideC  * inTensor.width;
-            var inStrideHWC = inStrideWC * inTensor.height;
+            var inStrides = new int[TensorShape.MaxRank];
+            inStrides[7] = 1;
+            for (int i = 6; i >= 0; --i)
+                inStrides[i] = inStrides[i+1] * inTensor.shape[i+1];
 
-            var inShape = inTensor.shape.ToArray();
-            for (var n = 0; n < inShape[0]; ++n)
-                for (var h = 0; h < inShape[1]; ++h)
-                    for (var w = 0; w < inShape[2]; ++w)
-                        for (var c = 0; c < inShape[3]; ++c)
-                        {
-                            outTensor[n * outStride[0] + h * outStride[1] + w * outStride[2] + c * outStride[3]] =
-                                inTensor[n * inStrideHWC + h * inStrideWC + w * inStrideC + c];
-                        }
+            for (var it = new TensorIterator(inTensor.shape); it.IsValid(); ++it)
+            {
+                outTensor[it.d0 * outStride[0] + it.d1 * outStride[1] + it.d2 * outStride[2] + it.d3 * outStride[3] + it.d4 * outStride[4] + it.d5 * outStride[5] + it.d6 * outStride[6] + it.d7 * outStride[7]] = inTensor[
+                    it.d0 * inStrides[0] + it.d1 * inStrides[1] + it.d2 * inStrides[2] + it.d3 * inStrides[3] + it.d4 * inStrides[4] + it.d5 * inStrides[5] + it.d6 * inStrides[6] + it.d7 * inStrides[7]];
+            }
 
             Profiler.EndSample();
             return outTensor;
@@ -374,22 +378,35 @@ namespace Unity.Barracuda
         // slow version - kept just for performance comparison and validation
         internal static Tensor PermuteSlow(Tensor readTensor, int[] permutations) // TODO: unify Permute() arguments
         {
+            var padPermutationsToBarracudaRank = 8 - permutations.Length;
+            if (padPermutationsToBarracudaRank > 0)
+                permutations = permutations.Concat(Enumerable.Range(permutations.Length, padPermutationsToBarracudaRank)).ToArray();
+            Debug.Assert(permutations.Length == 8);
+
             var outputTensor = new Tensor(ONNXLayout.Permute(readTensor.shape.ToArray(), permutations));
             Debug.Assert(outputTensor.length == readTensor.length);
 
             var inShape = readTensor.shape.ToArray();
-            for (var n = 0; n < inShape[0]; ++n)
-                for (var h = 0; h < inShape[1]; ++h)
-                    for (var w = 0; w < inShape[2]; ++w)
-                        for (var c = 0; c < inShape[3]; ++c)
-                        {
-                            var it = new int[] {0, n, h, w, c}; // prepend with 0 to handle "new axis" -1 value in permutations
-                            var oN = it[permutations[0] + 1];
-                            var oH = it[permutations[1] + 1];
-                            var oW = it[permutations[2] + 1];
-                            var oC = it[permutations[3] + 1];
-                            outputTensor[oN, oH, oW, oC] = readTensor[n, h, w, c];
-                        }
+            for (var s = 0; s < inShape[0]; ++s)
+                for (var n = 0; n < inShape[1]; ++n)
+                    for (var i0 = 0; i0 < inShape[2]; ++i0)
+                        for (var i1 = 0; i1 < inShape[3]; ++i1)
+                            for (var i2 = 0; i2 < inShape[4]; ++i2)
+                                for (var h = 0; h < inShape[5]; ++h)
+                                    for (var w = 0; w < inShape[6]; ++w)
+                                        for (var c = 0; c < inShape[7]; ++c)
+                                        {
+                                            var it = new int[] {0, s, n, i0, i1, i2, h, w, c}; // prepend with 0 to handle "new axis" -1 value in permutations
+                                            var oS  = it[permutations[0] + 1];
+                                            var oN  = it[permutations[1] + 1];
+                                            var oI0 = it[permutations[2] + 1];
+                                            var oI1 = it[permutations[3] + 1];
+                                            var oI2 = it[permutations[4] + 1];
+                                            var oH  = it[permutations[5] + 1];
+                                            var oW  = it[permutations[6] + 1];
+                                            var oC  = it[permutations[7] + 1];
+                                            outputTensor[oS, oN, oI0, oI1, oI2, oH, oW, oC] = readTensor[s, n, i0, i1, i2, h, w, c];
+                                        }
 
             return outputTensor;
         }

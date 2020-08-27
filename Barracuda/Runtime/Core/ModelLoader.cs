@@ -56,6 +56,28 @@ public static class ModelLoader
         return Load(Open(stream), verbose, applyPatching, skipWeights);
     }
 
+    private static int ConvertLayerAxisFor8DShapeSupportIfNeeded(int axis, long version, Layer.Type layerType)
+    {
+        if (version > Model.LastVersionWithout8DSupport)
+            return axis;
+
+        //Prior to version 17, 8D tensors were not supported thus axis was expressed in NCHW format for Gather, Concat and Reduce layers.
+        if (layerType == Layer.Type.ReduceL2 ||
+            layerType == Layer.Type.ReduceLogSum ||
+            layerType == Layer.Type.ReduceLogSumExp ||
+            layerType == Layer.Type.ReduceMax ||
+            layerType == Layer.Type.ReduceMean ||
+            layerType == Layer.Type.ReduceMin ||
+            layerType == Layer.Type.ReduceProd ||
+            layerType == Layer.Type.ReduceSum ||
+            layerType == Layer.Type.ReduceSumSquare ||
+            layerType == Layer.Type.Gather ||
+            layerType == Layer.Type.Concat)
+            axis = TensorExtensions.NHWCTo8DAxis(axis);
+
+        return axis;
+    }
+
     private static Model Load(BinaryReader fileReader, bool verbose = true, bool applyPatching = true, bool skipWeights = false)
     {
         using (BinaryReader file = fileReader)
@@ -66,7 +88,7 @@ public static class ModelLoader
             List<Layer> layers = new List<Layer>();
 
             long version = file.ReadInt64() % 0xff; // magic
-            if (version != Model.Version)
+            if (version != Model.Version && version != Model.LastVersionWithout8DSupport)
                 throw new NotSupportedException($"Format version not supported: {version}");
 
             var count = file.ReadInt32();
@@ -94,15 +116,15 @@ public static class ModelLoader
             for (var l = 0; l < numberOfLayers; ++l)
             {
                 var name            = ReadString(file);
-                var type            = (Layer.Type)file.ReadInt32();
+                var layerType       = (Layer.Type)file.ReadInt32();
                 var activation      = (Layer.Activation)file.ReadInt32();
-                Layer layer         = new Layer(name, type, activation);
+                Layer layer         = new Layer(name, layerType, activation);
                                       ReadInt32Array(file); // dummy
                                       ReadInt32Array(file); // dummy
                 layer.pad           = ReadInt32Array(file);
                 layer.stride        = ReadInt32Array(file);
                 layer.pool          = ReadInt32Array(file);
-                layer.axis          = file.ReadInt32();
+                layer.axis          = ConvertLayerAxisFor8DShapeSupportIfNeeded(file.ReadInt32(), version, layerType);
                 layer.alpha         = file.ReadSingle();
                 layer.beta          = file.ReadSingle();
                                       ReadInt32Array(file); // dummy

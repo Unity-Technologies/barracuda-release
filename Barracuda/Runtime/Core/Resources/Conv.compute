@@ -155,10 +155,10 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint
     //Load Bias [K] int dstA [Kernels, Pixels]
     uint tg_kId;
     uint tg_pId;
+    uint maxBiasIndex = O.channels - 1;
     [unroll] for (tg_pId = 0; tg_pId < BLOCK_SIZE; ++tg_pId)
         [unroll] for (tg_kId = 0; tg_kId < BLOCK_SIZE; ++tg_kId)
-            dstA[tg_pId*BLOCK_SIZE+tg_kId] = B.FastGet(tg_KernelBaseId + groupThreadID.x * BLOCK_SIZE + tg_kId);
-
+            dstA[tg_pId*BLOCK_SIZE+tg_kId] = B.FastGet(min(maxBiasIndex,tg_KernelBaseId + groupThreadID.x * BLOCK_SIZE + tg_kId));
 
     for (uint tg_Dy = 0; tg_Dy < K.GetKernelHeight(); tg_Dy++)
     {
@@ -510,9 +510,10 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint
     //Load Bias [K] int dstA [Kernels, Pixels]
     uint tg_kId;
     uint tg_pId;
+    uint maxBiasIndex = O.channels - 1;
     [unroll] for (tg_pId = 0; tg_pId < BLOCK_SIZE; ++tg_pId)
         [unroll] for (tg_kId = 0; tg_kId < BLOCK_SIZE; ++tg_kId)
-            dstA[tg_pId*BLOCK_SIZE+tg_kId] = B.FastGet(tg_KernelBaseId + groupThreadID.x * BLOCK_SIZE + tg_kId);
+            dstA[tg_pId*BLOCK_SIZE+tg_kId] = B.FastGet(min(maxBiasIndex,tg_KernelBaseId + groupThreadID.x * BLOCK_SIZE + tg_kId));
 
     //Loop spatialy on kernels
     for (uint tg_Dy = 0; tg_Dy < K.GetKernelHeight(); tg_Dy++)
@@ -801,7 +802,7 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_Disp
     uint centroidId = by + (ti&63);
     #if KERNEL_1x1
     int readX = heightX * widthX * (ti>>6) + centroidId + batchReadOffset;
-    bool mask = readX < (int)X.GetLength();
+    bool mask = centroidId < (batches * w * h);
     #else
     int batch = 0;//not needed dispatched over batches.
     int topY = (centroidId / w % h) * _Stride.y - _Pad.y;
@@ -818,7 +819,7 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_Disp
         (by + (ti>>4) + 48));
     #if KERNEL_1x1
     int4 readX = strideX * centroidId + (ti&15);
-    bool4 mask = readX < (int)X.GetLength();
+    bool4 mask = centroidId < (batches * w * h);
     #else
     int4 batch = centroidId / w / h;
     int4 topY = (centroidId / w % h) * _Stride.y - _Pad.y;

@@ -6,7 +6,11 @@
 /// Production code should not define this as this will significantly degrade performances.
 /// Defining those require Shader model 5.0 and not Metal (Metal does not support GetDimensions on buffer)
 /// aka `#pragma target 5.0` see https://docs.unity3d.com/Manual/SL-ShaderCompileTargets.html.
-//#define KERNEL_ASSERTS
+#include "KernelDebug.cginc"
+#if !defined(KERNEL_ASSERTS)
+    // KernelDebug.cginc allow to enable kernel debugging on yamato. Uncomment the line below to force it at dev time.
+    // #define KERNEL_ASSERTS
+#endif
 
 //Keep in sync with BarracudaComputeDebugUtils.cs enum ComputeDebugUtils.KernelAssertContext
 #define KERNEL_ASSERT_CONTEXT_READONLY_READ 0
@@ -14,6 +18,7 @@
 #define KERNEL_ASSERT_CONTEXT_READWRITE_WRITE 2
 #define KERNEL_ASSERT_CONTEXT_SHARED_READ 3
 #define KERNEL_ASSERT_CONTEXT_ASSERTION 4
+#define KERNEL_ASSERT_CONTEXT_ASSERTION_WITH_VALUE 5
 
 //Keep in sync with BarracudaComputeDebugUtils.cs enum ComputeDebugUtils.KernelAssertInfo
 struct KernelAssertInfo
@@ -25,16 +30,17 @@ struct KernelAssertInfo
     //specific to read/write OOB detection
     uint index;
     uint bufferSize;
+    //specific to assertion with value
+    uint debugValue;
     //padding
     uint padding0;
     uint padding1;
-    uint padding2;
 };
 
 #if (defined(KERNEL_ASSERTS) && !defined(FORCE_NO_DEBUG)) || defined(FORCE_DEBUG)
 
     RWStructuredBuffer<KernelAssertInfo> KernelAssertInfoBuffer;
-    void LogAssertion(uint index, uint bufferSize, uint lineNumber, uint context)
+    void LogAssertion(uint index, uint bufferSize, uint debugValue, uint lineNumber, uint context)
     {
         uint anAssertionIsAlreadyLogged;
         InterlockedAdd(KernelAssertInfoBuffer[0].lockValue, 1, anAssertionIsAlreadyLogged);
@@ -44,6 +50,7 @@ struct KernelAssertInfo
             KernelAssertInfoBuffer[0].context = context;
             KernelAssertInfoBuffer[0].index = index;
             KernelAssertInfoBuffer[0].bufferSize = bufferSize;
+            KernelAssertInfoBuffer[0].debugValue = debugValue;
         }
     }
 
@@ -53,18 +60,26 @@ struct KernelAssertInfo
         if (isIndexValid)
             return index;
 
-        LogAssertion(index, bufferSize, lineNumber, context);
+        LogAssertion(index, bufferSize, 0, lineNumber, context);
 
         //Always return a valid index to avoid GPU crashs so CPU get a chance to catch the error.
         return 0;
     }
 
-    void KernelAssert(bool isOk, int lineNumber)
+    void KernelAssert(bool isOk, uint lineNumber)
     {
         if (isOk)
             return;
 
-        LogAssertion(0, 0, lineNumber, KERNEL_ASSERT_CONTEXT_ASSERTION);
+        LogAssertion(0, 0, 0, lineNumber, KERNEL_ASSERT_CONTEXT_ASSERTION);
+    }
+
+    void KernelAssertWithDebugValue(bool isOk, uint lineNumber, uint value)
+    {
+        if (isOk)
+            return;
+
+        LogAssertion(0, 0, value, lineNumber, KERNEL_ASSERT_CONTEXT_ASSERTION_WITH_VALUE);
     }
 
     #define ASSERT_TENSOR_INDEX(index, context) \
@@ -75,8 +90,10 @@ struct KernelAssertInfo
     #define TENSOR_WRITE(varName, index, context) ASSERT_TENSOR_INDEX(index, context); data[safeIndex] = varName
 
     #define KERNEL_ASSERT(condition) KernelAssert(condition, __LINE__)
+    #define KERNEL_ASSERT_WITH_VALUE(condition, value) KernelAssertWithDebugValue(condition, __LINE__, value)
 #else
     #define TENSOR_READ(varName, index, context) varName = data[index]
     #define TENSOR_WRITE(varName, index, context) data[index] = varName
     #define KERNEL_ASSERT(condition)
+    #define KERNEL_ASSERT_WITH_VALUE(condition, value)
 #endif

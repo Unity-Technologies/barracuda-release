@@ -12,6 +12,8 @@
 //Shader compiler goes OOM when compiling this shader in KERNEL_ASSERTS mode on DX11, thus the FORCE_NO_DEBUG.
 #pragma kernel Dense_Tilled4x4_Cached FORCE_NO_DEBUG=1
 
+#pragma kernel MatMulPackB0Bias
+
 #include "Tensor.cginc"
 
 TENSOR_DECL(X)
@@ -1786,4 +1788,21 @@ void Dense_Tilled4x4_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
     O.SetWithActivation(y * 4 + 2, x * 4 + 3, v3.y);
     O.SetWithActivation(y * 4 + 3, x * 4 + 2, v3.z);
     O.SetWithActivation(y * 4 + 3, x * 4 + 3, v3.w);
+}
+
+
+[numthreads(8, 8, 1)]
+void MatMulPackB0Bias(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_ARGS2(X, O);
+
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
+
+    if (x >= O.GetFlatWidth()) return;
+    if (y >= O.GetFlatHeight()) return;
+
+    float v = X.Get(y, x);
+    O.Set(y, x, v);
+    O.FastSet(O.GetLength() + x, 0.0f);
 }

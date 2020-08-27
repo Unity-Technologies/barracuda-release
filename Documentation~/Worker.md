@@ -34,6 +34,8 @@ There a number of different backends you can choose to run your network:
   * `ComputePrecompiled` : highly efficient GPU code with all overhead code stripped away and precompiled into the worker.
   * `Compute` : highly efficient GPU but with some logic overhead.
   * `ComputeRef` : a less efficient but more stable reference implementation.
+* Auto 
+  * At the moment defaults to GPU
 
 **Note**:  You can use reference implementations as a stable baseline for comparison with other implementations. 
 

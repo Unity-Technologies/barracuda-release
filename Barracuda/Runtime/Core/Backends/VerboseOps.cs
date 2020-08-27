@@ -209,6 +209,21 @@ public class VerboseOps : IOps, IModelCompiler
         O.PrintDataPart(32, Prefix + "OneHot");
         return O;
     }
+    Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
+    {
+        Debug.Log($"{X.shape} Ω k={k} a={axis} l={largest} s={sorted}");
+        var O = m_Ops.TopKIndices(X, k, axis, largest, sorted);
+        O.PrintDataPart(32, Prefix + "TopKIndices");
+        return O;
+    }
+
+    public Tensor TopKValues(Tensor X, Tensor I, int axis)
+    {
+        Debug.Log($"{X.shape} {I.shape} Ω a={axis}");
+        var O = m_Ops.TopKValues(X, I, axis);
+        O.PrintDataPart(32, Prefix + "TopKValues");
+        return O;
+    }
 
     Tensor IOps.Relu(Tensor X)
     {
@@ -322,7 +337,6 @@ public class VerboseOps : IOps, IModelCompiler
         O.PrintDataPart(32, Prefix + "Floor");
         return O;
     }
-
     Tensor IOps.Reciprocal(Tensor X)
     {
         D.Log(X.shape + " ()");
@@ -356,6 +370,83 @@ public class VerboseOps : IOps, IModelCompiler
         D.Log(X.shape + " ()");
         var O = m_Ops.Sqrt(X);
         O.PrintDataPart(32, Prefix + "Sqrt");
+        return O;
+    }
+    Tensor IOps.Acos(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Acos");
+        return O;
+    }
+    Tensor IOps.Acosh(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Acos");
+        return O;
+    }
+    Tensor IOps.Asin(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Asin");
+        return O;
+    }
+    Tensor IOps.Asinh(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Asin");
+        return O;
+    }
+    Tensor IOps.Atan(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Atan");
+        return O;
+    }
+    Tensor IOps.Atanh(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Atan");
+        return O;
+    }
+    Tensor IOps.Cos(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "(");
+        return O;
+    }
+    Tensor IOps.Cosh(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Cosh");
+        return O;
+    }
+    Tensor IOps.Sin(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "(");
+        return O;
+    }
+    Tensor IOps.Sinh(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "Sinh");
+        return O;
+    }
+    Tensor IOps.Tan(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Reciprocal(X);
+        O.PrintDataPart(32, Prefix + "(");
         return O;
     }
 
@@ -536,6 +627,12 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Transpose(Tensor X)
     {
         var O = m_Ops.Transpose(X);
+        D.Log(X.shape + " T " + O.shape);
+        return O;
+    }
+    Tensor IOps.Transpose(Tensor X, int[] permutations)
+    {
+        var O = m_Ops.Transpose(X, permutations);
         D.Log(X.shape + " T " + O.shape);
         return O;
     }

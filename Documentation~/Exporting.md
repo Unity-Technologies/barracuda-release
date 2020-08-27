@@ -107,6 +107,8 @@ Alternatively, you can use the [command line](https://github.com/onnx/tensorflow
 python -m tf2onnx.convert --graphdef model.pb --inputs=input:0 --outputs=output:0 --output model.onnx
 ```
 
+Note that the flag `inputs_as_nchw` is optional, but with ONNX in `NCHW` and Tensorflow in `NHWC` format, it is best to add this option.
+
 ## Keras
 To export a Keras neural network to ONNX you need [keras2onnx](https://github.com/onnx/keras-onnx).
 
@@ -130,6 +132,9 @@ onnx_model = keras2onnx.convert_keras(net,         # keras model
 onnx.save_model(onnx_model, "example.onnx")
 ```
 
+Note that the flag `inputs_as_nchw` is optional, but with ONNX in `NCHW` and Keras in `NHWC` format, it is best to add this option.
+
+
 ## Notes
 * In most cases, use ONNX `opset=9`, because it has wider coverage in Barracuda.
-* When exporting from TensorFlow or Keras, use TF-1 instead of TF-2.
+* When exporting from TensorFlow or Keras, use `TF-1` instead of `TF-2`.

@@ -383,7 +383,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 var instructions = new List<CompiledInstruction>();
                 var Xr = X;
-                while (Xr.height * Xr.width >= 64)
+                while (Xr.height * Xr.width >= 8*8*2)
                 {
                     var lastLength = Xr.length;
                     var pool = new[] { 8, 8 };
@@ -425,7 +425,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 var instructions = new List<CompiledInstruction>();
                 var Xr = X;
-                while (Xr.height * Xr.width >= 64)
+                while (Xr.height * Xr.width >= 8*8*2)
                 {
                     var lastLength = Xr.length;
                     var pool = new[] { 8, 8 };
@@ -511,6 +511,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             // Activations
             else if (l.type == Layer.Type.Activation)
             {
+                if (!X.IsNHWC())
+                    //8D activation are not supported on compute path atm, will fallback.
+                    continue;
+
                 if (l.activation == Layer.Activation.Softmax)
                 {
                     kernel = BestKernel(
@@ -622,6 +626,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (m_Compiled.kernel.shader == null)
             return base.Conv2D(X, K, B, stride, pad, fusedActivation);
 
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -660,6 +665,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (K.kernelDepth != 1 || m_Compiled.kernel.shader == null)
             return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -689,8 +695,12 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
+        if (m_Compiled.instructions == null)
+            return base.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
+
         Assert.IsTrue(m_Compiled.instructions.Length >= 3); // pad, kernel flip, conv, ? fusedActivation
 
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -769,6 +779,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (m_Compiled.kernel.shader == null)
             return base.Upsample2D(X, scale, bilinear);
 
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(scale.Length, 2);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
@@ -811,6 +822,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     {
         if (m_Compiled.kernel.shader == null)
             return base.ScaleBias(X, S, B);
+
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
@@ -881,7 +895,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     }
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
-        if (axis != 3 && axis != -1)
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
+
+        if (axis != TensorShape.C && axis != -1)
             throw new NotImplementedException();
 
         if (pool <= 0)
@@ -1065,8 +1082,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             fn.SetTensor(_DeclB, _DataB, B.shape, Pin(B).buffer, Pin(B).offset);
             fn.shader.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
-            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape));
-            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape));
+            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder));
+            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder));
 
             fn.Dispatch();
 
@@ -1081,6 +1098,11 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors) || !TensorExtensions.Is8DAxisConvertibleToNHWC(axis))
+            return base.Concat(tensors, axis);
+
+        if (m_Compiled.instructions == null)
+            return base.Concat(tensors, axis);
         foreach (var i in m_Compiled.instructions)
         {
             if (i.kernel.shader == null)
@@ -1092,6 +1114,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
         axis = O.shape.Axis(axis);
+        var axisNCHW = TensorExtensions.Convert8DAxisToNHWC(axis);
 
         Assert.AreEqual(tensors.Length, m_Compiled.instructions.Length);
         for (int i = 0; i < tensors.Length; ++i)
@@ -1107,7 +1130,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
             fn.Dispatch();
 
-            offsets[axis] += X.shape[axis];
+            offsets[axisNCHW] += X.shape[axis];
         }
 
         return O;

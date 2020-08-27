@@ -32,6 +32,12 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
             if (iterator.propertyPath != "m_Script")
                 EditorGUILayout.PropertyField(iterator, true);
         }
+
+        if(onnxModelImporter.optimizeModel)
+        {
+            EditorGUILayout.HelpBox("Model Optimizations On, remove and re-import model if incorrect behavior", MessageType.Info);
+        }
+
         ApplyRevertGUI();
     }
 
@@ -81,8 +87,11 @@ public class NNModelEditor : Editor
     }
     public override Texture2D RenderStaticPreview(string assetPath, UnityEngine.Object[] subAssets, int width, int height)
     {
+        Texture2D icon = LoadIconTexture();
+        if (icon == null)
+            return null;
         Texture2D tex = new Texture2D(width, height);
-        EditorUtility.CopySerialized(LoadIconTexture(), tex);
+        EditorUtility.CopySerialized(icon, tex);
         return tex;
     }
 

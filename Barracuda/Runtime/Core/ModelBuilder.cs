@@ -252,6 +252,20 @@ namespace Unity.Barracuda
             return layer;
         }
 
+        /// <summary>
+        /// Applies matrix multiplication between A and B
+        /// </summary>
+        public Layer MatMul(string name, object input0, object input1)
+        {
+            var inputs = new[] { input0, input1 };
+            Layer layer = new Layer(name, Layer.Type.MatMul);
+            layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
         private Layer Conv(string name, Layer.Type convType, object input, Int32[] stride, Int32[] pad, Int32[] outputPad, Tensor kernel, Tensor bias)
         {
             Layer layer = new Layer(name, convType);
@@ -524,7 +538,7 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
-        /// Return a tensor of shape [input.Batch, input.Height * input.Width * input.Channels]
+        /// From a Tensor of shape [S,R,N,T,D,H,W,C] return a tensor of shape [S,R,N,1,1,1,1,T*D*H*W*C]
         /// </summary>
         public Layer Flatten(string name, object input)
         {
@@ -538,11 +552,14 @@ namespace Unity.Barracuda
 
         /// <summary>
         /// Concatenate a list of tensors into a single tensor. All input tensors must have the same shape, except for the axis to concatenate on.
+        /// If axisIs8D==true axis rank is from [S,R,N,T,D,H,W,C] overwise from [N,H,W,C]
+        /// `axis` must be superior to -4
+        /// `axis` must be inferior to 8 when axisIs8D==true or inferior to 4 if axisIs8D==false
         /// </summary>
-        public Layer Concat(string name, object[] inputs, int axis = -1)
+        public Layer Concat(string name, object[] inputs, int axis = -1, bool axisIs8D=false)
         {
             Layer layer = new Layer(name, Layer.Type.Concat);
-            layer.axis = axis;
+            layer.axis = axisIs8D?axis:TensorExtensions.NHWCTo8DAxis(axis);
             layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
 
             m_Model.layers.Add(layer);
@@ -573,6 +590,18 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Make a shallow copy of the input tensor.
+        /// </summary>
+        public Layer Copy(string name, object input)
+        {
+            Layer layer = new Layer(name, Layer.Type.Nop);
+            layer.inputs = new [] {ResolveInput(input)};
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
         /// Maps integer to one-hot vector of length equal to depth.
         /// </summary>
         public Layer OneHot(string name, object input, int depth, int on, int off)
@@ -588,6 +617,48 @@ namespace Unity.Barracuda
             return layer;
         }
 
+        /// <summary>
+        /// Retrieve the indices for top-K largest or smallest elements along a specified axis.
+        /// </summary>
+        public Layer TopKIndices(string name, object input, object k, int axis, bool largest, bool sorted)
+        {
+            var layer = new Layer(name, Layer.Type.TopKIndices);
+            layer.inputs = new [] {ResolveInput(input), ResolveInput(k)};
+            layer.axis = axis;
+            layer.pad = new [] { largest ? 1 : 0, sorted ? 1 : 0 };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Given the indices for top-K largest or smallest elements along a specified axis, return the values
+        /// </summary>
+        public Layer TopKValues(string name, object input, object indices, int axis)
+        {
+            var layer = new Layer(name, Layer.Type.TopKValues);
+            layer.inputs = new [] {ResolveInput(input), ResolveInput(indices)};
+            layer.axis = axis;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Transpose
+        /// </summary>
+        public Layer Transpose(string name, object input, int[] permutations)
+        {
+            Layer layer = new Layer(name, Layer.Type.Transpose);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.pool = permutations;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
 
         private Layer Activation(Layer.Activation activation, string name, object input)
         {
@@ -800,6 +871,94 @@ namespace Unity.Barracuda
         public Layer Round(string name, object input)
         {
             return Activation(Layer.Activation.Round, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Acos` activation function: f(x) = acos(x)
+        /// </summary>
+        public Layer Acos(string name, object input)
+        {
+            return Activation(Layer.Activation.Acos, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Acosh` activation function: f(x) = acosh(x)
+        /// </summary>
+        public Layer Acosh(string name, object input)
+        {
+            return Activation(Layer.Activation.Acosh, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Asin` activation function: f(x) = asin(x)
+        /// </summary>
+        public Layer Asin(string name, object input)
+        {
+            return Activation(Layer.Activation.Asin, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Asinh` activation function: f(x) = asinh(x)
+        /// </summary>
+        public Layer Asinh(string name, object input)
+        {
+            return Activation(Layer.Activation.Asinh, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Atan` activation function: f(x) = atan(x)
+        /// </summary>
+        public Layer Atan(string name, object input)
+        {
+            return Activation(Layer.Activation.Atan, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Atanh` activation function: f(x) = atanh(x)
+        /// </summary>
+        public Layer Atanh(string name, object input)
+        {
+            return Activation(Layer.Activation.Atanh, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Cos` activation function: f(x) = cos(x)
+        /// </summary>
+        public Layer Cos(string name, object input)
+        {
+            return Activation(Layer.Activation.Cos, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Cosh` activation function: f(x) = cosh(x)
+        /// </summary>
+        public Layer Cosh(string name, object input)
+        {
+            return Activation(Layer.Activation.Cosh, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Sin` activation function: f(x) = sin(x)
+        /// </summary>
+        public Layer Sin(string name, object input)
+        {
+            return Activation(Layer.Activation.Sin, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Sinh` activation function: f(x) = sinh(x)
+        /// </summary>
+        public Layer Sinh(string name, object input)
+        {
+            return Activation(Layer.Activation.Sinh, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Tan` activation function: f(x) = tan(x)
+        /// </summary>
+        public Layer Tan(string name, object input)
+        {
+            return Activation(Layer.Activation.Tan, name, input);
         }
 
 
@@ -1154,12 +1313,15 @@ namespace Unity.Barracuda
 
         /// <summary>
         /// Computes a reduce operation (max/min/mean/prod/sum) of the input tensor's element along the provided axis
+        /// If axisIs8D==true axis rank is from [S,R,N,T,D,H,W,C] overwise from [N,H,W,C]
+        /// `axis` must be superior to -4
+        /// `axis` must be inferior to 8 when axisIs8D==true or inferior to 4 if axisIs8D==false
         /// </summary>
-        public Layer Reduce(Layer.Type type, string name, object input, int axis = -1)
+        public Layer Reduce(Layer.Type type, string name, object input, int axis = -1, bool axisIs8D=false)
         {
             Layer layer = new Layer(name, type);
             layer.inputs = new[] { ResolveInput(input) };
-            layer.axis = axis;
+            layer.axis = axisIs8D?axis:TensorExtensions.NHWCTo8DAxis(axis);
             m_Model.layers.Add(layer);
 
             return layer;
@@ -1167,18 +1329,26 @@ namespace Unity.Barracuda
 
         /// <summary>
         /// Gathers input along provided axis. Swizzling pattern is given by input indices:
+        /// If axisIs8D==false
         ///     axis == 0: gatheredData[b, y, x, c] = data[indices[b], y, x, c]
         ///     axis == 1: gatheredData[b, y, x, c] = data[b, indices[y], x, c]
-        ///     axis == 2: gatheredData[b, y, x, c] = data[b, y, indices[x], c]
-        ///     axis == 3: gatheredData[b, y, x, c] = data[b, y, x, indices[c]]
+        ///     ...
+        /// Else
+        ///     axis == 0: gatheredData[s, r, n, t, d, y, x, c] = data[indices[s], r, n, t, d, y, x, c]
+        ///     axis == 1: gatheredData[s, r, n, t, d, y, x, c] = data[indices[s], indices[y], n, t, d, y, x, c]
+        ///     ...
+        /// While in both case
+        ///     axis == -1: gatheredData[..., x, c] = data[...x, indices[c]]
+        /// `axis` must be superior to -4
+        /// `axis` must be inferior to 8 when axisIs8D==true or inferior to 4 if axisIs8D==false
         /// </summary>
-        public Layer Gather(string name, object input, object indices, int axis = -1)
+        public Layer Gather(string name, object input, object indices, int axis = -1, bool axisIs8D=false)
         {
             object[] inputs = new[] { input, indices };
 
             Layer layer = new Layer(name, Layer.Type.Gather);
             layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
-            layer.axis = axis;
+            layer.axis = axisIs8D?axis:TensorExtensions.NHWCTo8DAxis(axis);
             m_Model.layers.Add(layer);
 
             return layer;

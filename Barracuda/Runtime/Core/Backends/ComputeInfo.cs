@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace Unity.Barracuda
@@ -26,6 +26,14 @@ namespace Unity.Barracuda
 
         static ComputeInfo()
         {
+            string[] args = System.Environment.GetCommandLineArgs ();
+            for (int i = 0; i < args.Length; i++) {
+                if (args [i] == "-barracuda-compute-use-nchw")
+                {
+                    channelsOrder = ChannelsOrder.NCHW;
+                }
+            }
+
             supportsCompute = SystemInfo.supportsComputeShaders;
 
             graphicsDeviceVendor = SystemInfo.graphicsDeviceVendor;

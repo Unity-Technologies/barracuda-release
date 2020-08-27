@@ -357,7 +357,6 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_eluInnerLoopDelegate);
     }
 
-
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
@@ -584,6 +583,402 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_tanhInnerLoopDelegate);
     }
 
+    public override Tensor Acos(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                AcosInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Acos(v);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void AcosInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_acosInnerLoopDelegate);
+    }
+
+    public override Tensor Acosh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                AcoshInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Log(v + Mathf.Sqrt(v*v - 1.0f));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void AcoshInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_acoshInnerLoopDelegate);
+    }
+
+    public override Tensor Asin(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                AsinInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Asin(v);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void AsinInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_asinInnerLoopDelegate);
+    }
+
+    public override Tensor Asinh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                AsinhInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Log(v + Mathf.Sqrt(v*v + 1.0f));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void AsinhInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_asinhInnerLoopDelegate);
+    }
+
+    public override Tensor Atan(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                AtanInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Atan(v);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void AtanInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_atanInnerLoopDelegate);
+    }
+
+    public override Tensor Atanh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                AtanhInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = 0.5f * Mathf.Log((1.0f + v)/(1.0f - v));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void AtanhInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_atanhInnerLoopDelegate);
+    }
+
+    public override Tensor Cos(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                CosInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Cos(v);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void CosInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_cosInnerLoopDelegate);
+    }
+
+    public override Tensor Cosh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                CoshInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = 0.5f * (Mathf.Exp(v) + Mathf.Exp(-v));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void CoshInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_coshInnerLoopDelegate);
+    }
+
+    public override Tensor Sin(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                SinInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Sin(v);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void SinInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sinInnerLoopDelegate);
+    }
+
+    public override Tensor Sinh(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                SinhInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = 0.5f * (Mathf.Exp(v) - Mathf.Exp(-v));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void SinhInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sinhInnerLoopDelegate);
+    }
+
+    public override Tensor Tan(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                TanInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Tan(v);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void TanInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_tanInnerLoopDelegate);
+    }
+
     private bool CanUseModuloForBroadcasting(TensorShape o, TensorShape a)
     {
         // last to first: dimensions must be equal. if not equal all rest must be 1
@@ -591,7 +986,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
            return true;
 
         bool dimensionMismatch = false;
-        for (int i = 3; i >= 0; --i)
+        for (int i = TensorShape.MaxRank; i >= 0; --i)
         {
             if (dimensionMismatch)
             {
@@ -614,6 +1009,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float,float,float> opRemainder, Action<long> opInnerLoop, Action<long> opInnerLoopNoBroadcast)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+            throw new NotImplementedException();
+
         var O = NewTensorLike(tensors);
         var A = tensors[0];
 
@@ -723,6 +1121,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     public override Tensor LogicalNot(Tensor X)
     {
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
+
         var O = NewTensorLike(X);
 
         unsafe
@@ -745,6 +1146,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyLogicalOperator(Tensor A, Tensor B, Func<float,float,float> logicalOpRemainder, Action<long> logicalOpInnerLoop, Action<long> logicalOpInnerLoopNoBroadcast)
     {
+        if (!A.shape.IsNHWC() || !B.shape.IsNHWC())
+            throw new NotImplementedException();
+
         var O = NewTensorLike(new Tensor[] { A, B });
 
         unsafe
@@ -882,6 +1286,28 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 return Exp(X);
             case Layer.FusedActivation.Log:
                 return Log(X);
+            case Layer.FusedActivation.Acos:
+                return Acos(X);
+            case Layer.FusedActivation.Acosh:
+                return Acosh(X);
+            case Layer.FusedActivation.Asin:
+                return Asin(X);
+            case Layer.FusedActivation.Asinh:
+                return Asinh(X);
+            case Layer.FusedActivation.Atan:
+                return Atan(X);
+            case Layer.FusedActivation.Atanh:
+                return Atanh(X);
+            case Layer.FusedActivation.Cos:
+                return Cos(X);
+            case Layer.FusedActivation.Cosh:
+                return Cosh(X);
+            case Layer.FusedActivation.Sin:
+                return Sin(X);
+            case Layer.FusedActivation.Sinh:
+                return Sinh(X);
+            case Layer.FusedActivation.Tan:
+                return Tan(X);
             default:
                 throw new NotImplementedException();
         }
@@ -889,6 +1315,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -957,6 +1384,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -1107,6 +1535,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     Tensor Conv2DUsingIm2Col(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -1245,6 +1674,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     Tensor Conv2DUsingIm2ColSliced(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -1474,6 +1904,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         if (K.kernelDepth != 1)
             throw new NotImplementedException();
 
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -1961,6 +2392,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyPadding(Tensor X, int[] pad, float constant, Action<long> paddingOp)
     {
+        Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(pad.Length, 4);
 
         var O = NewTensor(X.shape.ApplyBorder(pad));
@@ -2007,7 +2439,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                         offset += numItemToPrepadInWidth;
 
                         //CenterX
-                        int srcFloatOffset = X.Index(b, (int)y - prePadY, preCropX, 0) + Pin(X).offset;
+                        int srcFloatOffset = X.Index(b, (int)y - prePadY + preCropY, preCropX, 0) + Pin(X).offset;
                         int dstFloatOffset = O.Index(b, (int)y, prePadX, 0) + Pin(O).offset;
                         int numFloatToCopy = O.channels * croppedWidth;
                         Buffer.BlockCopy(Pin(X).array, srcFloatOffset * sizeof(float), Pin(O).array, dstFloatOffset * sizeof(float), numFloatToCopy * sizeof(float));
@@ -2059,6 +2491,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
+
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
@@ -2138,6 +2573,17 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_relu6InnerLoopDelegate;
         public Action<long> m_leakyReluInnerLoopDelegate;
         public Action<long> m_preluInnerLoopDelegate;
+        public Action<long> m_acosInnerLoopDelegate;
+        public Action<long> m_acoshInnerLoopDelegate;
+        public Action<long> m_asinInnerLoopDelegate;
+        public Action<long> m_asinhInnerLoopDelegate;
+        public Action<long> m_atanInnerLoopDelegate;
+        public Action<long> m_atanhInnerLoopDelegate;
+        public Action<long> m_cosInnerLoopDelegate;
+        public Action<long> m_coshInnerLoopDelegate;
+        public Action<long> m_sinInnerLoopDelegate;
+        public Action<long> m_sinhInnerLoopDelegate;
+        public Action<long> m_tanInnerLoopDelegate;
         public Action<long> m_maxInnerLoopDelegate;
         public Action<long> m_minInnerLoopDelegate;
         public Action<long> m_divInnerLoopDelegate;
@@ -2203,6 +2649,17 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_relu6InnerLoopDelegate = Relu6InnerLoop;
             m_leakyReluInnerLoopDelegate = LeakyReluInnerLoop;
             m_preluInnerLoopDelegate = PReluInnerLoop;
+            m_acosInnerLoopDelegate = AcosInnerLoop;
+            m_acoshInnerLoopDelegate = AcoshInnerLoop;
+            m_asinInnerLoopDelegate = AsinInnerLoop;
+            m_asinhInnerLoopDelegate = AsinhInnerLoop;
+            m_atanInnerLoopDelegate = AtanInnerLoop;
+            m_atanhInnerLoopDelegate = AtanhInnerLoop;
+            m_cosInnerLoopDelegate = CosInnerLoop;
+            m_coshInnerLoopDelegate = CoshInnerLoop;
+            m_sinInnerLoopDelegate = SinInnerLoop;
+            m_sinhInnerLoopDelegate = SinhInnerLoop;
+            m_tanInnerLoopDelegate = TanInnerLoop;
             m_maxInnerLoopDelegate = MaxInnerLoop;
             m_minInnerLoopDelegate = MinInnerLoop;
             m_divInnerLoopDelegate = DivInnerLoop;
@@ -3128,6 +3585,226 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             v1 = MathfEx.Tanh(v1);
             v2 = MathfEx.Tanh(v2);
             v3 = MathfEx.Tanh(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void AcosInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Acos(v0);
+            v1 = Mathf.Acos(v1);
+            v2 = Mathf.Acos(v2);
+            v3 = Mathf.Acos(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void AcoshInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Log(v0 + Mathf.Sqrt(v0 * v0 - 1.0f));
+            v1 = Mathf.Log(v1 + Mathf.Sqrt(v1 * v1 - 1.0f));
+            v2 = Mathf.Log(v2 + Mathf.Sqrt(v2 * v2 - 1.0f));
+            v3 = Mathf.Log(v3 + Mathf.Sqrt(v3 * v3 - 1.0f));
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void AsinInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Asin(v0);
+            v1 = Mathf.Asin(v1);
+            v2 = Mathf.Asin(v2);
+            v3 = Mathf.Asin(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void AsinhInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Log(v0 + Mathf.Sqrt(v0 * v0 + 1.0f));
+            v1 = Mathf.Log(v1 + Mathf.Sqrt(v1 * v1 + 1.0f));
+            v2 = Mathf.Log(v2 + Mathf.Sqrt(v2 * v2 + 1.0f));
+            v3 = Mathf.Log(v3 + Mathf.Sqrt(v3 * v3 + 1.0f));
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void AtanInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Atan(v0);
+            v1 = Mathf.Atan(v1);
+            v2 = Mathf.Atan(v2);
+            v3 = Mathf.Atan(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void AtanhInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = 0.5f * Mathf.Log((1.0f + v0) / (1.0f - v0));
+            v1 = 0.5f * Mathf.Log((1.0f + v1) / (1.0f - v1));
+            v2 = 0.5f * Mathf.Log((1.0f + v2) / (1.0f - v2));
+            v3 = 0.5f * Mathf.Log((1.0f + v3) / (1.0f - v3));
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void CosInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Cos(v0);
+            v1 = Mathf.Cos(v1);
+            v2 = Mathf.Cos(v2);
+            v3 = Mathf.Cos(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void CoshInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = 0.5f * (Mathf.Exp(v0) + Mathf.Exp(-v0));
+            v1 = 0.5f * (Mathf.Exp(v1) + Mathf.Exp(-v1));
+            v2 = 0.5f * (Mathf.Exp(v2) + Mathf.Exp(-v2));
+            v3 = 0.5f * (Mathf.Exp(v3) + Mathf.Exp(-v3));
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void SinInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Sin(v0);
+            v1 = Mathf.Sin(v1);
+            v2 = Mathf.Sin(v2);
+            v3 = Mathf.Sin(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void SinhInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = 0.5f * (Mathf.Exp(v0) - Mathf.Exp(-v0));
+            v1 = 0.5f * (Mathf.Exp(v1) - Mathf.Exp(-v1));
+            v2 = 0.5f * (Mathf.Exp(v2) - Mathf.Exp(-v2));
+            v3 = 0.5f * (Mathf.Exp(v3) - Mathf.Exp(-v3));
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void TanInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Tan(v0);
+            v1 = Mathf.Tan(v1);
+            v2 = Mathf.Tan(v2);
+            v3 = Mathf.Tan(v3);
 
             baseOPtr[0] = v0;
             baseOPtr[1] = v1;

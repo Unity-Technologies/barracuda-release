@@ -8,7 +8,7 @@ using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleToAttribute("Barracuda.EditorTests")]
 
-namespace Unity.Barracuda
+namespace Unity.Barracuda.ONNX
 {
     public class ONNXNodeWrapper
     {
@@ -65,6 +65,7 @@ namespace Unity.Barracuda
         public int Input5Features { get { return m_ONNXModelTensors.variables[Input5].features; } }
         public int Input6Features { get { return m_ONNXModelTensors.variables[Input6].features; } }
         public int Input0Rank { get { return m_ONNXModelTensors.variables[Input0].rank; } }
+        public int Input1Rank { get { return m_ONNXModelTensors.variables[Input1].rank; } }
         public VariableTensor.Layout Input0Layout { get { return m_ONNXModelTensors.variables[Input0].layout; } }
         public Tensor Input0Constant(string onnxLayout, string name = "X") { return GetRequiredInputAsConstant(Input0, onnxLayout, name); }
         public Tensor Input1Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input1, onnxLayout, name); }

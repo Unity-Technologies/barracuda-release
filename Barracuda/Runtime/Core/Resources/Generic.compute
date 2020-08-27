@@ -22,7 +22,8 @@
 #pragma kernel UpsampleBilinear2D_2x2_NCHW CHANNELS_FIRST=1
 #pragma kernel Copy_NHWC CHANNELS_FIRST=0
 #pragma kernel Copy_NCHW CHANNELS_FIRST=1
-#pragma kernel ReshapeFromNHWCModel_NCHW CHANNELS_FIRST=1
+#pragma kernel ReshapeFromNHWCModel_Flat_NCHW CHANNELS_FIRST=1
+#pragma kernel ReshapeFromNHWCModel_Loop_NCHW CHANNELS_FIRST=1
 
 #include "Tensor.cginc"
 
@@ -363,8 +364,8 @@ void KERNEL_FUNC(Copy)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
-void ReshapeFromNHWCModel_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+NUMTHREADS((256,1,1), (128,1,1), (64,1,1))
+void ReshapeFromNHWCModel_Flat_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
     TENSOR_ARGS2(X, O);
@@ -374,16 +375,42 @@ void ReshapeFromNHWCModel_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     for (uint n = 0; n < O.batch; ++n)
     {
-        //find the memory offset of target item in HWC format
+        //find the memory offset of target item in HWC format (aka on O)
         uint index_NHWC = O.IndexHWC(n,y,x,c);
-        //from this offset find indices of item in HWC format before the reshape
-        uint c_NHWC = index_NHWC % X.channels;
-        uint x_NHWC = (index_NHWC / X.channels) % X.width;
-        uint y_NHWC = (index_NHWC / (X.channels * X.width)) % X.height;
-        uint b_NHWC = (index_NHWC / (X.channels * X.width * X.height)) % X.batch;
+        //from this offset find indices of item in HWC format before the reshape (aka on X)
+        uint c_NHWC, y_NHWC, x_NHWC, b_NHWC;
+        X.GetPositionFromIndexNHWC(index_NHWC, b_NHWC, y_NHWC, x_NHWC, c_NHWC);
 
         //finally copy item
         float v = X.Get(b_NHWC, y_NHWC, x_NHWC, c_NHWC);
         O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((64,1,1), (64,1,1), (64,1,1))
+void ReshapeFromNHWCModel_Loop_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.length, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint i = dispatchThreadID.x;
+    uint len = O.GetLength();
+
+    while (i < len)
+    {
+        uint c, y, x, n;
+        O.GetPositionFromIndexNCHW(i, n, y, x, c);
+
+        //find the memory offset of target item in HWC format (aka on O)
+        uint index_NHWC = O.IndexHWC(n,y,x,c);
+        //from this offset find indices of item in HWC format before the reshape (aka on X)
+        uint c_NHWC, y_NHWC, x_NHWC, b_NHWC;
+        X.GetPositionFromIndexNHWC(index_NHWC, b_NHWC, y_NHWC, x_NHWC, c_NHWC);
+
+        //finally copy item
+        float v = X.Get(b_NHWC, y_NHWC, x_NHWC, c_NHWC);
+        O.Set(n, y, x, c, v);
+
+        i += _LoopStride;
     }
 }
