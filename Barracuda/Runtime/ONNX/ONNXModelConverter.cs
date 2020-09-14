@@ -1018,7 +1018,7 @@ namespace Unity.Barracuda.ONNX
 
                         // example (NCHW): -1,2,2,16 -> (incorrect) -1,2,16,2 -> (fix) -1,2,2,16
                         // example  (NCW): -1,2,16   -> (incorrect) -1,1,16,2 -> (fix) -1,1,2,16
-                        inputDesc.shape = ONNXLayout.Permute(inputDesc.shape, new[] { -1, -1, 2, -1, -1, 7, 5, 6 });
+                        inputDesc.shape = ONNXLayout.Permute(inputDesc.shape, new[] { -1, -1, 2, -1, -1, 5, 7, 6 });
 
                         model.inputs[inputIndex] = inputDesc;
                         // @TODO: figure out, if there is any case where we would have to propagate fixed layout assumption downstream?

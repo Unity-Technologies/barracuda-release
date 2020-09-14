@@ -1,5 +1,8 @@
 # Release notes
 
+## [1.1.1] - 2020-09-04
+- Fix: Fixed ONNX input shape detection for NHWC networks.
+
 ## [1.1.0] - 2020-08-20
 - Performance: Linear Layer Fusing for `Add/Mul/Conv/Dense/ScaleBias` ops.
 - Performance: Improved `InstanceNorm` performance.
