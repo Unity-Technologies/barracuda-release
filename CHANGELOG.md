@@ -1,5 +1,8 @@
 # Release notes
 
+## [1.0.3] - 2020-09-15
+- Fix: Fixed matrix multiplication issue in Universal Mac Standalone builds. 
+
 ## [1.0.2] - 2020-07-30
 - Upgraded Burst dependency to 1.3.4.
 - Docs: Minor fixes. 

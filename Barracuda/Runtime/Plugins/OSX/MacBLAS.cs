@@ -15,11 +15,10 @@ namespace Unity.Barracuda
     [Preserve]
     public class MacBLAS : BLASPlugin
     {
-        [DllImport("macblas")]
-        static extern unsafe void macsgemm(float* Ap, int AN, int AM,
-            float* Bp, int BN, int BM,
-            float* Cp, int CN, int CM,
-            int bs, bool transposeA, bool transposeB);
+        [DllImport("/System/Library/Frameworks/Accelerate.framework/Accelerate")]
+        static extern unsafe void cblas_sgemm(CBLAS_ORDER __Order, CBLAS_TRANSPOSE __TransA, CBLAS_TRANSPOSE __TransB,
+            int __M, int __N, int __K, float __alpha, float *__A, int __lda, float *__B, int __ldb,
+            float __beta, float *__C, int __ldc);
 
         public bool IsNative()
         {
@@ -36,7 +35,9 @@ namespace Unity.Barracuda
             int bs,
             bool transposeA = false, bool transposeB = false)
         {
-            macsgemm(Ap, AN, AM, Bp, BN, BM, Cp, CN, CM, bs, transposeA, transposeB);
+            cblas_sgemm(CBLAS_ORDER.CblasRowMajor, transposeA ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
+                transposeB ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
+                AN, BM, BN, 1.0f, Ap, AM, Bp, BM, 1.0f, Cp, CM);
         }
 
         public unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
@@ -68,9 +69,25 @@ namespace Unity.Barracuda
 
             public void Execute()
             {
-                macsgemm(Ap, AN, AM, Bp, BN, BM, Cp, CN, CM, bs, transposeA, transposeB);    
+                cblas_sgemm(CBLAS_ORDER.CblasRowMajor, transposeA ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
+                    transposeB ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
+                    AN, BM, BN, 1.0f, Ap, AM, Bp, BM, 1.0f, Cp, CM);
             }
         }
+
+        internal enum CBLAS_ORDER
+        {
+            CblasRowMajor=101,
+            CblasColMajor=102
+        };
+
+        internal enum CBLAS_TRANSPOSE
+        {
+            CblasNoTrans=111,
+            CblasTrans=112,
+            CblasConjTrans=113,
+            AtlasConj=114
+        };
     }
 }
 #endif // UNITY_OSX
