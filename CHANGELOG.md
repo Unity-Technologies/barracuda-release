@@ -1,5 +1,8 @@
 # Release notes
 
+## [1.1.2] - 2020-10-14
+- Fix/Forward port: Fixed matrix multiplication issue in Universal Mac Standalone builds. 
+
 ## [1.1.1] - 2020-09-04
 - Fix: Fixed ONNX input shape detection for NHWC networks.
 
@@ -22,6 +25,16 @@
 - Fix: Fixed `ConvTranspose` when used with `ComputePrecompiled`.
 - Fix: Fixed `Concat` when used with `ComputePrecompiled`.
 - Fix: Fixed issue for some `Squeeze/Unsqueeze` + `ReduceOp` combinations.
+
+## [1.0.4] - 2020-10-07
+- Performance: improved memory handling while loading model data. This improvement should reduce GC memory pressure.
+
+## [1.0.3] - 2020-09-15
+- Fix: Fixed matrix multiplication issue in Universal Mac Standalone builds. 
+
+## [1.0.2] - 2020-07-30
+- Upgraded Burst dependency to 1.3.4.
+- Docs: Minor fixes. 
 
 ## [1.0.2] - 2020-07-30
 - Upgraded Burst dependency to 1.3.4.
