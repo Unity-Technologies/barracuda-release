@@ -26,6 +26,7 @@ public class GenericWorker : IWorker
     private IOps m_Ops;
     private IVars m_Vars;
     private IModelCompiler m_ModelCompiler;
+    private Tensor m_DummyInput;
     private bool m_RequestResetAllocator;
     private bool m_Verbose;
     private float m_Progress = 0f;
@@ -45,6 +46,7 @@ public class GenericWorker : IWorker
         m_Ops = ops;
         m_Vars = vars;
         m_ModelCompiler = ops as IModelCompiler;
+        m_DummyInput = new Tensor();
         m_Verbose = verbose;
 
         m_RequestResetAllocator = true;
@@ -67,6 +69,7 @@ public class GenericWorker : IWorker
         m_Vars?.Dispose();
         m_Ops?.ResetAllocator(false); // clear allocator's memory
         m_InputShapes?.Clear();
+        m_DummyInput?.Dispose();
 
         m_Vars = null;
         m_Ops = null;
@@ -175,7 +178,7 @@ public class GenericWorker : IWorker
             Profiler.BeginSample(l.name);
             var inputs = m_Vars.GatherInputs(l);
 
-            Tensor X = inputs.Length > 0 ? inputs[0] : new Tensor();
+            Tensor X = inputs.Length > 0 ? inputs[0] : m_DummyInput;
 
             if (m_Verbose)
                 D.Log("Layer: " + l.type + ((l.type == Layer.Type.Activation) ? ("." + l.activation) : "") + " " + l.name );

@@ -131,38 +131,29 @@ public static class ModelLoader
                     foreach (var t in layer.datasets)
                         D.Log($"        Tensor: {t.shape} offset: {t.offset} len: {t.length}");
 
-                if(applyPatching)
+                if (applyPatching)
                     PatchLayer(layers, layer);
             }
             model.layers = layers;
 
-            Int64 dataLength = 0;
+            Int64 floatsToRead = 0;
             for (var l = 0; l < model.layers.Count; ++l)
                 for (var d = 0; d < model.layers[l].datasets.Length; ++d)
-                    dataLength += model.layers[l].datasets[d].length;
+                    floatsToRead += model.layers[l].datasets[d].length;
 
             Profiler.EndSample();
 
-            if (!skipWeights)
+            if (skipWeights)
+                SkipLargeFloatArray(file, floatsToRead);
+            else
             {
-                Profiler.BeginSample("Barracuda.AllocModel");
-                var sharedWeights = new float[dataLength];
-                Profiler.EndSample();
-
-                Profiler.BeginSample("Barracuda.LoadModel");
-                byte[] bytes = file.ReadBytes(Convert.ToInt32(dataLength * sizeof(float))); // @TODO: support larger than MaxInt32 data blocks
-                Buffer.BlockCopy(bytes, 0, sharedWeights, 0, bytes.Length);
-                Profiler.EndSample();
+                var sharedWeights = ReadLargeFloatArray(file, floatsToRead);
 
                 for (var l = 0; l < model.layers.Count; ++l)
                     model.layers[l].weights = sharedWeights;
-                }
-            else
-            {
-                file.BaseStream.Seek(Convert.ToInt32(dataLength * sizeof(float)), SeekOrigin.Current);
             }
 
-            //Importer Reporting
+            // Importer Reporting
             try
             {
                 model.IrSource = ReadString(file);
@@ -192,7 +183,7 @@ public static class ModelLoader
         {
             foreach (var t in layer.datasets)
             {
-                Layer layerC        = new Layer(t.name, Layer.Type.Load);// load using tensor name
+                Layer layerC        = new Layer(t.name, Layer.Type.Load); // load using tensor name
                 layerC.inputs       = layer.inputs;
                 layerC.datasets     = new[] { t };
 
@@ -202,6 +193,7 @@ public static class ModelLoader
             // patch original layer
             layer.name              = layer.name + "_nop";
             layer.type              = Layer.Type.Nop;
+            layer.datasets          = new Layer.DataSet[] {};
         }
 
         // Split activation part into separate layer when activation fusing is not supported.
@@ -232,6 +224,63 @@ public static class ModelLoader
             layer.type          = Layer.Type.Activation;
             layer.activation    = Layer.Activation.None;
         }
+    }
+
+    private static void SkipLargeFloatArray(BinaryReader file, Int64 count)
+    {
+        Int64 bytesToReadInt64 = count * sizeof(float);
+        file.BaseStream.Seek(bytesToReadInt64, SeekOrigin.Current);
+    }
+
+    private static float[] ReadLargeFloatArray(BinaryReader file, Int64 count)
+    {
+        Profiler.BeginSample("Barracuda.AllocWeights");
+        var floats = new float[count];
+        Profiler.EndSample();
+
+        int bytesToRead;
+        Int64 bytesToReadInt64 = count * sizeof(float);
+        try
+        {
+            bytesToRead = Convert.ToInt32(bytesToReadInt64); // throws OverflowException
+        }
+        catch (OverflowException)
+        {
+            throw new OverflowException($"Files larger than 2GB currently are not supported. Attempt to read {bytesToReadInt64} bytes.");
+        }
+
+        Profiler.BeginSample("Barracuda.LoadWeights");
+        try
+        {
+            var readBuffer = new byte[4096]; // 4Kb is close to optimal read size.
+                                             // See for measurements: https://www.jacksondunstan.com/articles/3568
+                                             // Read size vs relative read-time:
+                                             // 64b: x10, 128b: x6, 256b: x4, 1Kb: x3, 4Kb: x3
+            int writeOffset = 0;
+            while (writeOffset < bytesToRead)
+            {
+                var bytesLeftToRead = bytesToRead - writeOffset;
+                var readSizeInBytes = Math.Min(readBuffer.Length, bytesLeftToRead);
+
+                Assert.IsTrue(readSizeInBytes > 0);
+                Assert.IsTrue(readSizeInBytes <= readBuffer.Length);
+                readSizeInBytes = file.BaseStream.Read(readBuffer, offset:0, count:readSizeInBytes);
+                if (readSizeInBytes == 0)
+                    throw new IOException($"Unexpected EOF reached. Read {writeOffset / sizeof(float)} out of expected {count} floats before reaching end of file.");
+
+                Buffer.BlockCopy(src:readBuffer, srcOffset:0,
+                                 dst:floats,     dstOffset:writeOffset,
+                                 count:readSizeInBytes);
+                writeOffset += readSizeInBytes;
+            }
+            Assert.AreEqual(writeOffset, bytesToRead);
+        }
+        finally
+        {
+            Profiler.EndSample();
+        }
+
+        return floats;
     }
 
     private static Int32[] ReadInt32Array(BinaryReader file)

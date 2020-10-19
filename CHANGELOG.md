@@ -1,5 +1,8 @@
 # Release notes
 
+## [1.0.4] - 2020-10-07
+- Performance: improved memory handling while loading model data. This improvement should reduce GC memory pressure.
+
 ## [1.0.3] - 2020-09-15
 - Fix: Fixed matrix multiplication issue in Universal Mac Standalone builds. 
 
