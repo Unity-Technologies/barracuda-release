@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using UnityEngine.Assertions;
@@ -7,6 +8,8 @@ using UnityEngine.Scripting;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
+
+[assembly: InternalsVisibleTo("Unity.Barracuda.BurstBLAS")]
 
 namespace Unity.Barracuda
 {
@@ -68,7 +71,7 @@ namespace Unity.Barracuda
         }
     }
 
-    public class MatrixUtils
+    internal class MatrixUtils
     {
         public static unsafe void CopyBlockWithPadding(float* matrixIn, int row, int N, int col, int M, float[] blockOut, int bs, bool transpose = false)
         {

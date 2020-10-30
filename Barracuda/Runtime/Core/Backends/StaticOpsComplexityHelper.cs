@@ -5,11 +5,11 @@ using System.Collections.Generic;
 namespace Unity.Barracuda {
 
 
-public class StaticLayerOppComplexity
+internal class StaticLayerOppComplexity
 {
     private readonly Dictionary<Layer.Type, Func<Layer, long>> m_layerComplexityStats =
         new Dictionary<Layer.Type, Func<Layer, long>>();
-        
+
     private void Add(Layer.Type layerType, Func<Layer, long> opStats)
     {
         m_layerComplexityStats.Add(layerType, opStats);

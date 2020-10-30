@@ -6,7 +6,7 @@ using UnityEngine.Assertions;
 namespace Unity.Barracuda
 {
 
-public class ModelOptimizer
+internal class ModelOptimizer
 {
     static public Model Optimize(Model model, bool allowFusing, HashSet<string> keepLayers = null)
     {
@@ -113,12 +113,25 @@ public class ModelOptimizer
         }
     }
 
+    private static bool IsPermutationNoop(int[] permutations)
+    {
+        for (int i = 0; i < permutations.Length; ++i)
+            if (permutations[i] != i)
+                return false;
+        return true;
+    }
+
     static bool IsLayerNoop(Layer layer)
     {
         return layer.type == Layer.Type.Nop ||
                layer.type == Layer.Type.Flatten ||
-               layer.type == Layer.Type.Activation && layer.activation == Layer.Activation.None ||
-               layer.type == Layer.Type.Transpose && (layer.pool[0] == 0 && layer.pool[1] == 1 && layer.pool[2] == 2 && layer.pool[3] == 3);
+               (layer.type == Layer.Type.Activation && layer.activation == Layer.Activation.None) ||
+               (layer.type == Layer.Type.Transpose && IsPermutationNoop(layer.pool) ||
+               layer.type == Layer.Type.StridedSlice
+                    // Nothing is actually being done in this case since it is the full range with single stepping, so skip it
+                    && layer.pad.All(s => s == 0)
+                    && layer.pool.All(e => e == int.MaxValue)
+                    && layer.stride.All(s => s == 1));
     }
 
     public static Model RemoveNoop(Model model)
@@ -222,7 +235,7 @@ public class ModelOptimizer
             layer.weights = new float[constantLayers[constInput].weights.Length];
             Array.Copy(constantLayers[constInput].weights, layer.weights, constantLayers[constInput].weights.Length);
 
-             model.layers[l].inputs = layer.inputs.Where(x => x != constInput).ToArray();
+            model.layers[l].inputs = layer.inputs.Where(x => x != constInput).ToArray();
         }
     }
 
@@ -238,12 +251,13 @@ public class ModelOptimizer
             if (layer.datasets == null || layer.datasets.Length != 1)
                 continue;
 
-            Layer constInput = new Layer("c" + layer.name,Layer.Type.Load);
+            var name = "c" + layer.name;
+            Layer constInput = new Layer(name,Layer.Type.Load);
 
             constInput.datasets = new Layer.DataSet[layer.datasets.Length];
             Array.Copy(layer.datasets, constInput.datasets, layer.datasets.Length);
             for(int d = 0; d < constInput.datasets.Length; ++d)
-                constInput.datasets[d].name = "";
+                constInput.datasets[d].name = name;
 
             constInput.weights = new float[layer.weights.Length];
             Array.Copy(layer.weights, constInput.weights, layer.weights.Length);
@@ -331,7 +345,7 @@ public class ModelOptimizer
             bool hasNoSkipConnection = (model.GetDownStreamLayersCount(input) == 1);
             //  if input has more than 1 child, we can't override input with fused result
             //  same if input is preserved
-            if (!hasNoSkipConnection || preserve.Contains(input)) 
+            if (!hasNoSkipConnection || preserve.Contains(input))
             {
                 fusedLayer.name = layer.name;
                 model.layers[l] = fusedLayer;
@@ -354,7 +368,7 @@ public class ModelOptimizer
                 mergedLayers.Add(layer);
                 remap[layer.name] = fusedLayer.name;
                 model.layers[inputLayerIndex] = fusedLayer;
-            } 
+            }
         }
 
         // remove merged layers

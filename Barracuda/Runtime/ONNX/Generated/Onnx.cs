@@ -12,7 +12,7 @@ using scg = global::System.Collections.Generic;
 namespace Onnx {
 
   /// <summary>Holder for reflection information generated from onnx.proto3</summary>
-  public static partial class OnnxReflection {
+  internal static partial class OnnxReflection {
 
     #region Descriptor
     /// <summary>File descriptor for onnx.proto3</summary>
@@ -123,7 +123,7 @@ namespace Onnx {
   /// To be compatible with both proto2 and proto3, we will use a version number
   /// that is not defined by the default value but an explicit enum number.
   /// </summary>
-  public enum Version {
+  internal enum Version {
     /// <summary>
     /// proto3 requires the first enum value to be zero.
     /// We add this just to appease the compiler.
@@ -182,7 +182,7 @@ namespace Onnx {
   /// An AttributeProto MUST contain the name field, and *only one* of the
   /// following content fields, effectively enforcing a C/C++ union equivalent.
   /// </summary>
-  public sealed partial class AttributeProto : pb::IMessage<AttributeProto> {
+  internal sealed partial class AttributeProto : pb::IMessage<AttributeProto> {
     private static readonly pb::MessageParser<AttributeProto> _parser = new pb::MessageParser<AttributeProto>(() => new AttributeProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -214,9 +214,9 @@ namespace Onnx {
       f_ = other.f_;
       i_ = other.i_;
       s_ = other.s_;
-      t_ = other.t_ != null ? other.t_.Clone() : null;
-      g_ = other.g_ != null ? other.g_.Clone() : null;
-      sparseTensor_ = other.sparseTensor_ != null ? other.sparseTensor_.Clone() : null;
+      T = other.t_ != null ? other.T.Clone() : null;
+      G = other.g_ != null ? other.G.Clone() : null;
+      SparseTensor = other.sparseTensor_ != null ? other.SparseTensor.Clone() : null;
       floats_ = other.floats_.Clone();
       ints_ = other.ints_.Clone();
       strings_ = other.strings_.Clone();
@@ -645,19 +645,19 @@ namespace Onnx {
       }
       if (other.t_ != null) {
         if (t_ == null) {
-          T = new global::Onnx.TensorProto();
+          t_ = new global::Onnx.TensorProto();
         }
         T.MergeFrom(other.T);
       }
       if (other.g_ != null) {
         if (g_ == null) {
-          G = new global::Onnx.GraphProto();
+          g_ = new global::Onnx.GraphProto();
         }
         G.MergeFrom(other.G);
       }
       if (other.sparseTensor_ != null) {
         if (sparseTensor_ == null) {
-          SparseTensor = new global::Onnx.SparseTensorProto();
+          sparseTensor_ = new global::Onnx.SparseTensorProto();
         }
         SparseTensor.MergeFrom(other.SparseTensor);
       }
@@ -696,16 +696,16 @@ namespace Onnx {
           }
           case 42: {
             if (t_ == null) {
-              T = new global::Onnx.TensorProto();
+              t_ = new global::Onnx.TensorProto();
             }
-            input.ReadMessage(T);
+            input.ReadMessage(t_);
             break;
           }
           case 50: {
             if (g_ == null) {
-              G = new global::Onnx.GraphProto();
+              g_ = new global::Onnx.GraphProto();
             }
-            input.ReadMessage(G);
+            input.ReadMessage(g_);
             break;
           }
           case 58:
@@ -735,7 +735,7 @@ namespace Onnx {
             break;
           }
           case 160: {
-            Type = (global::Onnx.AttributeProto.Types.AttributeType) input.ReadEnum();
+            type_ = (global::Onnx.AttributeProto.Types.AttributeType) input.ReadEnum();
             break;
           }
           case 170: {
@@ -744,9 +744,9 @@ namespace Onnx {
           }
           case 178: {
             if (sparseTensor_ == null) {
-              SparseTensor = new global::Onnx.SparseTensorProto();
+              sparseTensor_ = new global::Onnx.SparseTensorProto();
             }
-            input.ReadMessage(SparseTensor);
+            input.ReadMessage(sparseTensor_);
             break;
           }
           case 186: {
@@ -765,7 +765,7 @@ namespace Onnx {
       /// Note: this enum is structurally identical to the OpSchema::AttrType
       /// enum defined in schema.h.  If you rev one, you likely need to rev the other.
       /// </summary>
-      public enum AttributeType {
+      internal enum AttributeType {
         [pbr::OriginalName("UNDEFINED")] Undefined = 0,
         [pbr::OriginalName("FLOAT")] Float = 1,
         [pbr::OriginalName("INT")] Int = 2,
@@ -790,7 +790,7 @@ namespace Onnx {
   /// Defines information on value, including the name, the type, and
   /// the shape of the value.
   /// </summary>
-  public sealed partial class ValueInfoProto : pb::IMessage<ValueInfoProto> {
+  internal sealed partial class ValueInfoProto : pb::IMessage<ValueInfoProto> {
     private static readonly pb::MessageParser<ValueInfoProto> _parser = new pb::MessageParser<ValueInfoProto>(() => new ValueInfoProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -816,7 +816,7 @@ namespace Onnx {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     public ValueInfoProto(ValueInfoProto other) : this() {
       name_ = other.name_;
-      type_ = other.type_ != null ? other.type_.Clone() : null;
+      Type = other.type_ != null ? other.Type.Clone() : null;
       docString_ = other.docString_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
@@ -951,7 +951,7 @@ namespace Onnx {
       }
       if (other.type_ != null) {
         if (type_ == null) {
-          Type = new global::Onnx.TypeProto();
+          type_ = new global::Onnx.TypeProto();
         }
         Type.MergeFrom(other.Type);
       }
@@ -975,9 +975,9 @@ namespace Onnx {
           }
           case 18: {
             if (type_ == null) {
-              Type = new global::Onnx.TypeProto();
+              type_ = new global::Onnx.TypeProto();
             }
-            input.ReadMessage(Type);
+            input.ReadMessage(type_);
             break;
           }
           case 26: {
@@ -999,7 +999,7 @@ namespace Onnx {
   /// For example, it can be a node of type "Conv" that takes in an image, a filter 
   /// tensor and a bias tensor, and produces the convolved output.
   /// </summary>
-  public sealed partial class NodeProto : pb::IMessage<NodeProto> {
+  internal sealed partial class NodeProto : pb::IMessage<NodeProto> {
     private static readonly pb::MessageParser<NodeProto> _parser = new pb::MessageParser<NodeProto>(() => new NodeProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1302,7 +1302,7 @@ namespace Onnx {
   ///
   /// The semantics of the model are described by the associated GraphProto.
   /// </summary>
-  public sealed partial class ModelProto : pb::IMessage<ModelProto> {
+  internal sealed partial class ModelProto : pb::IMessage<ModelProto> {
     private static readonly pb::MessageParser<ModelProto> _parser = new pb::MessageParser<ModelProto>(() => new ModelProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1334,7 +1334,7 @@ namespace Onnx {
       domain_ = other.domain_;
       modelVersion_ = other.modelVersion_;
       docString_ = other.docString_;
-      graph_ = other.graph_ != null ? other.graph_.Clone() : null;
+      Graph = other.graph_ != null ? other.Graph.Clone() : null;
       metadataProps_ = other.metadataProps_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
@@ -1628,7 +1628,7 @@ namespace Onnx {
       }
       if (other.graph_ != null) {
         if (graph_ == null) {
-          Graph = new global::Onnx.GraphProto();
+          graph_ = new global::Onnx.GraphProto();
         }
         Graph.MergeFrom(other.Graph);
       }
@@ -1670,9 +1670,9 @@ namespace Onnx {
           }
           case 58: {
             if (graph_ == null) {
-              Graph = new global::Onnx.GraphProto();
+              graph_ = new global::Onnx.GraphProto();
             }
-            input.ReadMessage(Graph);
+            input.ReadMessage(graph_);
             break;
           }
           case 66: {
@@ -1693,7 +1693,7 @@ namespace Onnx {
   /// StringStringEntryProto follows the pattern for cross-proto-version maps.
   /// See https://developers.google.com/protocol-buffers/docs/proto3#maps
   /// </summary>
-  public sealed partial class StringStringEntryProto : pb::IMessage<StringStringEntryProto> {
+  internal sealed partial class StringStringEntryProto : pb::IMessage<StringStringEntryProto> {
     private static readonly pb::MessageParser<StringStringEntryProto> _parser = new pb::MessageParser<StringStringEntryProto>(() => new StringStringEntryProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -1850,7 +1850,7 @@ namespace Onnx {
 
   }
 
-  public sealed partial class TensorAnnotation : pb::IMessage<TensorAnnotation> {
+  internal sealed partial class TensorAnnotation : pb::IMessage<TensorAnnotation> {
     private static readonly pb::MessageParser<TensorAnnotation> _parser = new pb::MessageParser<TensorAnnotation>(() => new TensorAnnotation());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2013,7 +2013,7 @@ namespace Onnx {
   /// This is the equivalent of the "network" or "graph" in many deep learning
   /// frameworks.
   /// </summary>
-  public sealed partial class GraphProto : pb::IMessage<GraphProto> {
+  internal sealed partial class GraphProto : pb::IMessage<GraphProto> {
     private static readonly pb::MessageParser<GraphProto> _parser = new pb::MessageParser<GraphProto>(() => new GraphProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2345,7 +2345,7 @@ namespace Onnx {
   ///
   /// A serialized tensor value.
   /// </summary>
-  public sealed partial class TensorProto : pb::IMessage<TensorProto> {
+  internal sealed partial class TensorProto : pb::IMessage<TensorProto> {
     private static readonly pb::MessageParser<TensorProto> _parser = new pb::MessageParser<TensorProto>(() => new TensorProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -2372,7 +2372,7 @@ namespace Onnx {
     public TensorProto(TensorProto other) : this() {
       dims_ = other.dims_.Clone();
       dataType_ = other.dataType_;
-      segment_ = other.segment_ != null ? other.segment_.Clone() : null;
+      Segment = other.segment_ != null ? other.Segment.Clone() : null;
       floatData_ = other.floatData_.Clone();
       int32Data_ = other.int32Data_.Clone();
       stringData_ = other.stringData_.Clone();
@@ -2766,7 +2766,7 @@ namespace Onnx {
       }
       if (other.segment_ != null) {
         if (segment_ == null) {
-          Segment = new global::Onnx.TensorProto.Types.Segment();
+          segment_ = new global::Onnx.TensorProto.Types.Segment();
         }
         Segment.MergeFrom(other.Segment);
       }
@@ -2811,9 +2811,9 @@ namespace Onnx {
           }
           case 26: {
             if (segment_ == null) {
-              Segment = new global::Onnx.TensorProto.Types.Segment();
+              segment_ = new global::Onnx.TensorProto.Types.Segment();
             }
-            input.ReadMessage(Segment);
+            input.ReadMessage(segment_);
             break;
           }
           case 34:
@@ -2862,7 +2862,7 @@ namespace Onnx {
             break;
           }
           case 112: {
-            DataLocation = (global::Onnx.TensorProto.Types.DataLocation) input.ReadEnum();
+            dataLocation_ = (global::Onnx.TensorProto.Types.DataLocation) input.ReadEnum();
             break;
           }
         }
@@ -2873,7 +2873,7 @@ namespace Onnx {
     /// <summary>Container for nested types declared in the TensorProto message type.</summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     public static partial class Types {
-      public enum DataType {
+      internal enum DataType {
         [pbr::OriginalName("UNDEFINED")] Undefined = 0,
         /// <summary>
         /// Basic types.
@@ -2940,7 +2940,7 @@ namespace Onnx {
       /// - DEFAULT - data stored inside the protobuf message. Data is stored in raw_data (if set) otherwise in type-specified field.
       /// - EXTERNAL - data stored in an external location as described by external_data field.
       /// </summary>
-      public enum DataLocation {
+      internal enum DataLocation {
         [pbr::OriginalName("DEFAULT")] Default = 0,
         [pbr::OriginalName("EXTERNAL")] External = 1,
       }
@@ -2950,7 +2950,7 @@ namespace Onnx {
       /// case the following fields will specify the segment that is stored in
       /// the current TensorProto.
       /// </summary>
-      public sealed partial class Segment : pb::IMessage<Segment> {
+      internal sealed partial class Segment : pb::IMessage<Segment> {
         private static readonly pb::MessageParser<Segment> _parser = new pb::MessageParser<Segment>(() => new Segment());
         private pb::UnknownFieldSet _unknownFields;
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3115,7 +3115,7 @@ namespace Onnx {
   /// <summary>
   /// A serialized sparse-tensor value
   /// </summary>
-  public sealed partial class SparseTensorProto : pb::IMessage<SparseTensorProto> {
+  internal sealed partial class SparseTensorProto : pb::IMessage<SparseTensorProto> {
     private static readonly pb::MessageParser<SparseTensorProto> _parser = new pb::MessageParser<SparseTensorProto>(() => new SparseTensorProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3140,8 +3140,8 @@ namespace Onnx {
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     public SparseTensorProto(SparseTensorProto other) : this() {
-      values_ = other.values_ != null ? other.values_.Clone() : null;
-      indices_ = other.indices_ != null ? other.indices_.Clone() : null;
+      Values = other.values_ != null ? other.Values.Clone() : null;
+      Indices = other.indices_ != null ? other.Indices.Clone() : null;
       dims_ = other.dims_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
@@ -3277,13 +3277,13 @@ namespace Onnx {
       }
       if (other.values_ != null) {
         if (values_ == null) {
-          Values = new global::Onnx.TensorProto();
+          values_ = new global::Onnx.TensorProto();
         }
         Values.MergeFrom(other.Values);
       }
       if (other.indices_ != null) {
         if (indices_ == null) {
-          Indices = new global::Onnx.TensorProto();
+          indices_ = new global::Onnx.TensorProto();
         }
         Indices.MergeFrom(other.Indices);
       }
@@ -3301,16 +3301,16 @@ namespace Onnx {
             break;
           case 10: {
             if (values_ == null) {
-              Values = new global::Onnx.TensorProto();
+              values_ = new global::Onnx.TensorProto();
             }
-            input.ReadMessage(Values);
+            input.ReadMessage(values_);
             break;
           }
           case 18: {
             if (indices_ == null) {
-              Indices = new global::Onnx.TensorProto();
+              indices_ = new global::Onnx.TensorProto();
             }
-            input.ReadMessage(Indices);
+            input.ReadMessage(indices_);
             break;
           }
           case 26:
@@ -3329,7 +3329,7 @@ namespace Onnx {
   /// or a symbolic variable. A symbolic variable represents an unknown
   /// dimension.
   /// </summary>
-  public sealed partial class TensorShapeProto : pb::IMessage<TensorShapeProto> {
+  internal sealed partial class TensorShapeProto : pb::IMessage<TensorShapeProto> {
     private static readonly pb::MessageParser<TensorShapeProto> _parser = new pb::MessageParser<TensorShapeProto>(() => new TensorShapeProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3452,7 +3452,7 @@ namespace Onnx {
     /// <summary>Container for nested types declared in the TensorShapeProto message type.</summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     public static partial class Types {
-      public sealed partial class Dimension : pb::IMessage<Dimension> {
+      internal sealed partial class Dimension : pb::IMessage<Dimension> {
         private static readonly pb::MessageParser<Dimension> _parser = new pb::MessageParser<Dimension>(() => new Dimension());
         private pb::UnknownFieldSet _unknownFields;
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3688,7 +3688,7 @@ namespace Onnx {
   ///
   /// The standard ONNX data types.
   /// </summary>
-  public sealed partial class TypeProto : pb::IMessage<TypeProto> {
+  internal sealed partial class TypeProto : pb::IMessage<TypeProto> {
     private static readonly pb::MessageParser<TypeProto> _parser = new pb::MessageParser<TypeProto>(() => new TypeProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3892,7 +3892,7 @@ namespace Onnx {
     /// <summary>Container for nested types declared in the TypeProto message type.</summary>
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     public static partial class Types {
-      public sealed partial class Tensor : pb::IMessage<Tensor> {
+      internal sealed partial class Tensor : pb::IMessage<Tensor> {
         private static readonly pb::MessageParser<Tensor> _parser = new pb::MessageParser<Tensor>(() => new Tensor());
         private pb::UnknownFieldSet _unknownFields;
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3918,7 +3918,7 @@ namespace Onnx {
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
         public Tensor(Tensor other) : this() {
           elemType_ = other.elemType_;
-          shape_ = other.shape_ != null ? other.shape_.Clone() : null;
+          Shape = other.shape_ != null ? other.Shape.Clone() : null;
           _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
         }
 
@@ -4028,7 +4028,7 @@ namespace Onnx {
           }
           if (other.shape_ != null) {
             if (shape_ == null) {
-              Shape = new global::Onnx.TensorShapeProto();
+              shape_ = new global::Onnx.TensorShapeProto();
             }
             Shape.MergeFrom(other.Shape);
           }
@@ -4049,9 +4049,9 @@ namespace Onnx {
               }
               case 18: {
                 if (shape_ == null) {
-                  Shape = new global::Onnx.TensorShapeProto();
+                  shape_ = new global::Onnx.TensorShapeProto();
                 }
-                input.ReadMessage(Shape);
+                input.ReadMessage(shape_);
                 break;
               }
             }
@@ -4060,7 +4060,7 @@ namespace Onnx {
 
       }
 
-      public sealed partial class SparseTensor : pb::IMessage<SparseTensor> {
+      internal sealed partial class SparseTensor : pb::IMessage<SparseTensor> {
         private static readonly pb::MessageParser<SparseTensor> _parser = new pb::MessageParser<SparseTensor>(() => new SparseTensor());
         private pb::UnknownFieldSet _unknownFields;
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -4086,7 +4086,7 @@ namespace Onnx {
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
         public SparseTensor(SparseTensor other) : this() {
           elemType_ = other.elemType_;
-          shape_ = other.shape_ != null ? other.shape_.Clone() : null;
+          Shape = other.shape_ != null ? other.Shape.Clone() : null;
           _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
         }
 
@@ -4196,7 +4196,7 @@ namespace Onnx {
           }
           if (other.shape_ != null) {
             if (shape_ == null) {
-              Shape = new global::Onnx.TensorShapeProto();
+              shape_ = new global::Onnx.TensorShapeProto();
             }
             Shape.MergeFrom(other.Shape);
           }
@@ -4217,9 +4217,9 @@ namespace Onnx {
               }
               case 18: {
                 if (shape_ == null) {
-                  Shape = new global::Onnx.TensorShapeProto();
+                  shape_ = new global::Onnx.TensorShapeProto();
                 }
-                input.ReadMessage(Shape);
+                input.ReadMessage(shape_);
                 break;
               }
             }
@@ -4238,7 +4238,7 @@ namespace Onnx {
   ///
   /// OperatorSets are uniquely identified by a (domain, opset_version) pair.
   /// </summary>
-  public sealed partial class OperatorSetIdProto : pb::IMessage<OperatorSetIdProto> {
+  internal sealed partial class OperatorSetIdProto : pb::IMessage<OperatorSetIdProto> {
     private static readonly pb::MessageParser<OperatorSetIdProto> _parser = new pb::MessageParser<OperatorSetIdProto>(() => new OperatorSetIdProto());
     private pb::UnknownFieldSet _unknownFields;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

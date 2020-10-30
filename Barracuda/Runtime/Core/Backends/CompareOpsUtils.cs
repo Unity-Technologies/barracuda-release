@@ -1,19 +1,32 @@
 namespace Unity.Barracuda {
 
+    /// <summary>
+    /// `CompareOps` utilities
+    /// </summary>
 public class CompareOpsUtils
 {
+    /// <summary>
+    /// `CompareOps` log level enum
+    /// </summary>
     public enum LogLevel
     {
+        /// <summary>
+        /// Warning
+        /// </summary>
         Warning,
+
+        /// <summary>
+        /// Error
+        /// </summary>
         Error
     }
 
-    static public void CheckSame(Tensor X, Tensor Y, Layer.Type type, LogLevel logLevel, float epsilon=0.0001f, params Tensor[] inputs)
+    static internal void CheckSame(Tensor X, Tensor Y, Layer.Type type, LogLevel logLevel, float epsilon=0.0001f, params Tensor[] inputs)
     {
         CheckSame(X, Y, type.ToString(), logLevel, epsilon, inputs);
     }
 
-    static public void CheckSame(Tensor X, Tensor Y, string opName, LogLevel logLevel, float epsilon=0.0001f, params Tensor[] inputs)
+    static internal void CheckSame(Tensor X, Tensor Y, string opName, LogLevel logLevel, float epsilon=0.0001f, params Tensor[] inputs)
     {
         if (!X.Approximately(Y, epsilon))
         {
@@ -45,12 +58,12 @@ public class CompareOpsUtils
             Y.Dispose();
     }
 
-    static public void CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, Layer.Type type, LogLevel logLevel)
+    static internal void CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, Layer.Type type, LogLevel logLevel)
     {
         CheckApproximately(X, Y, count, epsilon, type.ToString(), logLevel);
     }
 
-    static public void CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, string opName, LogLevel logLevel)
+    static internal void CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, string opName, LogLevel logLevel)
     {
         if (!X.Approximately(Y, epsilon, count))
         {

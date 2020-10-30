@@ -3,19 +3,55 @@ using UnityEngine.Rendering;
 
 namespace Unity.Barracuda
 {
+    /// <summary>
+    /// GPU compute info
+    /// </summary>
     public class ComputeInfo
     {
+        /// <summary>
+        /// Channel order enum
+        /// </summary>
         public enum ChannelsOrder
         {
+            /// <summary>
+            /// Channels last
+            /// </summary>
             NHWC,
+
+            /// <summary>
+            /// Channels first
+            /// </summary>
             NCHW
         }
 
+        /// <summary>
+        /// GPU supports shared memory
+        /// </summary>
         public static bool supportsComputeSharedMemory = true;
+
+        /// <summary>
+        /// GPU supports Dense 32x32 kernels
+        /// </summary>
         public static bool supportsDense32x32 = true;
+
+        /// <summary>
+        /// GPU supports Dense 64x64 kernels
+        /// </summary>
         public static bool supportsDense64x64 = true;
+
+        /// <summary>
+        /// GPU supports compute
+        /// </summary>
         public static bool supportsCompute = true;
+
+        /// <summary>
+        /// Max compute work group size supported by GPU
+        /// </summary>
         public static uint maxComputeWorkGroupSize = 1024;
+
+        /// <summary>
+        /// GPU vendor
+        /// </summary>
         public static string graphicsDeviceVendor = "";
 
         /// <summary>
@@ -24,6 +60,9 @@ namespace Unity.Barracuda
         /// </summary>
         public static ChannelsOrder channelsOrder = ChannelsOrder.NHWC;
 
+        /// <summary>
+        /// Static constructor, initializes and caches data
+        /// </summary>
         static ComputeInfo()
         {
             string[] args = System.Environment.GetCommandLineArgs ();

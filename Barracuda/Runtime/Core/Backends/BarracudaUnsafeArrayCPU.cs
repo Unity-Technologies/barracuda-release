@@ -11,48 +11,76 @@ using System.Security;
 
 namespace Unity.Barracuda {
 
+    /// <summary>
+    /// `Tensor` data storage based on unsafe array
+    /// </summary>
 public class UnsafeArrayTensorData : SharedArrayTensorData
 {
     readonly internal bool m_Readonly = false;
 
-    // creates new array
+    /// <summary>
+    /// Create `UnsafeArrayTensorData` with new array
+    /// </summary>
+    /// <param name="count">element count to reserve</param>
     public UnsafeArrayTensorData(int count) : base(new float[count])
     {
     }
 
-    // creates new array
+    /// <summary>
+    /// Create `UnsafeArrayTensorData` with new array
+    /// </summary>
+    /// <param name="shape">shape</param>
     public UnsafeArrayTensorData(TensorShape shape) : this(shape.length)
     {
     }
 
-    // uses shared array
+    /// <summary>
+    /// Create `UnsafeArrayTensorData` and use shared array
+    /// </summary>
+    /// <param name="sharedArray">shared array</param>
     public UnsafeArrayTensorData(ArrayTensorData sharedArray) : base(sharedArray.array, 0, -1)
     {
     }
 
-    // uses shared array
+    /// <summary>
+    /// Create `UnsafeArrayTensorData` and use shared array
+    /// </summary>
+    /// <param name="sharedArray">shared array</param>
     public UnsafeArrayTensorData(SharedArrayTensorData sharedArray) : base(sharedArray.array, sharedArray.offset, sharedArray.count)
     {
         m_Readonly = true;
     }
 
-    // protected constructor
+    /// <summary>
+    /// Create `UnsafeArrayTensorData` from supplied array
+    /// </summary>
+    /// <param name="data">data</param>
+    /// <param name="offset">offset in `data`</param>
+    /// <param name="count">element count</param>
+    /// <param name="isReadonly">read-only flag</param>
     protected UnsafeArrayTensorData(float[] data, int offset = 0, int count = -1, bool isReadonly = false) : base(data, offset, count)
     {
         m_Readonly = isReadonly;
     }
 
+    /// <summary>
+    /// Finalizer
+    /// </summary>
     ~UnsafeArrayTensorData()
     {
         Dispose();
     }
 
+    /// <summary>
+    /// Dispose
+    /// </summary>
     public override void Dispose()
     {
         m_Array = null;
         m_Offset = m_Count = 0;
     }
 
+    /// <inheritdoc/>
     public override void Reserve(int count)
     {
         if (m_Readonly)
@@ -68,6 +96,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
         m_Count = count;
     }
 
+    /// <inheritdoc/>
     public override void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
         var count = shape.length;
@@ -90,6 +119,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
         Array.Copy(data, managedBufferStartIndex, m_Array, m_Offset, m_Count);
     }
 
+    /// <inheritdoc/>
     public override float[] Download(TensorShape shape)
     {
         //;;D.logStackTraceEnabled = true;
@@ -103,6 +133,10 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
         return base.Download(shape);
     }
 
+    /// <summary>
+    /// Summary
+    /// </summary>
+    /// <returns>summary</returns>
     public override string ToString()
     {
         return string.Format("(CPU unsafe: {0} length: {1} offset: {2} uploaded: {3})",
@@ -110,20 +144,31 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     }
 }
 
-
+/// <summary>
+/// Unsafe array based `IOps` implementation
+/// </summary>
 public class UnsafeArrayCPUOps : ReferenceCPUOps
 {
     BLASPlugin m_Blas = null;
-    protected BLASPlugin blas { get { return m_Blas; } }
 
+    internal BLASPlugin blas { get { return m_Blas; } }
     internal InnerLoop m_InnerLoop = new InnerLoop();
 
+    /// <summary>
+    /// Create `UnsafeArrayCPUOps`
+    /// </summary>
+    /// <param name="allocator">allocator</param>
     public UnsafeArrayCPUOps(ITensorAllocator allocator = null)
     : base(allocator)
     {
         m_Blas = BLASPluginFactory.CreateBLASPlugin();
     }
 
+    /// <summary>
+    /// Pin specified `Tensor` to unsafe array based CPU device
+    /// </summary>
+    /// <param name="X">`Tensor`</param>
+    /// <returns>`UnsafeArrayTensorData`</returns>
     public static UnsafeArrayTensorData Pin(Tensor X)
     {
         X.FlushCache();
@@ -164,6 +209,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 body(n);
     }
 
+    /// <inheritdoc/>
     public override Tensor Neg(Tensor X)
     {
         // f(x) = -x
@@ -190,6 +236,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     private unsafe void NegInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
     {
         Assert.AreEqual(unrollSize, 4);
@@ -199,6 +246,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_negInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Relu(Tensor X)
     {
         // f(x) = max(x,0.0)
@@ -236,6 +284,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_reluInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Relu6(Tensor X)
     {
         // f(x) = min(max(x, 0), 6)
@@ -273,6 +322,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_relu6InnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor LeakyRelu(Tensor X, float alpha)
     {
         // f(x) = alpha * x for x < 0, f(x) = x for x >= 0.
@@ -317,6 +367,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_leakyReluInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Elu(Tensor X, float alpha)
     {
         // f(x) = alpha * (exp(x) - 1.) for x < 0, f(x) = x for x >= 0
@@ -357,6 +408,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_eluInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
@@ -398,6 +450,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_preluInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sigmoid(Tensor X)
     {
         // f(x) = 1 / (1 + exp(-x))
@@ -435,6 +488,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sigmoidInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Swish(Tensor X)
     {
         // f(x) = sigmoid(x) * x = x / (1 + exp(-x))
@@ -475,6 +529,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_swishInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Exp(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -511,6 +566,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_expInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sqrt(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -547,6 +603,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sqrtInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Tanh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -583,6 +640,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_tanhInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Acos(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -619,6 +677,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_acosInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Acosh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -655,6 +714,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_acoshInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Asin(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -691,6 +751,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_asinInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Asinh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -727,6 +788,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_asinhInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Atan(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -763,6 +825,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_atanInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Atanh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -799,6 +862,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_atanhInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Cos(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -835,6 +899,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_cosInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Cosh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -871,6 +936,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_coshInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sin(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -907,6 +973,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sinInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sinh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -943,6 +1010,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sinhInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Tan(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1056,69 +1124,91 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Add(Tensor[] tensors)
     {
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_addOpDelegate, m_InnerLoop.m_addInnerLoopDelegate, m_InnerLoop.m_addInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sub(Tensor[] tensors)
     {
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_subOpDelegate, m_InnerLoop.m_subInnerLoopDelegate, m_InnerLoop.m_subInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor Mul(Tensor[] tensors)
     {
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_mulOpDelegate, m_InnerLoop.m_mulInnerLoopDelegate, m_InnerLoop.m_mulInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor Div(Tensor[] tensors)
     {
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_divOpDelegate, m_InnerLoop.m_divInnerLoopDelegate, m_InnerLoop.m_divInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor Min(Tensor[] tensors)
     {
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_minOpDelegate, m_InnerLoop.m_minInnerLoopDelegate, m_InnerLoop.m_minInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor Max(Tensor[] tensors)
     {
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_maxOpDelegate, m_InnerLoop.m_maxInnerLoopDelegate, m_InnerLoop.m_maxInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor Greater(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_greaterOpDelegate, m_InnerLoop.m_greaterInnerLoopDelegate, m_InnerLoop.m_greaterInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor GreaterEqual(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_greaterEqualOpDelegate, m_InnerLoop.m_greaterEqualInnerLoopDelegate, m_InnerLoop.m_greaterEqualInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor Less(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_lessOpDelegate, m_InnerLoop.m_lessInnerLoopDelegate, m_InnerLoop.m_lessInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor LessEqual(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_lessEqualOpDelegate, m_InnerLoop.m_lessEqualInnerLoopDelegate, m_InnerLoop.m_lessEqualInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor Equal(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_equalOpDelegate, m_InnerLoop.m_equalInnerLoopDelegate, m_InnerLoop.m_equalInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor LogicalOr(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalOrOpDelegate, m_InnerLoop.m_logicalOrInnerLoopDelegate, m_InnerLoop.m_logicalOrInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor LogicalAnd(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalAndOpDelegate, m_InnerLoop.m_logicalAndInnerLoopDelegate, m_InnerLoop.m_logicalAndInnerLoopDelegateNoBroadcast);
     }
+
+    /// <inheritdoc/>
     public override Tensor LogicalXor(Tensor A, Tensor B)
     {
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalXorOpDelegate, m_InnerLoop.m_logicalXorInnerLoopDelegate, m_InnerLoop.m_logicalXorInnerLoopDelegateNoBroadcast);
     }
 
+    /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1141,6 +1231,42 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                     oPtr[i] = Convert.ToSingle( !Convert.ToBoolean(xPtr[i]) );
             }
         }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Where(Tensor C, Tensor A, Tensor B)
+    {
+        if (!C.shape.IsNHWC() || !C.shape.IsNHWC() || !B.shape.IsNHWC())
+            throw new NotImplementedException();
+
+        var O = NewTensorLike(C);
+
+        unsafe
+        {
+            fixed (float*
+                cPtr = &Pin(C).array[Pin(C).offset],
+                aPtr = &Pin(A).array[Pin(A).offset],
+                bPtr = &Pin(B).array[Pin(B).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                const int unrollSize = 4;
+                m_InnerLoop.SetState(unrollSize, oPtr, cPtr, aPtr, bPtr, O.shape, C.shape, A.shape, B.shape);
+                if ((O.shape == A.shape) && (O.shape == B.shape))
+                    Parallel_For(0L, O.length / unrollSize, m_InnerLoop.m_whereInnerLoopDelegateNoBroadcast);
+                else
+                    Parallel_For(0L, O.length / unrollSize, m_InnerLoop.m_whereInnerLoopDelegate);
+
+                // Remainder
+                for (int i = (O.length / unrollSize) * unrollSize; i < O.length; ++i)
+                {
+                    int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
+                    O.shape.GetPositionsFromIndex(i, ref b0, ref h0, ref w0, ref ch0);
+                    oPtr[i] = Convert.ToBoolean(cPtr[i]) ? aPtr[A.shape.IndexWithBroadcast(b0, h0, w0, ch0)] : bPtr[B.shape.IndexWithBroadcast(b0, h0, w0, ch0)];
+                }
+            }
+        }
+
         return O;
     }
 
@@ -1178,9 +1304,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
-    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    /// <inheritdoc/>
+    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
-        //var Z = base.MatMul(X, xTranspose, Y, yTranspose);
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
 
@@ -1220,6 +1346,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         //D.Log(string.Format("X = {0}", X.shape));
@@ -1262,6 +1389,13 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return ApplyFusedActivation(O, fusedActivation);
     }
 
+    /// <summary>
+    /// Apply fused activation
+    /// </summary>
+    /// <param name="X">input</param>
+    /// <param name="fusedActivation">fused activation type</param>
+    /// <returns>output `Tensor`</returns>
+    /// <exception cref="NotImplementedException">thrown if unsupported activation type encountered</exception>
     protected Tensor ApplyFusedActivation(Tensor X, Layer.FusedActivation fusedActivation)
     {
         switch (fusedActivation)
@@ -1313,6 +1447,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         }
     }
 
+    /// <inheritdoc/>
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1382,6 +1517,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         });
     }
 
+    /// <inheritdoc/>
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1453,16 +1589,19 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         });
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalMaxPool2D(Tensor X)
     {
         return MaxPool2D(X, new[] {X.width, X.height}, new[] {1, 1}, new[] {0, 0, 0, 0});
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
         return AvgPool2D(X, new[] {X.width, X.height}, new[] {1, 1}, new[] {0, 0, 0, 0});
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         // Basic Im2Col+SGEMM implementation for reference:
@@ -1899,6 +2038,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
@@ -2410,11 +2550,16 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         int croppedWidth = X.width - (preCropX + postCropX);
         int croppedHeight = X.height - (preCropY + postCropY);
 
+        var Xarray = Pin(X).array;
+        var Xoffset = Pin(X).offset;
+        var Oarray = Pin(O).array;
+        var Ooffset = Pin(O).offset;
+
         unsafe
         {
             fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                xPtr = &Xarray[Xoffset],
+                oPtr = &Oarray[Ooffset])
             {
                 m_InnerLoop.SetState(oPtr, xPtr, O.shape, X.shape, constant, prePadX, prePadY);
 
@@ -2439,10 +2584,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                         offset += numItemToPrepadInWidth;
 
                         //CenterX
-                        int srcFloatOffset = X.Index(b, (int)y - prePadY + preCropY, preCropX, 0) + Pin(X).offset;
-                        int dstFloatOffset = O.Index(b, (int)y, prePadX, 0) + Pin(O).offset;
+                        int srcFloatOffset = X.Index(b, (int)y - prePadY + preCropY, preCropX, 0) + Xoffset;
+                        int dstFloatOffset = O.Index(b, (int)y, prePadX, 0) + Ooffset;
                         int numFloatToCopy = O.channels * croppedWidth;
-                        Buffer.BlockCopy(Pin(X).array, srcFloatOffset * sizeof(float), Pin(O).array, dstFloatOffset * sizeof(float), numFloatToCopy * sizeof(float));
+                        Buffer.BlockCopy(Xarray, srcFloatOffset * sizeof(float), Oarray, dstFloatOffset * sizeof(float), numFloatToCopy * sizeof(float));
                         offset += numFloatToCopy;
 
                         //PostPadX
@@ -2461,26 +2606,31 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Border2D(Tensor X, int[] pad, float constant)
     {
         return ApplyPadding(X, pad, constant, m_InnerLoop.m_border2DInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Pad2DEdge(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DEdgeInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Pad2DReflect(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DReflectInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DSymmetricInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     protected override Tensor CopyAndReshape(Tensor X, TensorShape shape)
     {
         Assert.AreEqual(X.length, shape.length);
@@ -2489,6 +2639,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         if (!X.shape.IsNHWC())
@@ -2536,6 +2687,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_scaleBiasInnerLoopDelegate);
     }
 
+    /// <inheritdoc/>
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);
@@ -2599,6 +2751,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_logicalOrInnerLoopDelegate;
         public Action<long> m_logicalXorInnerLoopDelegate;
         public Action<long> m_logicaNotInnerLoopDelegate;
+        public Action<long> m_whereInnerLoopDelegate;
         public Action<long> m_maxInnerLoopDelegateNoBroadcast;
         public Action<long> m_minInnerLoopDelegateNoBroadcast;
         public Action<long> m_divInnerLoopDelegateNoBroadcast;
@@ -2613,6 +2766,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_logicalAndInnerLoopDelegateNoBroadcast;
         public Action<long> m_logicalOrInnerLoopDelegateNoBroadcast;
         public Action<long> m_logicalXorInnerLoopDelegateNoBroadcast;
+        public Action<long> m_whereInnerLoopDelegateNoBroadcast;
         public Action<long> m_border2DInnerLoopDelegate;
         public Action<long> m_pad2DReflectInnerLoopDelegate;
         public Action<long> m_pad2DSymmetricInnerLoopDelegate;
@@ -2675,6 +2829,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_logicalOrInnerLoopDelegate = LogicalOrInnerLoop;
             m_logicalXorInnerLoopDelegate = LogicalXorInnerLoop;
             m_logicaNotInnerLoopDelegate = LogicalNotInnerLoop;
+            m_whereInnerLoopDelegate = WhereInnerLoop;
             m_maxInnerLoopDelegateNoBroadcast = MaxInnerLoopNoBroadcast;
             m_minInnerLoopDelegateNoBroadcast = MinInnerLoopNoBroadcast;
             m_divInnerLoopDelegateNoBroadcast = DivInnerLoopNoBroadcast;
@@ -2689,6 +2844,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_logicalAndInnerLoopDelegateNoBroadcast = LogicalAndInnerLoopNoBroadcast;
             m_logicalOrInnerLoopDelegateNoBroadcast = LogicalOrInnerLoopNoBroadcast;
             m_logicalXorInnerLoopDelegateNoBroadcast = LogicalXorInnerLoopNoBroadcast;
+            m_whereInnerLoopDelegateNoBroadcast = WhereInnerLoopNoBroadcast;
             m_border2DInnerLoopDelegate = Border2DInnerLoop;
             m_pad2DEdgeInnerLoopDelegate = Pad2DEdgeInnerLoop;
             m_pad2DReflectInnerLoopDelegate = Pad2DReflectInnerLoop;
@@ -4078,6 +4234,25 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             oPtr[i + 3] = (Convert.ToBoolean(xPtr[xShape.IndexWithBroadcast(b3, h3, w3, ch3)]) ^ Convert.ToBoolean(bPtr[bShape.IndexWithBroadcast(b3, h3, w3, ch3)])) ? 1.0f : 0.0f;
         }
 
+        private void WhereInnerLoop(long n)
+        {
+            int i = (int)n * unrollSize;
+
+            int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
+            int b1 = 0, h1 = 0, w1 = 0, ch1 = 0;
+            int b2 = 0, h2 = 0, w2 = 0, ch2 = 0;
+            int b3 = 0, h3 = 0, w3 = 0, ch3 = 0;
+            oShape.GetPositionsFromIndex(i + 0, ref b0, ref h0, ref w0, ref ch0);
+            oShape.GetPositionsFromIndex(i + 1, ref b1, ref h1, ref w1, ref ch1);
+            oShape.GetPositionsFromIndex(i + 2, ref b2, ref h2, ref w2, ref ch2);
+            oShape.GetPositionsFromIndex(i + 3, ref b3, ref h3, ref w3, ref ch3);
+
+            oPtr[i + 0] = Convert.ToBoolean(xPtr[xShape.IndexWithBroadcast(b0, h0, w0, ch0)]) ? sPtr[sShape.IndexWithBroadcast(b0, h0, w0, ch0)] : bPtr[bShape.IndexWithBroadcast(b0, h0, w0, ch0)];
+            oPtr[i + 1] = Convert.ToBoolean(xPtr[xShape.IndexWithBroadcast(b1, h1, w1, ch1)]) ? sPtr[sShape.IndexWithBroadcast(b1, h1, w1, ch1)] : bPtr[bShape.IndexWithBroadcast(b1, h1, w1, ch1)];
+            oPtr[i + 2] = Convert.ToBoolean(xPtr[xShape.IndexWithBroadcast(b2, h2, w2, ch2)]) ? sPtr[sShape.IndexWithBroadcast(b2, h2, w2, ch2)] : bPtr[bShape.IndexWithBroadcast(b2, h2, w2, ch2)];
+            oPtr[i + 3] = Convert.ToBoolean(xPtr[xShape.IndexWithBroadcast(b3, h3, w3, ch3)]) ? sPtr[sShape.IndexWithBroadcast(b3, h3, w3, ch3)] : bPtr[bShape.IndexWithBroadcast(b3, h3, w3, ch3)];
+        }
+
         private void AddInnerLoopNoBroadcast(long n)
         {
             int i = (int)n * unrollSize;
@@ -4226,6 +4401,16 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             oPtr[i + 1] = Convert.ToBoolean(xPtr[i + 1]) ? 0.0f : 1.0f;
             oPtr[i + 2] = Convert.ToBoolean(xPtr[i + 2]) ? 0.0f : 1.0f;
             oPtr[i + 3] = Convert.ToBoolean(xPtr[i + 3]) ? 0.0f : 1.0f;
+        }
+
+        private void WhereInnerLoopNoBroadcast(long n)
+        {
+            int i = (int)n * unrollSize;
+
+            oPtr[i + 0] = Convert.ToBoolean(xPtr[(i + 0) % xLen]) ? sPtr[(i + 0) % bLen] : bPtr[(i + 0) % bLen];
+            oPtr[i + 1] = Convert.ToBoolean(xPtr[(i + 1) % xLen]) ? sPtr[(i + 1) % bLen] : bPtr[(i + 1) % bLen];
+            oPtr[i + 2] = Convert.ToBoolean(xPtr[(i + 2) % xLen]) ? sPtr[(i + 2) % bLen] : bPtr[(i + 2) % bLen];
+            oPtr[i + 3] = Convert.ToBoolean(xPtr[(i + 3) % xLen]) ? sPtr[(i + 3) % bLen] : bPtr[(i + 3) % bLen];
         }
 
         private static void ClampHWToTensorShape(TensorShape shape, ref int height, ref int width)
@@ -4396,6 +4581,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         private float LogicalNot(float a)
         {
             return Convert.ToSingle(!Convert.ToBoolean(a));
+        }
+        private float Where(float c, float a, float b)
+        {
+            return Convert.ToBoolean(c) ? a : b;
         }
     }
 

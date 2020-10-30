@@ -1,16 +1,20 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq; // ToArray(), ToDictionary()
+using System.Linq;
+using System.Runtime.CompilerServices;
 
 using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.Profiling;
 
+[assembly: InternalsVisibleTo("Unity.Barracuda.ONNX")]
+[assembly: InternalsVisibleTo("Unity.Barracuda.Editor")]
+
 namespace Unity.Barracuda {
 
 
-public class ModelAnalyzer
+internal class ModelAnalyzer
 {
     public static string GetDefaultInputName(Model model)
     {
@@ -81,12 +85,12 @@ public class ModelAnalyzer
 
         foreach (var l in model.layers)
         {
-            if (l.inputs.Length > 0 && shapesByName.ContainsKey(l.inputs[0]))
-                Xn = shapesByName[l.inputs[0]];
+            if (l.inputs.Length > 0 && shapesByName.TryGetValue(l.inputs[0], out TensorShape? xShape))
+                Xn = xShape;
             else
                 Xn = O; // previous output is used, if-and-only-if layer has no explicit inputs
 
-            if(Xn == null)
+            if (Xn == null)
             {
                 shapes.Add(Xn);
                 shapesByName.Add(l.name, Xn);
@@ -100,6 +104,32 @@ public class ModelAnalyzer
                 Assert.IsNotNull(l.datasets);
                 var W = l.datasets[0].shape;
                 O = new TensorShape(X.flatHeight, W.flatWidth);
+            }
+            else if (l.type == Layer.Type.MatMul)
+            {
+                if (!shapesByName.ContainsKey(l.inputs[1]) || shapesByName[l.inputs[1]] == null)
+                {
+                    O = null;
+                    break;
+                }
+
+                var Y = shapesByName[l.inputs[1]].Value;
+
+                // MatMul on 2D input: N,1,1,C
+                // MatMul on ND inputs: N,H,W,C with N*C = batches
+                var isStackOfMatrices = (X.dimensions != 2) || (Y.dimensions != 2);
+                if (isStackOfMatrices)
+                {
+                    // X is multidim so N,H,W,c with H,W matmul dims
+                    var batches = X.batch * X.channels;
+                    Assert.AreEqual(X.batch * X.channels, Y.batch * Y.channels);
+
+                    O = new TensorShape(X.batch, X.height, Y.width, X.channels);
+                }
+                else
+                {
+                    O = new TensorShape(X.flatHeight, Y.flatWidth);
+                }
             }
             else if (
                 l.type == Layer.Type.Conv2D ||
@@ -260,17 +290,10 @@ public class ModelAnalyzer
                 bool allShapesKnown = true;
                 foreach (var i in l.inputs)
                 {
-                    if (!shapesByName.ContainsKey(i))
-                        continue;
-
-                    TensorShape? shape = shapesByName[i];
-                    if(shape == null)
-                    {
+                    if (shapesByName.TryGetValue(i, out TensorShape? shape) && shape != null)
+                        list.Add(shape.Value);
+                    else
                         allShapesKnown = false;
-                        continue;
-                    }
-
-                    list.Add(shapesByName[i].Value);
                 }
 
                 O = allShapesKnown ? TensorExtensions.Max(list.ToArray()) : default(TensorShape?);
@@ -297,21 +320,29 @@ public class ModelAnalyzer
             else if (
                 l.type == Layer.Type.Reshape)
             {
-                // pool size is treated as reshape coefficient, if not empty
-                // otherwise shape of the 2nd input tensor is used
+                // pool size is treated as the shape, if not empty
                 var size = l.pool;
 
                 Assert.IsNotNull(size);
 
-
                 if (size.Length == 0 && l.inputs.Length > 1)
                 {
-                    if(shapesByName[l.inputs[1]] == null)
+                    switch (l.axis)
                     {
-                        O = null;
-                        break;
+                        // Legacy - use the shape of the input tensor as the shape
+                        case -1:
+                            if (shapesByName.TryGetValue(l.inputs[1], out TensorShape? shape))
+                                size = shape.Value.ToArray();
+                            break;
+
+                        // Use the tensor values as the shape; Calculated at runtime
+                        case 1:
+                            O = null;
+                            break;
                     }
-                    size = shapesByName[l.inputs[1]].Value.ToArray();
+
+                    if (O == null)
+                        break;
                 }
 
                 Assert.IsTrue( (size.Length == 4) || (size.Length == 8));
@@ -343,13 +374,15 @@ public class ModelAnalyzer
             else if (
                 l.type == Layer.Type.Gather)
             {
-                if(shapesByName[l.inputs[0]] == null || shapesByName[l.inputs[1]] == null)
+                if (!shapesByName.TryGetValue(l.inputs[0], out TensorShape? input0Shape) || input0Shape == null
+                    || !shapesByName.TryGetValue(l.inputs[1], out TensorShape? input1Shape) || input1Shape == null)
                 {
                     O = null;
                     break;
                 }
-                int[] shape = shapesByName[l.inputs[0]].Value.ToArray();
-                shape[l.axis] = shapesByName[l.inputs[1]].Value.flatWidth;
+
+                int[] shape = input0Shape.Value.ToArray();
+                shape[l.axis] = input1Shape.Value.length;
 
                 O = new TensorShape(shape);
             }
@@ -367,14 +400,12 @@ public class ModelAnalyzer
                 bool allShapesKnown = true;
                 foreach (var i in l.inputs)
                 {
-                    if (!shapesByName.ContainsKey(i))
-                        continue;
-                    if (shapesByName[i] == null)
+                    if (!shapesByName.TryGetValue(i, out var shape) || shape == null)
                     {
                         allShapesKnown = false;
                         continue;
                     }
-                    list.Add(shapesByName[i].Value);
+                    list.Add(shape.Value);
                 }
 
                 O = allShapesKnown ? TensorExtensions.Concat(list.ToArray(), l.axis) : default(TensorShape?);
@@ -415,6 +446,24 @@ public class ModelAnalyzer
                 O = X;
             }
             else if (
+                l.type == Layer.Type.TopKIndices ||
+                l.type == Layer.Type.TopKValues ||
+                l.type == Layer.Type.NonMaxSuppression ||
+                l.type == Layer.Type.NonZero)
+            {
+                // Calculated at runtime
+                O = null;
+            }
+            else if (l.type == Layer.Type.Shape)
+            {
+                int shapeRank = l.axis > 0 ? 1 : X.length;
+                O = new TensorShape(shapeRank, 1, 1, 1);
+            }
+            else if (l.type == Layer.Type.Where)
+            {
+                O = X;
+            }
+            else if (
                 l.type == Layer.Type.Conv3D ||
                 l.type == Layer.Type.Conv3DTrans ||
                 l.type == Layer.Type.Upsample3D ||
@@ -428,8 +477,7 @@ public class ModelAnalyzer
             }
             else
             {
-                Assert.AreEqual(l.activation, Layer.Activation.None);
-                O = X;
+                throw new NotImplementedException($"Layer type {l.type} needs to be explicitly handled");
             }
 
             shapes.Add(O);

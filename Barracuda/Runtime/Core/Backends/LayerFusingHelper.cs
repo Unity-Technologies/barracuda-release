@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq; // ToArray(), ToDictionary()
-using UnityEngine.Assertions;
 
 namespace Unity.Barracuda
 {
-    public class LinearLayerFusing
+    internal class LinearLayerFusing
     {
         public static bool IsLayerLinear(Layer layer, Dictionary<string, Layer> constantLayers)
         {
@@ -22,9 +21,7 @@ namespace Unity.Barracuda
         public static bool IsLayerLinearMathOp(Layer layer)
         {
             return layer.type == Layer.Type.Add ||
-                   layer.type == Layer.Type.Sub ||
-                   layer.type == Layer.Type.Mul ||
-                   layer.type == Layer.Type.Div;
+                   layer.type == Layer.Type.Mul;
         }
 
         public bool AreLayersFusable(Layer l0, Layer l1)
@@ -82,6 +79,10 @@ namespace Unity.Barracuda
 
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, 0, bias.length);
 
+                bias.Dispose();
+                bias0.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.Mul, Layer.Type.Mul), (l0, l1) =>
@@ -105,6 +106,10 @@ namespace Unity.Barracuda
 
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, 0, bias.length);
 
+                bias.Dispose();
+                scale0.Dispose();
+                scale1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.ScaleBias, Layer.Type.ScaleBias), (l0, l1) =>
@@ -126,6 +131,13 @@ namespace Unity.Barracuda
 
                 Array.Copy(scale.ToReadOnlyArray(), 0, lmerged.weights, 0, scale.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, scale.length, bias.length);
+
+                scale.Dispose();
+                bias.Dispose();
+                scale0.Dispose();
+                bias0.Dispose();
+                scale1.Dispose();
+                bias1.Dispose();
 
                 return lmerged;
             });
@@ -160,6 +172,13 @@ namespace Unity.Barracuda
                 Array.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
 
+                bias.Dispose();
+                weights.Dispose();
+                scale0.Dispose();
+                bias0.Dispose();
+                weights1.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.Dense, Layer.Type.ScaleBias), (l0, l1) =>
@@ -182,6 +201,13 @@ namespace Unity.Barracuda
 
                 Array.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
+
+                weights.Dispose();
+                bias.Dispose();
+                weights0.Dispose();
+                bias0.Dispose();
+                scale1.Dispose();
+                bias1.Dispose();
 
                 return lmerged;
             });
@@ -219,6 +245,11 @@ namespace Unity.Barracuda
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias1.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias1.length);
 
+                kernel.Dispose();
+                scale0.Dispose();
+                kernel1.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.Conv2D, Layer.Type.Mul), (l0, l1) =>
@@ -243,6 +274,12 @@ namespace Unity.Barracuda
 
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+
+                kernel.Dispose();
+                bias.Dispose();
+                kernel0.Dispose();
+                bias0.Dispose();
+                scale1.Dispose();
 
                 return lmerged;
             });
@@ -280,6 +317,11 @@ namespace Unity.Barracuda
                 Array.Copy(kernel1.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel1.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel1.length, bias.length);
 
+                bias.Dispose();
+                bias0.Dispose();
+                kernel1.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.Conv2D, Layer.Type.Add), (l0, l1) =>
@@ -302,6 +344,11 @@ namespace Unity.Barracuda
 
                 Array.Copy(kernel0.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel0.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel0.length, bias.length);
+
+                bias.Dispose();
+                kernel0.Dispose();
+                bias0.Dispose();
+                bias1.Dispose();
 
                 return lmerged;
             });
@@ -328,6 +375,13 @@ namespace Unity.Barracuda
 
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+
+                kernel.Dispose();
+                bias.Dispose();
+                kernel0.Dispose();
+                bias0.Dispose();
+                scale1.Dispose();
+                bias1.Dispose();
 
                 return lmerged;
             });
@@ -368,6 +422,13 @@ namespace Unity.Barracuda
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
+                kernel.Dispose();
+                bias.Dispose();
+                scale0.Dispose();
+                bias0.Dispose();
+                kernel1.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.DepthwiseConv2D, Layer.Type.ScaleBias), (l0, l1) =>
@@ -393,6 +454,13 @@ namespace Unity.Barracuda
 
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+
+                kernel.Dispose();
+                bias.Dispose();
+                kernel0.Dispose();
+                bias0.Dispose();
+                scale1.Dispose();
+                bias1.Dispose();
 
                 return lmerged;
             });
@@ -436,6 +504,13 @@ namespace Unity.Barracuda
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
+                kernel.Dispose();
+                bias.Dispose();
+                scale0.Dispose();
+                bias0.Dispose();
+                kernel1.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.Dense, Layer.Type.Dense), (l0, l1) =>
@@ -473,17 +548,24 @@ namespace Unity.Barracuda
                 Array.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
 
+                weights.Dispose();
+                bias.Dispose();
+                weights0.Dispose();
+                bias0.Dispose();
+                weights1.Dispose();
+                bias1.Dispose();
+
                 return lmerged;
             });
             Add((Layer.Type.Conv2D, Layer.Type.Conv2D), (l0, l1) =>
             {
-                var kernel0 = l0.DataSetToTensor(0);
-                var bias0 = l0.DataSetToTensor(1);
+                Tensor kernel0 = l0.DataSetToTensor(0);
+                Tensor bias0 = l0.DataSetToTensor(1);
                 var strides0 = l0.stride;
                 var pad0 = l0.pad;
 
-                var kernel1 = l1.DataSetToTensor(0);
-                var bias1 = l1.DataSetToTensor(1);
+                Tensor kernel1 = l1.DataSetToTensor(0);
+                Tensor bias1 = l1.DataSetToTensor(1);
                 var strides1 = l1.stride;
                 var pad1 = l1.pad;
 
@@ -580,6 +662,8 @@ namespace Unity.Barracuda
                                         kernel[oy, ox, c, k] += kernelk[c,y0,x0,k];
                                     }
                             }
+                        kernel1XY.Dispose();
+                        kernelk.Dispose();
                     }
 
                 // |y0 y1| * l0 l1  + bl = z0
@@ -607,6 +691,15 @@ namespace Unity.Barracuda
 
                 Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
                 Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+
+                kernel0T.Dispose();
+                emptyB.Dispose();
+                kernel.Dispose();
+                bias.Dispose();
+                kernel0.Dispose();
+                bias0.Dispose();
+                kernel1.Dispose();
+                bias1.Dispose();
 
                 return lmerged;
             });

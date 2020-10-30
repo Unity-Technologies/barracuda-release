@@ -23,7 +23,8 @@ public partial class BurstCPUOps
         return JobHandle.CombineDependencies(job, job2, job3);
     }
 
-    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    /// <inheritdoc/>
+    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
@@ -96,6 +97,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         //D.Log(string.Format("X = {0}", X.shape));
@@ -161,6 +163,7 @@ public partial class BurstCPUOps
         return ApplyFusedActivation(O, fusedActivation);
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         var O = Conv2DUsingIm2ColSliced(X, K, B, stride, pad);
@@ -383,6 +386,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -432,6 +436,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -481,16 +486,19 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalMaxPool2D(Tensor X)
     {
         return MaxPool2D(X, new[] {X.width, X.height}, new[] {1, 1}, new[] {0, 0, 0, 0});
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
         return AvgPool2D(X, new[] {X.width, X.height}, new[] {1, 1}, new[] {0, 0, 0, 0});
     }
 
+    /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
@@ -555,6 +563,7 @@ public partial class BurstCPUOps
         return ApplyFusedActivation(O, fusedActivation);
     }
 
+    /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         if (!X.shape.IsNHWC())
@@ -597,6 +606,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Relu(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -620,6 +630,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Relu6(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -643,6 +654,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor LeakyRelu(Tensor X, float alpha)
     {
         var O = NewTensorLike(X);
@@ -667,6 +679,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Tanh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -690,6 +703,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Sigmoid(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -713,6 +727,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Elu(Tensor X, float alpha)
     {
         var O = NewTensorLike(X);
@@ -737,6 +752,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Selu(Tensor X, float alpha, float gamma)
     {
         var O = NewTensorLike(X);
@@ -762,6 +778,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Swish(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -785,6 +802,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         var O = NewTensorLike(X);
@@ -851,8 +869,12 @@ public partial class BurstCPUOps
     //     return O;
     // }
 
-    public override Tensor Softmax(Tensor X)
+    /// <inheritdoc/>
+    public override Tensor Softmax(Tensor X, int axis)
     {
+        if (!X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+            return base.Softmax(X, axis);
+
         var O = NewTensor(X.shape.Flatten());
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
@@ -935,6 +957,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
         var O = NewTensor(X.shape.Flatten());
@@ -961,6 +984,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Abs(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -984,6 +1008,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Neg(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1007,6 +1032,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Ceil(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1030,6 +1056,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Clip(Tensor X, float min, float max)
     {
         var O = NewTensorLike(X);
@@ -1055,6 +1082,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Floor(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1078,6 +1106,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Reciprocal(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1101,6 +1130,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Pow(Tensor X, float alpha)
     {
         var O = NewTensorLike(X);
@@ -1125,6 +1155,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Exp(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1148,6 +1179,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Log(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1171,6 +1203,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Sqrt(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1193,6 +1226,8 @@ public partial class BurstCPUOps
         }
         return O;
     }
+
+    /// <inheritdoc/>
     public override Tensor Acos(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1216,6 +1251,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Acosh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1239,6 +1275,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Asin(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1262,6 +1299,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Asinh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1285,6 +1323,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Atan(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1308,6 +1347,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Atanh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1331,6 +1371,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Cos(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1354,6 +1395,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Cosh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1377,6 +1419,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Sin(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1400,6 +1443,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Sinh(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1423,6 +1467,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Tan(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -1446,6 +1491,12 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <summary>
+    /// Generic broadcast
+    /// </summary>
+    /// <param name="X">input</param>
+    /// <param name="broadcastShape">broadcast shape</param>
+    /// <returns>output Tensor</returns>
     protected virtual Tensor GenericBroadcast(Tensor X, TensorShape broadcastShape)
     {
         var O = NewTensor(broadcastShape);
@@ -1754,6 +1805,7 @@ public partial class BurstCPUOps
         if (U != Y) U.Dispose();
     }
 
+    /// <inheritdoc/>
     // O = tensors[0] + tensors[1] + ... + tensors[N-1]
     public override Tensor Add(Tensor[] tensors)
     {
@@ -1771,6 +1823,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     // O = tensors[0] - tensors[1] - ... - tensors[N-1]
     public override Tensor Sub(Tensor[] tensors)
     {
@@ -1789,6 +1842,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     // O = tensors[0] * tensors[1] * ... * tensors[N-1]
     public override Tensor Mul(Tensor[] tensors)
     {
@@ -1807,6 +1861,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     // O = tensors[0] / tensors[1] / ... / tensors[N-1]
     public override Tensor Div(Tensor[] tensors)
     {
@@ -1825,6 +1880,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     // O = tensors[0] ^ tensors[1] ^ ... ^ tensors[N-1]
     public override Tensor Pow(Tensor[] tensors)
     {
@@ -1843,6 +1899,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     // O = min(tensors[0], tensors[1],  ... , tensors[N-1])
     public override Tensor Min(Tensor[] tensors)
     {
@@ -1861,6 +1918,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     // O = max(tensors[0], tensors[1],  ... , tensors[N-1])
     public override Tensor Max(Tensor[] tensors)
     {
@@ -1901,6 +1959,7 @@ public partial class BurstCPUOps
     //     return O;
     // }
 
+    /// <inheritdoc/>
     protected override Tensor CopyAndReshape(Tensor X, TensorShape shape)
     {
         Assert.AreEqual(X.length, shape.length);

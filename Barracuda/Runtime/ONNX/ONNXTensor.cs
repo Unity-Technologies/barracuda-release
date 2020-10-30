@@ -6,25 +6,25 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using UnityEngine.Android;
+using UnityEngine.Assertions;
 
 [assembly: InternalsVisibleToAttribute("Barracuda.EditorTests")]
 
 namespace Unity.Barracuda.ONNX
 {
     // Combines information about ONNX tensor and data read from TensorProto
-    public struct ONNXTensor
+    internal struct ONNXTensor
     {
-        public long[] shape { get { return m_Shape; } }
+        public int[] shape { get { return m_Shape; } }
         public int rank { get { return shape.Length; } }
 
-        private Tensor m_Data;
-        private long[] m_Shape;
+        Tensor m_Data;
+        int[] m_Shape;
 
         public ONNXTensor(TensorProto onnxTensor)
         {
             // read shape
-            var onnxShape = onnxTensor.Dims.ToArray();
-
+            var onnxShape = onnxTensor.Dims.Select(v => v < int.MinValue ? int.MinValue : v > int.MaxValue ? int.MaxValue : (int)v).ToArray();
 
             if (onnxShape.Any(s => s == 0))
             {
@@ -46,96 +46,96 @@ namespace Unity.Barracuda.ONNX
                     if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Double)
                     {
                         var typedData = new double[shape.length];
-                        Debug.Assert((sizeof(double) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(double) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => v < int.MinValue ? (float)int.MinValue : v > int.MaxValue ? (float)int.MaxValue : (float)v).ToArray();
                     }
                     // Float32
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Float)
                     {
                         data = new float[shape.length];
-                        Debug.Assert((sizeof(float) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(float) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, data, 0, byteArray.Length);
                     }
                     // Float16
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Float16)
                     {
                         var typedData = new UInt16[shape.length];
-                        Debug.Assert((sizeof(UInt16) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(UInt16) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => HalfHelper.HalfToSingle(x)).ToArray();
+                        data = typedData.Select(v => HalfHelper.HalfToSingle(v)).ToArray();
                     }
                     // Int8
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Int8)
                     {
                         var typedData = new sbyte[shape.length];
-                        Debug.Assert((sizeof(sbyte) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(sbyte) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => (float)v).ToArray();
                     }
                     // Int16
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Int16)
                     {
                         var typedData = new short[shape.length];
-                        Debug.Assert((sizeof(short) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(short) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => (float)v).ToArray();
                     }
                     // Int32
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Int32)
                     {
                         var typedData = new int[shape.length];
-                        Debug.Assert((sizeof(int) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(int) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => (float)v).ToArray();
                     }
                     // Int64
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Int64)
                     {
                         var typedData = new long[shape.length];
-                        Debug.Assert((sizeof(long) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(long) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => v < int.MinValue ? (float)int.MinValue : v > int.MaxValue ? (float)int.MaxValue : (float)v).ToArray();
                     }
                     // UInt8
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Uint8)
                     {
                         var typedData = new byte[shape.length];
-                        Debug.Assert((sizeof(byte) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(byte) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => (float)v).ToArray();
                     }
                     // UInt16
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Uint16)
                     {
                         var typedData = new ushort[shape.length];
-                        Debug.Assert((sizeof(ushort) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(ushort) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => (float)v).ToArray();
                     }
                     // UInt32
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Uint32)
                     {
                         var typedData = new uint[shape.length];
-                        Debug.Assert((sizeof(uint) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(uint) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => (float)v).ToArray();
                     }
                     // UInt64
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Uint64)
                     {
                         var typedData = new ulong[shape.length];
-                        Debug.Assert((sizeof(ulong) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(ulong) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => (float)x).ToArray();
+                        data = typedData.Select(v => v > uint.MaxValue ? (float)uint.MaxValue : (float)v).ToArray();
                     }
                     // Bool
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Bool)
                     {
                         var typedData = new bool[shape.length];
-                        Debug.Assert((sizeof(bool) * shape.length) == onnxTensor.RawData.Length);
+                        Assert.IsTrue((sizeof(bool) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(x => x ? 1.0f : 0.0f).ToArray();
+                        data = typedData.Select(v => v ? 1.0f : 0.0f).ToArray();
                     }
                     else
                         throw new OnnxLayerImportException($"Tensor data type {(TensorProto.Types.DataType)onnxTensor.DataType} is not supported.");
@@ -143,21 +143,21 @@ namespace Unity.Barracuda.ONNX
                 // Float32
                 else if ((onnxTensor.FloatData != null) && (onnxTensor.FloatData.Count != 0))
                 {
-                    Debug.Assert(shape.length == onnxTensor.FloatData.Count);
+                    Assert.IsTrue(shape.length == onnxTensor.FloatData.Count);
                     data = new float[shape.length];
                     onnxTensor.FloatData.CopyTo(data, 0);
                 }
                 // Int32
                 else if ((onnxTensor.Int32Data != null) && (onnxTensor.Int32Data.Count != 0))
                 {
-                    Debug.Assert(shape.length == onnxTensor.Int32Data.Count);
-                    data = onnxTensor.Int32Data.Select(x => (float)x).ToArray();
+                    Assert.IsTrue(shape.length == onnxTensor.Int32Data.Count);
+                    data = onnxTensor.Int32Data.Select(v => (float)v).ToArray();
                 }
                 // Int64
                 else if ((onnxTensor.Int64Data != null) && (onnxTensor.Int64Data.Count != 0))
                 {
-                    Debug.Assert(shape.length == onnxTensor.Int64Data.Count);
-                    data = onnxTensor.Int64Data.Select(x => (float)x).ToArray();
+                    Assert.IsTrue(shape.length == onnxTensor.Int64Data.Count);
+                    data = onnxTensor.Int64Data.Select(v => v < int.MinValue ? (float)int.MinValue : v > int.MaxValue ? (float)int.MaxValue : (float)v).ToArray();
                 }
                 else
                 {
@@ -169,7 +169,7 @@ namespace Unity.Barracuda.ONNX
             }
         }
 
-        public ONNXTensor(Tensor data, long[] onnxShape)
+        public ONNXTensor(Tensor data, int[] onnxShape)
         {
             m_Data = data;
             m_Shape = onnxShape;
@@ -180,7 +180,7 @@ namespace Unity.Barracuda.ONNX
             return m_Shape.Any(s => s == 0);
         }
 
-        public ONNXTensor Reshape(long[] onnxShape)
+        public ONNXTensor Reshape(int[] onnxShape)
         {
             var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "?");
             var reshapedData = m_Data.Reshape(symbolicShape);
@@ -188,7 +188,7 @@ namespace Unity.Barracuda.ONNX
             {
                 if (onnxShape[i] < 0)
                     onnxShape[i] = reshapedData.shape[i];
-                Debug.Assert(onnxShape[i] == reshapedData.shape[i]);
+                Assert.IsTrue(onnxShape[i] == reshapedData.shape[i]);
             }
             return new ONNXTensor(reshapedData, onnxShape);
         }
@@ -201,11 +201,41 @@ namespace Unity.Barracuda.ONNX
             return new ONNXTensor(transposedData, transposedShape);
         }
 
+        public ONNXTensor NonZero()
+        {
+            //https://github.com/onnx/onnx/blob/master/docs/Operators.md#NonZero
+            //https://numpy.org/doc/stable/reference/generated/numpy.nonzero.html
+            //Return the indices of the elements that are non-zero. Iterating row major c style.
+
+            // pad with 1s to visit all elements at least once in the loop.
+            int[] paddedONNXShape = new int[] {1, 1, 1, 1, 1, 1, 1, 1};
+            for (int d = 0; d < rank; ++d)
+                paddedONNXShape[d] = shape[d];
+
+            // collect all non zero item
+            List<int[]> nonZeroIndices = new List<int[]>();
+            for (var it = new TensorIterator(m_Data.shape); it.IsValid(); it.Next())
+            {
+                if (Math.Abs(m_Data[it.index]) > Single.Epsilon)
+                    nonZeroIndices.Add(new int[] {it.d0,it.d1,it.d2,it.d3,it.d4,it.d5,it.d6,it.d7});
+            }
+
+            // store indices in dest tensor
+            Tensor result = new Tensor(new TensorShape(rank, nonZeroIndices.Count));
+            for(int i = 0; i < nonZeroIndices.Count; ++i)
+            {
+                for (int d = 0; d < rank; ++d)
+                    result[d,i] = nonZeroIndices[i][d];
+            }
+
+            return new ONNXTensor(result, new int[] {rank, nonZeroIndices.Count});
+        }
+
         public ONNXTensor SqueezeAll()
         {
             var newShape = m_Shape.Where(x => x > 1).ToArray();
             if (newShape.Length == 0)
-                newShape = new[] { 1L };
+                newShape = new[] { 1 };
             return Reshape(newShape);
         }
 
@@ -240,8 +270,8 @@ namespace Unity.Barracuda.ONNX
 
         public ONNXTensor Slice(int[] starts, int[] ends, int[] steps)
         {
-            Debug.Assert(starts.Length == ends.Length);
-            Debug.Assert(starts.Length == steps.Length);
+            Assert.IsTrue(starts.Length == ends.Length);
+            Assert.IsTrue(starts.Length == steps.Length);
 
             var newShape = new int[starts.Length];
             // handle negative indices, negative steps
@@ -260,11 +290,14 @@ namespace Unity.Barracuda.ONNX
                 ends[i] = Math.Min((int)m_Shape[i], ends[i]);
             }
 
-            // caluclate shape for sliced tensor
+            // calculate shape for sliced tensor
             for (var i = 0; i < m_Shape.Length; ++i)
                 newShape[i] = (ends[i] - starts[i]) / steps[i];
 
-            Tensor result = new Tensor(newShape);
+            int[] newONNXShapePadded = new int[] {1, 1, 1, 1, 1, 1, 1, 1};
+            for (int d = 0; d < newShape.Length; ++d)
+                newONNXShapePadded[d] = newShape[d];
+            Tensor result = new Tensor(newONNXShapePadded);
 
             // pad to the number of the loops - 4
             starts = starts.Concat(Enumerable.Repeat(0, 4 - starts.Length)).ToArray();
@@ -277,13 +310,13 @@ namespace Unity.Barracuda.ONNX
                         for (int c = starts[3], co = 0; c < ends[3]; c += steps[3], co++)
                             result[bo, yo, xo, co] = m_Data[b, y, x, c];
 
-            return new ONNXTensor(result, newShape.Select(x => (long)x).ToArray());
+            return new ONNXTensor(result, newShape.ToArray());
         }
 
         public ONNXTensor Gather(int axis, int[] indices)
         {
             //Atm support up to 4D tensors.
-            Debug.Assert(indices.Length < 5);
+            Assert.IsTrue(indices.Length < 5);
 
             // good explanation can be found here:
             // https://stackoverflow.com/questions/50999977/what-does-the-gather-function-do-in-pytorch-in-layman-terms
@@ -312,7 +345,12 @@ namespace Unity.Barracuda.ONNX
                                 result[b, y, x, c, 0, 0, 0, 0] = m_Data[b, y, x, indices[c], 0, 0, 0, 0];
                         }
 
-            return new ONNXTensor(result, newONNXShape.Select(x => (long)x).ToArray());
+            return new ONNXTensor(result, newONNXShape.ToArray());
+        }
+
+        public float this[int index]
+        {
+            get { return m_Data[index]; }
         }
 
         public Tensor ToBarracuda(string onnxLayout)
@@ -321,9 +359,9 @@ namespace Unity.Barracuda.ONNX
             if (onnxLayout == "?")
                 throw new OnnxLayerImportException("Unknown ONNX layout in not supported when converting constant tensor to Barracuda");
 
-            Debug.Assert(m_Shape.All(v => v > 0));
+            Assert.IsTrue(m_Shape.All(v => v > 0));
             var permutations = ONNXLayout.AxisPermutationsForMappingONNXLayoutToBarracuda(rank, onnxLayout);
-            Debug.Assert(rank <= permutations.Length);
+            Assert.IsTrue(rank <= permutations.Length);
 
             var outTensor = Permute(m_Data, permutations);
             Profiler.EndSample();
@@ -335,12 +373,12 @@ namespace Unity.Barracuda.ONNX
             var padPermutationsToBarracudaRank = TensorShape.MaxRank - permutations.Length;
             if (padPermutationsToBarracudaRank > 0)
                 permutations = permutations.Concat(Enumerable.Range(permutations.Length, padPermutationsToBarracudaRank)).ToArray();
-            Debug.Assert(permutations.Length == TensorShape.MaxRank);
+            Assert.IsTrue(permutations.Length == TensorShape.MaxRank);
 
             // See: https://stackoverflow.com/a/32034565
             Profiler.BeginSample("ONNXTensor.Permute");
             var outTensor = new Tensor(ONNXLayout.Permute(inTensor.shape.ToArray(), permutations));
-            Debug.Assert(outTensor.length == inTensor.length);
+            Assert.IsTrue(outTensor.length == inTensor.length);
 
             // {0, 2, 3, 1} => {0, 3, 1, 2}
             // {2, 3, 1, 0} => {3, 2, 0, 1}
@@ -359,16 +397,18 @@ namespace Unity.Barracuda.ONNX
             for (var i = 0; i < reversePermute.Length; ++i)
                 outStride[i] = tempOutStrides[reversePermute[i] + 1];
 
-            // inTensor strides
-            var inStrides = new int[TensorShape.MaxRank];
-            inStrides[7] = 1;
-            for (int i = 6; i >= 0; --i)
-                inStrides[i] = inStrides[i+1] * inTensor.shape[i+1];
-
-            for (var it = new TensorIterator(inTensor.shape); it.IsValid(); ++it)
+            for (var it = new TensorIterator(inTensor.shape); it.IsValid(); it.Next())
             {
-                outTensor[it.d0 * outStride[0] + it.d1 * outStride[1] + it.d2 * outStride[2] + it.d3 * outStride[3] + it.d4 * outStride[4] + it.d5 * outStride[5] + it.d6 * outStride[6] + it.d7 * outStride[7]] = inTensor[
-                    it.d0 * inStrides[0] + it.d1 * inStrides[1] + it.d2 * inStrides[2] + it.d3 * inStrides[3] + it.d4 * inStrides[4] + it.d5 * inStrides[5] + it.d6 * inStrides[6] + it.d7 * inStrides[7]];
+                float value = inTensor[it.index];
+
+                outTensor[it.d0 * outStride[0] +
+                          it.d1 * outStride[1] +
+                          it.d2 * outStride[2] +
+                          it.d3 * outStride[3] +
+                          it.d4 * outStride[4] +
+                          it.d5 * outStride[5] +
+                          it.d6 * outStride[6] +
+                          it.d7 * outStride[7]] = value;
             }
 
             Profiler.EndSample();
@@ -381,10 +421,10 @@ namespace Unity.Barracuda.ONNX
             var padPermutationsToBarracudaRank = 8 - permutations.Length;
             if (padPermutationsToBarracudaRank > 0)
                 permutations = permutations.Concat(Enumerable.Range(permutations.Length, padPermutationsToBarracudaRank)).ToArray();
-            Debug.Assert(permutations.Length == 8);
+            Assert.IsTrue(permutations.Length == 8);
 
             var outputTensor = new Tensor(ONNXLayout.Permute(readTensor.shape.ToArray(), permutations));
-            Debug.Assert(outputTensor.length == readTensor.length);
+            Assert.IsTrue(outputTensor.length == readTensor.length);
 
             var inShape = readTensor.shape.ToArray();
             for (var s = 0; s < inShape[0]; ++s)
@@ -413,7 +453,7 @@ namespace Unity.Barracuda.ONNX
     }
 
     // Description of the layer's output
-    public struct VariableTensor
+    internal struct VariableTensor
     {
         public enum Layout
         {
@@ -429,7 +469,7 @@ namespace Unity.Barracuda.ONNX
     }
 
     // Keeps track of constant and variable tensors of the model
-    public class ONNXModelTensors
+    internal class ONNXModelTensors
     {
         internal Dictionary<string, ONNXTensor> constants =
             new Dictionary<string, ONNXTensor>();
@@ -494,7 +534,7 @@ namespace Unity.Barracuda.ONNX
 
         public void CompleteUninitializedFields(ONNXNodeWrapper node)
         {
-            Debug.Assert(variables.ContainsKey(node.Name));
+            Assert.IsTrue(variables.ContainsKey(node.Name));
             var output = variables[node.Name];
 
             if (output.features == -1)

@@ -224,6 +224,31 @@ internal sealed class ComputeKernelLibrary
         return valid;
     }
 
+    private static bool IsWinograd16x16_R4x4KernelValid(ChannelMode channelMode, KernelMode kernelMode, int c, int k, int h, int w, int n)
+    {
+        bool valid = (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW); // NHWC not implemented
+
+        valid &= ComputeInfo.supportsComputeSharedMemory;
+        if (channelMode == ChannelMode.Strict)
+            valid &= (c % 8) == 0;
+
+        if (kernelMode == KernelMode.Strict)
+            valid &= (k % 16) == 0;
+
+        bool isMobile = (Application.platform == RuntimePlatform.Android) || (Application.platform == RuntimePlatform.IPhonePlayer);
+        bool isOSX = (Application.platform == RuntimePlatform.OSXEditor) || (Application.platform == RuntimePlatform.OSXPlayer);
+        bool isIntelUHD = ComputeInfo.graphicsDeviceVendor.Contains("Intel");
+        // winograd always better on these platforms
+        if (isMobile || isOSX || isIntelUHD)
+            return valid;
+
+        // Performance wise this kernel is less efficient than T8x8_R8x8 for lower channels count and big pixel dims
+        if ((k % 64) == 0)
+            valid &= (c >= 64) || (h*w <= 128*128);
+
+        return valid;
+    }
+
     private static List<Entry> s_Conv2DEntries = new List<Entry>(16);
     internal static List<Entry> Conv2D(TensorShape X, TensorShape K, TensorShape O, int[] stride, int[] pad)
     {
@@ -237,15 +262,17 @@ internal sealed class ComputeKernelLibrary
         entries.Clear();
 
         // Winograd
-        entries.Add(
-            new Entry("Conv2DWinograd_2x2_3x3",
-                Int3(k, ComputeHelper.IDivC(w, 2), ComputeHelper.IDivC(h, 2)),  BigO(X.channels) * 1 / (2*2.25f),
-                StrictAnd(K.kernelWidth == 3 && K.kernelHeight == 3 && stride[0] == 1 && stride[1] == 1 &&
-                          (h % 2) == 0 && (w % 2) == 0),
-                (Application.platform == RuntimePlatform.Android) ||
-                (Application.platform == RuntimePlatform.IPhonePlayer) ||
-                (ComputeInfo.graphicsDeviceVendor.Contains("Intel"))));
-
+        // R4x4_T16x16 : R4x4 T16x(4x4)
+        entries.Add(new Entry("Conv2DWinograd_2x2_Kernel3x3_StrictC8StrictK16_T16x16_R4x4",
+                Int3(16*16 * ComputeHelper.IDivC(k, 16), ComputeHelper.IDivC(ComputeHelper.IDivC(w, 2) * ComputeHelper.IDivC(h, 2), 16), n),      BigO(X.channels) * (0.8f / 64) * (1.0f/2.25f),
+                 valid_: K.kernelWidth == 3 && K.kernelHeight == 3 &&
+                         stride[0] == 1 && stride[1] == 1 &&
+                         IsWinograd16x16_R4x4KernelValid(ChannelMode.Strict, KernelMode.Strict, c, k, h, w, n)));
+        entries.Add(new Entry("Conv2DWinograd_2x2_Kernel3x3_StrictC8LaxK16_T16x16_R4x4",
+                Int3(16*16 * ComputeHelper.IDivC(k, 16), ComputeHelper.IDivC(ComputeHelper.IDivC(w, 2) * ComputeHelper.IDivC(h, 2), 16), n),      BigO(X.channels) * (0.9f / 64) * (1.0f/2.25f),
+                 valid_: K.kernelWidth == 3 && K.kernelHeight == 3 &&
+                         stride[0] == 1 && stride[1] == 1 &&
+                         IsWinograd16x16_R4x4KernelValid(ChannelMode.Strict, KernelMode.Lax, c, k, h, w, n)));
         // R8x8_16k
         entries.Add(
             new Entry("Conv2DKernelKxK_LaxC4StrictK16_T2x32_R8x8",
@@ -768,6 +795,9 @@ internal struct ComputeKernel
 
 }
 
+/// <summary>
+/// GPU compute implementation of `IOps`
+/// </summary>
 public class ComputeOps : ReferenceComputeOps
 {
     // ---------------------------------------------------------------------------------
@@ -777,6 +807,13 @@ public class ComputeOps : ReferenceComputeOps
     private ComputeShader[] m_Kernels;
     private bool m_Verbose = false;
 
+    /// <summary>
+    /// Create `ComputeOps`
+    /// </summary>
+    /// <param name="kernels">compute kernels</param>
+    /// <param name="referenceKernel">reference compute kernels</param>
+    /// <param name="allocator">allocator</param>
+    /// <param name="verbose">verbose flag</param>
     public ComputeOps(ComputeShader[] kernels, ComputeShader referenceKernel,  ITensorAllocator allocator = null, bool verbose = false)
     : base(referenceKernel, allocator)
     {
@@ -808,7 +845,9 @@ public class ComputeOps : ReferenceComputeOps
     }
 
     // ---------------------------------------------------------------------------------
-    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+
+    /// <inheritdoc/>
+    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         // MatMul implementation in terms of Dense
         var A = (xTranspose) ? Transpose(X): X;
@@ -834,6 +873,8 @@ public class ComputeOps : ReferenceComputeOps
 
         return O;
     }
+
+    /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(W.dimensions <= 2);
@@ -867,7 +908,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
+    Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad, Layer.FusedActivation fusedActivation, ComputeKernel fn)
     {
         Assert.IsTrue(X.shape.IsNHWC());
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -893,17 +934,15 @@ public class ComputeOps : ReferenceComputeOps
         fn_wk.SetTensor("O", Ktransformed.shape, Pin(Ktransformed).buffer);
         fn_wk.Dispatch();
 
-        var fn_w = new ComputeKernel(new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3"), (Kws.kernelCount, ComputeHelper.IDivC(O.width, 2), ComputeHelper.IDivC(O.height, 2)));
-
-        fn_w.SetTensor("X", X.shape, Pin(X).buffer);
-        fn_w.SetTensor("O", O.shape, Pin(O).buffer);
-        fn_w.SetTensorDecl("K", Ktransformed.shape, Pin(Ktransformed).offset);
-        fn_w.SetTensorDecl("B", Bpacked.shape, Pin(Bpacked).offset);
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.SetTensorDecl("K", Ktransformed.shape, Pin(Ktransformed).offset);
+        fn.SetTensorDecl("B", Bpacked.shape, Pin(Bpacked).offset);
         Assert.AreEqual(Pin(Ktransformed).buffer, Pin(Bpacked).buffer);
-        fn_w.SetTensorBuffer("WBK", Pin(Ktransformed).buffer);
-        fn_w.shader.SetInts("_Pad", pad);
-        fn_w.shader.SetInt("_ActivationMode", (int)fusedActivation);
-        fn_w.Dispatch();
+        fn.SetTensorBuffer("WBK", Pin(Ktransformed).buffer);
+        fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
+        fn.Dispatch();
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -912,6 +951,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -927,9 +967,9 @@ public class ComputeOps : ReferenceComputeOps
         if (printKernels)
             Debug.Log($"{fn.func.kernelName}: {O.shape} = {X.shape} # {K.shape} stride: {stride[0]},{stride[1]} pad:{pad[0]},{pad[1]}" );
 
-        if (fn.func.kernelName.StartsWith("Conv2DWinograd_2x2_3x3"))
+        if (fn.func.kernelName.StartsWith("Conv2DWinograd"))
         {
-            return Conv2DWinograd(X, K, B, O, stride, pad, fusedActivation);
+            return Conv2DWinograd(X, K, B, O, stride, pad, fusedActivation, fn);
         }
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -951,6 +991,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
@@ -989,6 +1030,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1044,6 +1086,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1065,6 +1108,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor Pool2D(string kernelName, Tensor X, int[] pool, int[] stride, int[] pad)
     {
         Assert.AreEqual(pool.Length, 2);
@@ -1087,11 +1131,13 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalMaxPool2D(Tensor X)
     {
         return GlobalPool2D("MaxPool2DReduce", "GlobalMaxPool2D", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
         return GlobalPool2D("AvgPool2DReduce", "GlobalAvgPool2D", X);
@@ -1126,6 +1172,8 @@ public class ComputeOps : ReferenceComputeOps
         fn.Dispatch();
         return new Tuple<Tensor,Tensor>(O,O2);
     }
+
+    /// <inheritdoc/>
     public override Tensor GlobalAvgVariancePool2D(Tensor X)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1180,6 +1228,13 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <summary>
+    /// Generic global 2D pooling
+    /// </summary>
+    /// <param name="smallKernelName">small kernel name</param>
+    /// <param name="globalKernelName">global kernel name</param>
+    /// <param name="X">input</param>
+    /// <returns>output `Tensor`</returns>
     protected virtual Tensor GlobalPool2D(string smallKernelName, string globalKernelName, Tensor X)
     {
         var inputDim = new [] {X.height, X.width};
@@ -1202,6 +1257,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         if (!X.shape.IsNHWC())
@@ -1227,6 +1283,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
         if (!X.shape.IsNHWC())
@@ -1268,6 +1325,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
     {
         var O = NewTensor(X.shape);
@@ -1286,6 +1344,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         if (!X.shape.IsNHWC() || !S.shape.IsNHWC())
@@ -1307,10 +1366,11 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    public override Tensor Softmax(Tensor X)
+    /// <inheritdoc/>
+    public override Tensor Softmax(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            return base.Softmax(X);
+        if (!X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+            return base.Softmax(X, axis);
 
         var O = NewTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Softmax(X.shape, O.shape));
@@ -1322,6 +1382,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1341,6 +1402,8 @@ public class ComputeOps : ReferenceComputeOps
     // public override Tensor Dropout(Tensor X, float alpha)
 
     private UnityEngine.Random.State[] m_RandomNormalSeed;
+
+    /// <inheritdoc/>
     public override Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
     {
         if (!s.IsNHWC())
@@ -1359,6 +1422,8 @@ public class ComputeOps : ReferenceComputeOps
     }
 
     private UnityEngine.Random.State[] m_RandomUniformSeed;
+
+    /// <inheritdoc/>
     public override Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
     {
         if (!s.IsNHWC())
@@ -1376,6 +1441,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors) || !TensorExtensions.Is8DAxisConvertibleToNHWC(axis))
@@ -1405,6 +1471,12 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <summary>
+    /// Get input tensor strides on device
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="channelOrder">channel order</param>
+    /// <returns>strides</returns>
     protected int[] GetInputTensorStridesOnDevice(TensorShape shape, ComputeInfo.ChannelsOrder channelOrder)
     {
         if (channelOrder == ComputeInfo.ChannelsOrder.NHWC)
@@ -1425,6 +1497,7 @@ public class ComputeOps : ReferenceComputeOps
         }
     }
 
+    /// <inheritdoc/>
     protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         Assert.IsTrue(tensors.Length > 0);
@@ -1463,6 +1536,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1493,6 +1567,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
         var O = NewTensor(X.shape);
@@ -1505,8 +1580,33 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
+    public override Tensor Where(Tensor C, Tensor A, Tensor B)
+    {
+        Tensor O = NewTensor(C.shape);
+        var fn = BestKernel(ComputeKernelLibrary.Broadcast(C.shape, O.shape, "BroadcastWhere"));
+
+        fn.SetTensor("X", C.shape, Pin(C).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.SetTensor("S", A.shape, Pin(A).buffer, Pin(A).offset);
+        fn.SetTensor("B", B.shape, Pin(B).buffer, Pin(B).offset);
+
+        fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(C.shape, Pin(C).channelsOrder));
+        fn.shader.SetInts("_SStrides", GetInputTensorStridesOnDevice(A.shape, Pin(A).channelsOrder));
+        fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder));
+
+        fn.Dispatch();
+        return O;
+    }
+
+    /// <inheritdoc/>
     protected override Tensor CopyAndReshape_NCHW(Tensor X, TensorShape newShape)
     {
+        //8D reshape only supported on reference backend. No optimized 8D version as
+        //the goal is rather to have a `channelFirst` model were reshape is a noop.
+        if (!X.shape.IsNHWC() || !newShape.IsNHWC())
+            return base.CopyAndReshape_NCHW(X, newShape);
+
         Assert.AreEqual(X.length, newShape.length);
         Assert.AreEqual(ComputeInfo.ChannelsOrder.NCHW, ComputeInfo.channelsOrder);
 
@@ -1520,9 +1620,10 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor CopyAndReshape(Tensor X, TensorShape newShape)
     {
-        //8D reshape not supported on GPU (especially in ChannelFirst mode) atm.
+        //8D reshape only supported on reference backend atm.
         if (!X.shape.IsNHWC() || !newShape.IsNHWC())
             return base.CopyAndReshape(X, newShape);
 
@@ -1530,7 +1631,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(copyShape.length, newShape.length);
         if (X.shape != newShape)
         {
-            //In CHW mode on should call CopyAndReshape_NCHW if shape is modified
+            //In CHW mode one should call CopyAndReshape_NCHW if shape is modified
             Assert.AreEqual(ComputeInfo.ChannelsOrder.NHWC, ComputeInfo.channelsOrder);
         }
 

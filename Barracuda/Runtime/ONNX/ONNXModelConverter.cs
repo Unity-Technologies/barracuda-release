@@ -5,6 +5,7 @@ using System.Linq;
 using Google.Protobuf;
 using Onnx;
 using UnityEngine;
+using UnityEngine.Assertions;
 using UnityEngine.Profiling;
 
 namespace Unity.Barracuda.ONNX
@@ -26,16 +27,21 @@ namespace Unity.Barracuda.ONNX
 
         private readonly Dictionary<string, ONNXTensor> m_OverrideGlobalInputs = new Dictionary<string, ONNXTensor>()
         {
-            { "sequence_length:0", new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new [] { 1L }) },
-            { "sequence_length",   new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new [] { 1L }) }
+            { "sequence_length:0", new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new [] { 1 }) },
+            { "sequence_length",   new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new [] { 1 }) }
         };
         private readonly HashSet<string> m_ShouldNotBeBaked = new HashSet<string>()
         {
             // the following nodes handle constant inputs in a custom manner and should not be baked:
-            "Constant", "Reshape", "Shape", "Slice", "Gather", "Transpose", "Squeeze", "Unsqueeze",
+            "Constant", "Reshape", "Shape", "Slice", "Gather", "Transpose", "Squeeze", "Unsqueeze", "NonZero", "ConstantOfShape",
 
             // the following nodes are dynamic in nature and can not be baked even when all inputs are constant:
             "RandomNormal", "RandomNormalLike", "RandomUniform", "RandomUniformLike"
+        };
+        private readonly HashSet<string> m_AllInputsChannelFirst = new HashSet<string>()
+        {
+            // the following onnx nodes have all of there inputs as channel first layout
+            "Concat", "Add", "Sum", "Sub", "Mul", "Div", "Pow", "Min", "Max", "Mean", "Greater", "Less", "Equal", "Or", "And", "Xor", "Where"
         };
 
         // Shortcuts
@@ -43,6 +49,7 @@ namespace Unity.Barracuda.ONNX
         private Dictionary<string, VariableTensor> variableTensors { get { return m_ModelTensors.variables; } }
         private Dictionary<string, string> lstmInputs = new Dictionary<string, string>();
         private Dictionary<string, string> lstmOutputs = new Dictionary<string, string>();
+        private List<string> layerRequiringUpstreamPatch = new List<string>();
         private void Add(string opType, Action<ModelBuilder, ONNXNodeWrapper> opImportAction)
         {
             m_NodeImporters.Add(opType, opImportAction);
@@ -98,27 +105,50 @@ namespace Unity.Barracuda.ONNX
             this.optimizeModel = optimizeModel;
             this.treatErrorsAsWarnings = treatErrorsAsWarnings;
 
+            var defaultZeroTensor = new ONNXTensor(new Tensor(1, 1, new[] { 0f }), new[] { 1 });
+            var defaultOneTensor = new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new[] { 1 });
+            var toNCHW = new [] { 0, 3, 1, 2 };
+            var toNHWC = new [] { 0, 2, 3, 1 };
+
             // TODO: setup m_NodeImporters via initializer list
             // TODO: simplify code to avoid passing node.Name over and over again
             Add("Constant", (net, node) => {
                 node.UnsupportedAttribute("sparse_value");
                 Const(node, node.ValueAsTensor);
             });
+            Add("ConstantOfShape", (net, node) => {
+                Assert.IsTrue(node.InputCount > 0);
+                var valueTensor = node.GetOptionalTensor("value", defaultZeroTensor);
+                var onnxShape = node.Input0ConstantONNXShape(name: "input");
+                var dataShape = ONNXLayout.ConvertShapeToBarracuda(onnxShape, onnxLayout:"?");
+                var tensorData = new Tensor(dataShape);
+                tensorData.Fill(valueTensor[0]);
+                var constantOfShape = new ONNXTensor(tensorData, onnxShape);
+                Const(node, constantOfShape);
+            });
             Add("Reshape", (net, node)  => {
-                long[] onnxShape;
+                int[] onnxShape;
                 if (node.InputCount > 1) // Reshape-5
                 {
-                    onnxShape = node.Input1Constant(onnxLayout:"C", name:"shape").AsLongs();
-                    var onnxRank = onnxShape.Length;
-
-                    var shapeLike = variableTensors[node.Input1].productOfShape;
-                    if (!IsEmpty(shapeLike) &&
-                        variableTensors[shapeLike].rank == onnxRank &&
-                        ONNXLayout.CanSymbolicShapeBeUsedWithReshapeLike(onnxShape, node.Input0Features))
+                    if (node.IsInput1Const)
                     {
-                        // special case of Shape followed by Reshape
-                        net.Reshape(node.Name, node.Input0, shapeLike);
-                        Output(node, rank:onnxShape.Length); // stop propagating productOfShape further
+                        onnxShape = node.Input1Constant(onnxLayout: "C", name: "shape").AsInts();
+                    }
+                    else
+                    {
+                        if (node.Input0Rank <= 4 && variableTensors.TryGetValue(node.Input0, out VariableTensor previousOutput)
+                            && previousOutput.layout != VariableTensor.Layout.ChannelsLast)
+                        {
+                            // For handling all reshapes correctly with dynamic shapes (e.g. rank 3) perform in NCHW layout
+                            Layer nchwTranspose = net.Transpose($"Transpose_{node.Input0}_For_{node.Name}", node.Input0, toNCHW);
+                            Layer reshape = net.Reshape($"{node.Name}_NCHW", nchwTranspose, node.Input1);
+                            net.Transpose(node.Name, reshape, toNHWC);
+                            Output(node, rank:4);
+                        }
+                        else
+                        {
+                            net.Reshape(node.Name, node.Input0, node.Input1);
+                        }
                         return;
                     }
                 }
@@ -133,22 +163,45 @@ namespace Unity.Barracuda.ONNX
                 }
                 else
                 {
-                    var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "NCHW");
-                    bool containsNoVariableDimensions = Array.IndexOf(symbolicShape, -1) == -1;
-                    if (containsNoVariableDimensions && forceArbitraryBatchSize)
-                        symbolicShape[0] = -1; // force arbitrary batch size
+                    Layer reshapeLayer = null;
 
-                    net.Reshape(node.Name, node.Input0, symbolicShape);
+                    int numDimensionContainingChannelsInformationAfterReshape = 1;
+                    var symbolicShape = ONNXLayout.ConvertReshapeToBarracuda(onnxShape, node.Input0Rank, out numDimensionContainingChannelsInformationAfterReshape);
+                    int variableDimension = Array.IndexOf(symbolicShape, -1);
+                    bool containsNoVariableDimensions = variableDimension == -1;
 
-                    // Change temporary reverted
-                    //Output(node, symbolicShape[3], rank:symbolicShape.Length);
-                    //if (symbolicShape[3] == -1)
-                    //    Warn(net, node, $"Reshape with unknown feature count is not supported at the moment.");
-                    Output(node, rank:symbolicShape.Length);
+                    if (containsNoVariableDimensions)
+                    {
+                        if (forceArbitraryBatchSize)
+                            symbolicShape[0] = -1; // force arbitrary batch size
+                    }
+                    else if (onnxShape.Length <= 4 && node.Input0Rank <= 4
+                        && variableDimension != TensorShape.C
+                        && onnxShape[onnxShape.Length - 1] == -1
+                        && variableTensors.TryGetValue(node.Input0, out VariableTensor previousOutput)
+                        && previousOutput.layout != VariableTensor.Layout.ChannelsLast)
+                    {
+                        // Collapsing any of the spatial dimensions requires a reshape in NCHW layout
+                        int[] onnxPaddedShape;
+                        if (onnxShape.Length == 3) // correct NCH to NCW
+                            onnxPaddedShape = new[] { onnxShape[0], onnxShape[1], 1, onnxShape[2] };
+                        else
+                            onnxPaddedShape = onnxShape.Concat(Enumerable.Repeat(1, 4 - onnxShape.Length)).ToArray();
+
+                        Layer nchwTranspose = net.Transpose($"Transpose_{node.Input0}_For_{node.Name}", node.Input0, toNCHW);
+                        reshapeLayer = net.Reshape($"{node.Name}_NCHW", nchwTranspose, onnxPaddedShape);
+                        reshapeLayer = net.Transpose(node.Name, reshapeLayer, toNHWC);
+                    }
+
+                    if (reshapeLayer == null)
+                        reshapeLayer = net.Reshape(node.Name, node.Input0, symbolicShape);
+
+                    reshapeLayer.axis = numDimensionContainingChannelsInformationAfterReshape;
+                    Output(node, rank:onnxShape.Length);
                 }
             });
             Add("Expand", (net, node) => {
-                var onnxShape = node.Input1Constant(onnxLayout: "C", name: "shape").AsLongs();
+                var onnxShape = node.Input1Constant(onnxLayout: "C", name: "shape").AsInts();
                 var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "NCHW");
                 bool containsNoVariableDimensions = Array.IndexOf(symbolicShape, -1) == -1;
                 if (containsNoVariableDimensions && forceArbitraryBatchSize)
@@ -157,7 +210,8 @@ namespace Unity.Barracuda.ONNX
                 net.Expand(node.Name, node.Input0, symbolicShape);
                 Output(node, rank:symbolicShape.Length);
             });
-            Add("Shape", (net, node)    => {
+            Add("Shape", (net, node)    =>
+            {
                 float[] shapeValuesAsFloats;
                 if (node.IsInput0Const)
                 {
@@ -183,7 +237,7 @@ namespace Unity.Barracuda.ONNX
                             var shapeWithChannelsFirst = new[] { 0f, node.Input0Features }; // NC
                             var fillSpatialDimensionsWithUnknown = 0f;
                             var numberOfSpatialDimensions = node.Input0Rank - 2;
-                            var shapeFollowedWithSpatialDimensions = Enumerable.Repeat(fillSpatialDimensionsWithUnknown, numberOfSpatialDimensions); // fill with -1
+                            var shapeFollowedWithSpatialDimensions = Enumerable.Repeat(fillSpatialDimensionsWithUnknown, numberOfSpatialDimensions);
                             shapeValuesAsFloats = shapeWithChannelsFirst.Concat(shapeFollowedWithSpatialDimensions).ToArray();
 
                             break;
@@ -197,14 +251,16 @@ namespace Unity.Barracuda.ONNX
                 }
 
                 var shapeLength = shapeValuesAsFloats.Length;
-                Debug.Assert(shapeLength == node.Input0Rank);
+                Assert.IsTrue(shapeLength == node.Input0Rank);
 
+                var shape = new int[8];
+                shape[0] = shapeLength;
                 var shapeTensor = new ONNXTensor(
                     // NOTE: stored in single rank ONNX layout
                     // with data in the 1st dimension
                     // thus `shapeLength` specifies the length of the 1st dimension
-                    data:new Tensor(shapeLength, 0, shapeValuesAsFloats),
-                    onnxShape:new [] { (long)shapeLength });
+                    data:new Tensor(shape, shapeValuesAsFloats),
+                    onnxShape:new [] { shapeLength });
 
                 Const(node, shapeTensor);
                 Output(node, features:shapeLength, productOfShape:node.Input0);
@@ -233,7 +289,7 @@ namespace Unity.Barracuda.ONNX
                     // `a` would be [2, 1, 1, 10], but `b` would have to be [1, 10, 1, 2]. Note the actual data swap in channels!
                     int axis = node.Axes[0];
                     if (axis < 0)
-                        axis = node.Input0Rank + 1 - axis;
+                        axis = node.Input0Rank+1 - axis;
 
                     var transpose = ONNXLayout.UnSqueezeAxisPermutationForMappingONNXLayoutToBarracuda(inputRank, axis, "NCHW");
                     net.Transpose(node.Name, node.Input0, transpose);
@@ -288,6 +344,32 @@ namespace Unity.Barracuda.ONNX
                     }
                 }
             });
+            Add("Split", (net, node) => {
+
+                int axis = node.AxisOptional(0);
+                int[] splits;
+                try {
+                    splits = node.GetRequiredIntArray("split");
+                } catch (OnnxLayerImportException) {
+                    throw new OnnxLayerImportException($"Unsupported default attribute `split` for node {node.Name} of type Split. Value is required.");
+                }
+
+                Assert.IsTrue(splits.Length == node.Outputs.Length);
+                axis = ONNXLayout.ConvertAxisToBarracuda(axis, onnxRank:node.Input0Rank, onnxLayout:"NCHW");
+                int currentSliceStartIndex = 0;
+
+                //Convert `Split` into multiple `StridedSlice` operations.
+                for (int i = 0; i < splits.Length; ++i)
+                {
+                    var starts  = new int[] {0, 0, 0, 0, 0, 0, 0, 0};
+                    var ends    = new int[] {0, 0, 0, 0, 0, 0, 0, 0};
+                    var strides = new int[] {1, 1, 1, 1, 1, 1, 1, 1};
+                    starts[axis] = currentSliceStartIndex;
+                    ends[axis] = starts[axis] + splits[i];
+                    net.StridedSlice(node.Outputs[i], node.Input0,starts,ends,strides);
+                    currentSliceStartIndex += splits[i];
+                }
+            });
             Add("Slice", (net, node) => {
                 int[] starts, ends, axes, steps;
                 if (node.InputCount > 1) // Slice-10
@@ -311,12 +393,11 @@ namespace Unity.Barracuda.ONNX
                     steps       = Enumerable.Repeat(1, starts.Length).ToArray();
                 }
 
-                Debug.Assert(starts.Length == ends.Length);
+                Assert.IsTrue(starts.Length == ends.Length);
                 var onnxRank    = node.Input0Rank;
-                var onnxLast    = (long)int.MaxValue;
-                var onnxStarts  = Enumerable.Repeat(0L, onnxRank).ToArray();
-                var onnxEnds    = Enumerable.Repeat(onnxLast, onnxRank).ToArray(); // by default copy the whole axis till the end
-                var onnxSteps   = Enumerable.Repeat(1L, onnxRank).ToArray();
+                var onnxStarts  = Enumerable.Repeat(0, onnxRank).ToArray();
+                var onnxEnds    = Enumerable.Repeat(int.MaxValue, onnxRank).ToArray(); // by default copy the whole axis till the end
+                var onnxSteps   = Enumerable.Repeat(1, onnxRank).ToArray();
 
                 // NOTE: begin=0, end=0, stride=1  <=  full range from existing axis
                 //       begin=0, end=inf,stride=1 <=  full range from existing axis
@@ -331,6 +412,7 @@ namespace Unity.Barracuda.ONNX
                     if (axis < 0)
                         axis += onnxRank;
                     axis = Math.Min(Math.Max(axis, 0), onnxRank);
+
                     onnxStarts[axis] = starts[i];
                     onnxEnds[axis]   = ends[i];
                     onnxSteps[axis]  = steps[i];
@@ -338,40 +420,87 @@ namespace Unity.Barracuda.ONNX
 
                 if (node.IsInput0Const)
                 {
-                    var slicedTensor = constantTensors[node.Input0].Slice(
-                        starts:onnxStarts.Select(x => (int)x).ToArray(),
-                        ends:onnxEnds.Select(x => (int)x).ToArray(),
-                        steps:onnxSteps.Select(x => (int)x).ToArray());
+                    var slicedTensor = constantTensors[node.Input0].Slice(starts:onnxStarts, ends:onnxEnds, steps:onnxSteps);
                     Const(node, slicedTensor);
                 }
                 else
                 {
-                    // pad slicing indices to Barracuda format, 4 dimensions are always expected
-                    // since values are indices will pad with 0 (in case of TensorShape padding would be 1)
-                    Array.Resize(ref onnxStarts, 4);
-                    Array.Resize(ref onnxEnds, 4);
-                    Array.Resize(ref onnxSteps, 4);
-
                     net.StridedSlice(node.Name, node.Input0,
                         starts:ONNXLayout.PermuteToBarracuda(onnxStarts, onnxLayout:"NCHW",0),
-                        ends:ONNXLayout.PermuteToBarracuda(onnxEnds, onnxLayout:"NCHW",1),
+                        ends:ONNXLayout.PermuteToBarracuda(onnxEnds, onnxLayout:"NCHW",int.MaxValue),
                         strides:ONNXLayout.PermuteToBarracuda(onnxSteps, onnxLayout:"NCHW",1));
                 }
             });
             Add("Gather", (net, node) =>
             {
                 int axis = node.AxisOptional(0);
-                if (node.IsInput0Const)
+
+                if (node.IsInput0Const && node.IsInput1Const)
                 {
                     var indices = node.Input1Constant(onnxLayout:"C", name:"indices").AsInts();
-                    var gatheredTensor = constantTensors[node.Input0].Gather(axis, indices);
-                    Const(node, gatheredTensor);
+
+                    // If the previous node was a shape and we're gathering an inferred value, then don't treat the shape as a constant
+                    if (node.Input0.IndexOf("shape", StringComparison.OrdinalIgnoreCase) >= 0
+                        && indices.Length == 1 && indices[0] > 0
+                        && constantTensors[node.Input0].ToBarracuda("C")[indices[0]] == 0 // Must resolve at runtime
+                        && variableTensors.TryGetValue(node.Input0, out VariableTensor input0Tensor)
+                        && variableTensors.TryGetValue(input0Tensor.productOfShape, out VariableTensor shapeInputTensor))
+                    {
+                        axis = ONNXLayout.ConvertAxisToBarracuda(indices[0], shapeInputTensor.rank, "NCHW");
+                        net.Shape(node.Name, input0Tensor.productOfShape, axis);
+                        D.Log($"Re-writing {node.Name} to a Shape+Axis layer (results in a scalar)");
+                    }
+                    else
+                    {
+                        ONNXTensor gatheredTensor = constantTensors[node.Input0].Gather(axis, indices);
+                        Const(node, gatheredTensor);
+                    }
                 }
                 else
                 {
+                    int input1Rank = node.Input1Rank;
+                    if (node.IsInput1Const)
+                    {
+                        // The original rank was cached above since our constant tensor requires a shape of rank 1 and original may have been a scalar
+                        var indices = node.Input1Constant(onnxLayout: "C", name: "indices").AsFloats();
+                        var constTensor = new ONNXTensor(new Tensor(new [] { indices.Length, 1, 1, 1, 1, 1, 1, 1 }, indices), new [] { indices.Length });
+                        Const(node.Input1, constTensor);
+                    }
+
                     axis = ONNXLayout.ConvertAxisToBarracuda(axis, onnxRank:node.Input0Rank, onnxLayout:"NCHW");
                     net.Gather(node.Name, node.Input0, node.Input1, axis, true);
+                    Output(node.Name, rank: input1Rank + node.Input0Rank - 1);
                 }
+            });
+            Add("NonMaxSuppression", (net, node) =>
+            {
+                int centerPointBox = node.GetOptionalInt("center_point_box", 0);
+
+                var boxes = node.GetRequiredInput(0);
+                var scores = node.GetRequiredInput(1);
+                object maxOutputBoxesPerClass = 0f;
+                object iouThreshold = 0f;
+                object scoreThreshold = 0f;
+
+                if (node.InputCount > 4 && node.IsInput2Const && node.IsInput3Const && node.IsInput4Const
+                    || node.InputCount > 3 && node.IsInput2Const && node.IsInput3Const
+                    || node.InputCount > 2 && node.IsInput2Const)
+                {
+                    // Use constant version (possibly with defaults)
+                    maxOutputBoxesPerClass = node.Input2ConstantOptional((float)maxOutputBoxesPerClass, "C", nameof(maxOutputBoxesPerClass))[0];
+                    iouThreshold = node.Input3ConstantOptional((float)iouThreshold, "C", nameof(iouThreshold))[0];
+                    scoreThreshold = node.Input4ConstantOptional((float)scoreThreshold, "C", nameof(scoreThreshold))[0];
+                }
+                else
+                {
+                    // Use dynamic tensor version
+                    maxOutputBoxesPerClass = node.Input2Optional;
+                    iouThreshold = node.Input3Optional;
+                    scoreThreshold = node.Input4Optional;
+                }
+
+                net.NonMaxSuppression(node.Name, boxes, scores, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, centerPointBox);
+                Output(node, rank: 2);
             });
             Add("OneHot", (net, node) => {
                 node.UnsupportedAttribute("axis", -1);
@@ -400,16 +529,32 @@ namespace Unity.Barracuda.ONNX
                 {
                     // TopK-1
                     int k = node.GetRequiredInt("k");
-                    kName = "cTopK";
+                    kName = "Const_TopK";
                     var kTensor = new ONNXTensor(
                         data:new Tensor(new[] { 1, 1, 1, 1 }, new[] { (float)k }, kName),
-                        onnxShape:new [] { (long)1 });
+                        onnxShape:new [] { 1 });
 
                     Const(node, kTensor);
                 }
 
                 Layer indices = net.TopKIndices(node.Outputs[1], node.Input0, kName, axis, largest, sorted);
+                Output(node.Outputs[1], rank: node.Input0Rank);
                 net.TopKValues(node.Outputs[0], node.Input0, indices, axis);
+                Output(node.Outputs[0], rank: node.Input0Rank);
+            });
+
+            Add("NonZero", (net, node) => {
+
+                if (node.IsInput0Const)
+                {
+                    var nonZeroTensor = constantTensors[node.Input0].NonZero();
+                    Const(node, nonZeroTensor);
+                }
+                else
+                {
+                    net.NonZero(node.Name, node.Input0);
+                    Output(node.Outputs[0], rank: 2);
+                }
             });
 
             // LSTM
@@ -504,7 +649,25 @@ namespace Unity.Barracuda.ONNX
 
             // Activation ops
             Add("Relu", (net, node)     => { net.Relu(node.Name, node.Input0); });
-            Add("Softmax", (net, node)  => { net.Softmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
+            Add("Softmax", (net, node) =>
+            {
+                const int defaultAxis = 1;
+                int axis = node.AxisOptional(defaultAxis); // Leave in NCHW form and transpose instead
+
+                string input = node.Input0;
+                string output = node.Name;
+                if (axis != 1)
+                {
+                    Layer transposeLayer = net.Transpose($"Transpose_For_{node.Name}", input, toNCHW);
+                    input = transposeLayer.name;
+                    output = $"{node.Name}_NCHW"; // Use an intermediate node name since the original name will now be final transpose
+                }
+
+                Layer layer = net.Softmax(output, input, axis);
+
+                if (axis != 1)
+                    net.Transpose(node.Name, layer.name, toNHWC);
+            });
             Add("Tanh", (net, node)     => { net.Tanh(node.Name, node.Input0); });
             Add("Sqrt", (net, node)     => { net.Sqrt(node.Name, node.Input0); });
             Add("Sigmoid", (net, node)  => { net.Sigmoid(node.Name, node.Input0); });
@@ -554,12 +717,44 @@ namespace Unity.Barracuda.ONNX
             Add("Sinh", (net, node) => { net.Sinh(node.Name, node.Input0); });
             Add("Tan", (net, node) => { net.Tan(node.Name, node.Input0); });
 
+            string[] GetCorrectedConstants(ONNXNodeWrapper node, ModelBuilder net)
+            {
+                string[] inputs = new string[node.Inputs.Length];
+                Array.Copy(node.Inputs, inputs, inputs.Length);
+
+                if (node.IsInput1Const)
+                {
+                    string onnxLayout;
+                    switch (node.Input1Rank)
+                    {
+                        case 1:
+                            onnxLayout = "C";
+                            break;
+
+                        default:
+                            onnxLayout = "NCHW";
+                            break;
+                    }
+
+                    string constName = $"Const_{node.Input1}";
+                    if (!constantTensors.ContainsKey(constName))
+                    {
+                        Tensor tensorData = node.Input1Constant(onnxLayout, node.Input1);
+                        Layer layer = net.Const(constName, tensorData);
+                        inputs[1] = layer.name;
+                        Const(constName, new ONNXTensor(tensorData, tensorData.shape.ToArray()));
+                    }
+                }
+
+                return inputs;
+            }
+
             // Broadcast ops
-            Add("Add", (net, node)     => { net.Add(node.Name, node.Inputs); });
-            Add("Sum", (net, node)     => { net.Add(node.Name, node.Inputs); }); // Sum is implemented via Add
-            Add("Sub", (net, node)     => { net.Sub(node.Name, node.Inputs); });
-            Add("Mul", (net, node)     => { net.Mul(node.Name, node.Inputs); });
-            Add("Div", (net, node)     => { net.Div(node.Name, node.Inputs); });
+            Add("Add", (net, node)     => { net.Add(node.Name, GetCorrectedConstants(node, net)); });
+            Add("Sum", (net, node)     => { net.Add(node.Name, GetCorrectedConstants(node, net)); }); // Sum is implemented via Add
+            Add("Sub", (net, node)     => { net.Sub(node.Name, GetCorrectedConstants(node, net)); });
+            Add("Mul", (net, node)     => { net.Mul(node.Name, GetCorrectedConstants(node, net)); });
+            Add("Div", (net, node)     => { net.Div(node.Name, GetCorrectedConstants(node, net)); });
             Add("Pow", (net, node)     => { net.Pow(node.Name, node.Inputs); });
             Add("Min", (net, node)     => { net.Min(node.Name, node.Inputs); });
             Add("Max", (net, node)     => { net.Max(node.Name, node.Inputs); });
@@ -573,6 +768,7 @@ namespace Unity.Barracuda.ONNX
             Add("And", (net, node)     => { net.LogicalAnd(node.Name, node.Input0, node.Input1); });
             Add("Not", (net, node)     => { net.LogicalNot(node.Name, node.Input0); });
             Add("Xor", (net, node)     => { net.LogicalXor(node.Name, node.Input0, node.Input1); });
+            Add("Where", (net, node)   => { net.Where(node.Name, node.Input0, node.Input1, node.Input2); });
 
             // Padding ops
             Add("Pad", (net, node) =>
@@ -602,7 +798,7 @@ namespace Unity.Barracuda.ONNX
 
                 if (strides.Length == 1)
                     strides = new[] { 1, strides[0] };
-                Debug.Assert(strides.Length == 2);
+                Assert.IsTrue(strides.Length == 2);
 
                 int[] kernenShape = node.KernelShape;
                 if (kernenShape.Length == 1)
@@ -654,16 +850,27 @@ namespace Unity.Barracuda.ONNX
             {
                 // From https://github.com/onnx/onnx/blob/master/docs/Operators.md#transpose
                 // By default, reverse the dimensions, otherwise permute the axes according to the values given.
-                var defaultPermutations = new[] {3, 2, 1, 0};//TODO support up to 8D tensors
-                var permutations = node.GetOptionalIntArray("perm", defaultPermutations);
 
                 if (node.IsInput0Const)
                 {
+                    int inputTensorRank = constantTensors[node.Input0].rank;
+                    var defaultPermutations = new int[inputTensorRank];
+                    for (int i = 0; i < inputTensorRank; ++i)
+                        defaultPermutations[i] = inputTensorRank - 1 - i;
+                    var permutations = node.GetOptionalIntArray("perm", defaultPermutations);
+
                     var transposedTensor = constantTensors[node.Input0].Permute(permutations);
                     Const(node, transposedTensor);
                 }
                 else
                 {
+                    var defaultPermutations = new[] {5, 4, 3, 2, 1, 0};
+                    var permutations = node.GetOptionalIntArray("perm", defaultPermutations);
+                    if (permutations.Length > 6)
+                        throw new OnnxLayerImportException($"Transpose support up to 6 dimensions but got a permutations of rank {permutations}.");
+
+                    bool fromTF = net.model.ProducerName.Contains("tf2onnx");
+
                     if (Enumerable.SequenceEqual(permutations, new[] { 0, 3, 1, 2 }) || // NHWC -> NCHW
                         Enumerable.SequenceEqual(permutations, new[] { 0, 2, 3, 1 }))   // NCHW -> NHWC
                     {
@@ -675,24 +882,32 @@ namespace Unity.Barracuda.ONNX
                         else if (permutations[1] == 2)  // NCHW -> NHWC
                         {
                             Output(node, layout: VariableTensor.Layout.ChannelsLast);
-                            PatchUpstreamInputLayoutFromIncorrectlyAssumedChannelsFirstToChannelsLast(net, node);
+                            layerRequiringUpstreamPatch.Add(node.Name);
                         }
                         else
-                            Debug.Assert("Reached unexpected branch" == "");
+                            Assert.IsTrue("Reached unexpected branch" == "");
                     }
                     else if (Enumerable.SequenceEqual(permutations, new[] { 0, 2, 1 }))       // NWC <-> NCW
                     {
                         // @TODO: reorder uptream nodes and global input dimensions accordingly from NHWC -> NCHW
-                        Warn(net, node, $"Use '--inputs-as-nchw' flag when exporting model from Tensorflow with tf2onnx");
-                        net.Identity(node.Name, node.Input0);
+                        if (fromTF)
+                        {
+                            Warn(net, node, $"Use '--inputs-as-nchw' flag when exporting model from Tensorflow with tf2onnx");
+                            net.Identity(node.Name, node.Input0);
 
-                        // flip layout
-                        if (node.Input0Layout == VariableTensor.Layout.ChannelsLast)
-                            Output(node, layout: VariableTensor.Layout.ChannelsFirst);
+                            // flip layout
+                            if (node.Input0Layout == VariableTensor.Layout.ChannelsLast)
+                                Output(node, layout: VariableTensor.Layout.ChannelsFirst);
+                            else
+                            {
+	                            Output(node, layout: VariableTensor.Layout.ChannelsLast);
+    	                        layerRequiringUpstreamPatch.Add(node.Name);
+                            }
+                        }
                         else
                         {
-                            Output(node, layout: VariableTensor.Layout.ChannelsLast);
-                            PatchUpstreamInputLayoutFromIncorrectlyAssumedChannelsFirstToChannelsLast(net, node);
+                            int[] barracudaPermutation = { 0, 1, 3, 2 };
+                            net.Transpose(node.Name, node.Input0, barracudaPermutation);
                         }
                     }
                     else if (Enumerable.SequenceEqual(permutations, new[] { 1, 0, 2 })) // batch <-> seq_length
@@ -703,12 +918,27 @@ namespace Unity.Barracuda.ONNX
                     }
                     else
                     {
-                        var permutationsNCHW = new[] { 0, 1, 2, 3 };
-                        for (int i = 0; i < permutations.Length; ++i)
-                            permutationsNCHW[i] = permutations[i];
+                        //Here we assume `Channels` are represented by only one dimensions and it that it is the 2nd one.
+                        //however in some case (example: shufflenet, sub-pixel-cnn) reshape-transpose-reshape pattern lead
+                        //to channels being represented by two dimenssion this is handled in
+                        //FixReshapeTransposePatternWhenChannelsAreSplitIntoMultipleDimensions()
 
-                        int[] permute2NHWC = { 0, 3, 1, 2 };
-                        net.Transpose(node.Name, node.Input0, new[] { permute2NHWC[permutationsNCHW[0]], permute2NHWC[permutationsNCHW[2]], permute2NHWC[permutationsNCHW[3]], permute2NHWC[permutationsNCHW[1]] });
+                        //Expand received permutation to 6D adding padding between Channels and other feature dimensions.
+                        int numDimensionDimensionsThatWerePaddedAtCenterOfTranspose = 0;
+                        var permutationsNCTDHW = ONNXLayout.ExpandONNXPermutationToNCTDHW(permutations, out numDimensionDimensionsThatWerePaddedAtCenterOfTranspose);
+
+                        //From channel first to channel last.
+                        var permutationsNTDHWC = ONNXLayout.ConvertPermutationToLayout(permutationsNCTDHW, "NCTDHW", "NTDHWC");
+
+                        //6d to 8d
+                        int[] permuteSRNTDHWC = new int[TensorShape.MaxRank];
+                        permuteSRNTDHWC[0] = 0;
+                        permuteSRNTDHWC[1] = 1;
+                        for (int i = 0; i < 6; ++i)
+                            permuteSRNTDHWC[i+2] = 2+permutationsNTDHWC[i];
+
+                        var layer = net.Transpose(node.Name, node.Input0, permuteSRNTDHWC);
+                        layer.axis = numDimensionDimensionsThatWerePaddedAtCenterOfTranspose;
                     }
                 }
             });
@@ -735,9 +965,10 @@ namespace Unity.Barracuda.ONNX
                 Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
             });
             Add("MatMul", (net, node)   => {
-                if (node.InputCount == 2 && !node.IsInput1Const)
+                if (node.InputCount == 2 && !node.IsInput1Const || node.Input0Rank != 2)
                 {
                     net.MatMul(node.Name, node.Input0, node.Input1);
+                    Output(node, features: node.Input0Features, rank: node.Input0Rank);
                 }
                 else
                 {
@@ -761,7 +992,7 @@ namespace Unity.Barracuda.ONNX
                 if (kernelRank == 3) // Conv1D
                 {
                     dilations = node.DilatationsOptional(new[] { 1 }); // @TODO trap on wrong values
-                    Debug.Assert(dilations.Length == 1);
+                    Assert.IsTrue(dilations.Length == 1);
                     dilations = new[] { dilations[0], 1 };
 
                     if (strides.Length == 1)
@@ -773,14 +1004,14 @@ namespace Unity.Barracuda.ONNX
                 else if (kernelRank == 4) // Conv2D
                 {
                     dilations = node.DilatationsOptional(new[] { 1, 1 });
-                    Debug.Assert(dilations.Length == 2);
+                    Assert.IsTrue(dilations.Length == 2);
                 }
                 else
                 {
                     Warn(net, node, $"Unsuported Conv kernel rank. Conv2D assumes rank 4, Conv1D assumes rank 3, but got {kernelRank}.");
                 }
 
-                Debug.Assert(dilations.Length == 2);
+                Assert.IsTrue(dilations.Length == 2);
                 if (dilations[0] != 1 || dilations[1] != 1)
                     kernels = DilateKernel(kernels, dilations); // @TODO inefficient method. Support dilatation in kernel code properly
 
@@ -840,8 +1071,12 @@ namespace Unity.Barracuda.ONNX
                 if (scale.channels != node.Input0Features && node.Input0Features > 0)
                 {
                     Warn(net, node, $"Number of elements in InstanceNorm must match features from the previous layer. Was expecting {node.Input0Features}, but got {scale.channels}.");
-                    scale = new Tensor(1, node.Input0Features, scale.ToReadOnlyArray());
-                    bias = new Tensor(1, node.Input0Features, bias.ToReadOnlyArray());
+                    var scaleArray = scale.ToReadOnlyArray();
+                    Array.Resize(ref scaleArray, node.Input0Features);
+                    var biasArray = bias.ToReadOnlyArray();
+                    Array.Resize(ref biasArray, node.Input0Features);
+                    scale = new Tensor(1, node.Input0Features, scaleArray);
+                    bias = new Tensor(1, node.Input0Features, biasArray);
                 }
                 net.Normalization(node.Name, node.Input0, scale, bias, node.EpsilonOptional());
             });
@@ -957,10 +1192,10 @@ namespace Unity.Barracuda.ONNX
             // b_data[i] = slope_data[i] / sqrt_var;
             // ...
             // ptr[i] = b * ptr[i] + a;
-            Debug.Assert(gamma.channels == gamma.length); // assert 1d tensor
-            Debug.Assert(gamma.shape == beta.shape);
-            Debug.Assert(gamma.shape == mean.shape);
-            Debug.Assert(gamma.shape == variance.shape);
+            Assert.IsTrue(gamma.channels == gamma.length); // assert 1d tensor
+            Assert.IsTrue(gamma.shape == beta.shape);
+            Assert.IsTrue(gamma.shape == mean.shape);
+            Assert.IsTrue(gamma.shape == variance.shape);
             if (maxElements <= 0 || gamma.length < maxElements) // clip to the smallest valid number of channels
                 maxElements = gamma.length;
             Tensor scale = new Tensor(1, maxElements);
@@ -976,14 +1211,14 @@ namespace Unity.Barracuda.ONNX
         // Transpose channels first to channels last data in MatMul/GEMM weight tensor
         internal static Tensor SwapSpatialDimensionsAndFeaturesInMatMulWeights(Tensor weights, int featureCount, VariableTensor.Layout layout)
         {
-            Debug.Assert(featureCount <= weights.flatHeight);
+            Assert.IsTrue(featureCount <= weights.flatHeight);
 
             var weightsAssumeChannelsFirstLayout = (layout != VariableTensor.Layout.ChannelsLast);
             if (featureCount != weights.flatHeight && weightsAssumeChannelsFirstLayout)
             {
                 var shape = weights.shape;
                 var implicitSpatialDimensionsInWeights = shape.flatHeight / featureCount;
-                Debug.Assert(shape.flatHeight % featureCount == 0);
+                Assert.IsTrue(shape.flatHeight % featureCount == 0);
                 // reshape: __C____K -> __C__HWK
                 weights = weights.Reshape(
                     new TensorShape(featureCount, implicitSpatialDimensionsInWeights, 1, shape.channels));
@@ -997,39 +1232,61 @@ namespace Unity.Barracuda.ONNX
             return weights;
         }
 
-        internal static void PatchUpstreamInputLayoutFromIncorrectlyAssumedChannelsFirstToChannelsLast(ModelBuilder net, ONNXNodeWrapper node)
+        internal static Model PatchFromIncorrectlyAssumedChannelsFirstToChannelsLastLayoutUpstream(Model model, List<string> layerRequiringUpstreamPatch)
         {
-            var model = net.model;
+            HashSet<int> patchedInputIndices = new HashSet<int>();
+            HashSet<string> patchedLayerAxis = new HashSet<string>();
+
             var inputIndexByName = new Dictionary<string, int>();
             for (var i = 0; i < model.inputs.Count; ++i)
                 inputIndexByName.Add(model.inputs[i].name, i);
 
-            int inputIndex = -1;
-            var upstream = ModelAnalyzer.FindUpstreamLayers(model, new[] {node.Name});
-            foreach (var layer in upstream)
-                foreach (var inputName in layer.inputs)
-                    if (inputIndexByName.TryGetValue(inputName, out inputIndex))
+            // NOTE: although original input had NHWC layout
+            // (most probably exported from Tensorflow without '--inputs-as-nchw' flag)
+            // earlier when parsing input and axis we made incorrect assumption that they were NCHW
+            // now we need to revert that assumption!
+            foreach (var rootNodeForPatch in layerRequiringUpstreamPatch)
+            {
+                int inputIndex = -1;
+                var upstream = ModelAnalyzer.FindUpstreamLayers(model, new[] {rootNodeForPatch});
+                foreach (var layer in upstream)
+                {
+                    // patch axis
+                    if (!patchedLayerAxis.Contains(layer.name) && (
+                        layer.type == Layer.Type.Concat ||
+                        layer.type == Layer.Type.Gather ||
+                        layer.type == Layer.Type.TopKValues))//TODO handle ReduceXX and StridedSlice
                     {
-                        var inputDesc = model.inputs[inputIndex];
-                        // NOTE: although original input had NHWC layout
-                        // (most probably exported from Tensorflow without '--inputs-as-nchw' flag)
-                        // earlier when parsing inputs we made incorrect assumption that this input is NCHW
-                        // now we need to revert that assumption!
-
-                        // example (NCHW): -1,2,2,16 -> (incorrect) -1,2,16,2 -> (fix) -1,2,2,16
-                        // example  (NCW): -1,2,16   -> (incorrect) -1,1,16,2 -> (fix) -1,1,2,16
-                        inputDesc.shape = ONNXLayout.Permute(inputDesc.shape, new[] { -1, -1, 2, -1, -1, 5, 7, 6 });
-
-                        model.inputs[inputIndex] = inputDesc;
-                        // @TODO: figure out, if there is any case where we would have to propagate fixed layout assumption downstream?
+                        patchedLayerAxis.Add(layer.name);
+                        if (layer.axis == 6) layer.axis = TensorShape.C;
+                        else if (layer.axis == TensorShape.C) layer.axis = 6;
                     }
+                    //patch inputs
+                    foreach (var inputName in layer.inputs)
+                    {
+                        if (inputIndexByName.TryGetValue(inputName, out inputIndex) &&
+                            !patchedInputIndices.Contains(inputIndex))
+                        {
+                            // example (NCHW): -1,2,2,16 -> (incorrect) -1,2,16,2 -> (fix) -1,2,2,16
+                            // example  (NCW): -1,2,16   -> (incorrect) -1,1,16,2 -> (fix) -1,1,2,16
+                            patchedInputIndices.Add(inputIndex);
+                            var inputDesc = model.inputs[inputIndex];
+                            inputDesc.shape = ONNXLayout.Permute(inputDesc.shape, new[] {-1, -1, 2, -1, -1, 7, 5, 6});
+                            model.inputs[inputIndex] = inputDesc;
+                        }
+                    }
+                    // @TODO: figure out, if there is any case where we would have to propagate fixed layout assumption downstream?
+                }
+            }
+
+            return model;
         }
 
         internal static Tensor DilateKernel(Tensor kernel, int[] dilations)
         {
-            Debug.Assert(dilations.Length == 2);
-            Debug.Assert(dilations[0] > 0);
-            Debug.Assert(dilations[1] > 0);
+            Assert.IsTrue(dilations.Length == 2);
+            Assert.IsTrue(dilations[0] > 0);
+            Assert.IsTrue(dilations[1] > 0);
 
             // https://arxiv.org/pdf/1603.07285.pdf
             Tensor dilatedKernel = new Tensor(new TensorShape(kernel.shape.kernelHeight + (kernel.shape.kernelHeight - 1) * (dilations[0] - 1),
@@ -1104,6 +1361,100 @@ namespace Unity.Barracuda.ONNX
             }
         }
 
+        private static int[] GetPermutationToMatchReduceWithDroppedDimensionsFromONNX(int[] droppedONNXAxis, int rank)
+        {
+            Assert.IsTrue(droppedONNXAxis.Length>0);
+
+            //Barracuda always have all dimensions, however in ONNX it is not the case one can drop dimensions,
+            //Here we handle the case of ReduceXXX ops when they do so.
+            //An example:
+            //ONNX -> NCHW
+            //Reduce on C with keepDims=False.
+            //ONNX -> NHW
+            //However ONNX tensor semantic are deducted by position to be mapped to Barracuda in the following way:
+            //ONNX 1D -> N    -> Barracuda N,1,1,1
+            //ONNX 2D -> NC   -> Barracuda N,1,1,C
+            //ONNX 3D -> NCW  -> Barracuda N,1,W,C
+            //ONNX 4D -> NCHW -> Barracuda N,H,W,C
+            //Thus the output tensor above (NHW) will be mapped to N,1,W,C in Barracuda
+            //while Reduce in Barracuda would rather output N,H,W,1 if keepDim would be true.
+            //Here we find the transpose needed in Barracuda to match the ONNX behavior as seen by Barracuda.
+            //ie the transpose from N,H,W,1 to N,1,W,C in this case aka 0,3,2,1.
+
+            //ONNX input Layout from rank
+            string onnxLayout;
+            switch (rank)
+            {
+                case 1: onnxLayout = "N";
+                    break;
+                case 2: onnxLayout = "NC";
+                    break;
+                case 3: onnxLayout = "NCW";
+                    break;
+                case 4: onnxLayout = "NCHW";
+                    break;
+                default:
+                    //TODO support 8D
+                    throw new OnnxLayerImportException($"Reduce ops support up to 4D at the moment, however received an input of rank {rank}.");
+            }
+
+            //ONNX Layout once dimensions are dropped (example: NHW if C was dropped)
+            string onnxLayoutDimensionsDropped = onnxLayout;
+            foreach (var axis in droppedONNXAxis)
+            {
+                var onnxAxis = axis;
+                if (onnxAxis < 0)
+                    onnxAxis = rank + axis;
+                string semanticToRemove = onnxLayout[onnxAxis].ToString();
+                onnxLayoutDimensionsDropped = onnxLayoutDimensionsDropped.Replace(semanticToRemove, string.Empty);
+            }
+            Assert.IsTrue(onnxLayoutDimensionsDropped.Length>0);
+
+            //Find all missing dimensions that will be unitary in Barracuda
+            var missingDimensions = new List<char>();
+            foreach (var dim in "NHWC")
+            {
+                if (!onnxLayoutDimensionsDropped.Contains(dim))
+                    missingDimensions.Add(dim);
+            }
+
+            //Find semantic of onnx layout with dropped dimension in Barracuda
+            var barracudaSemanticLayoutFromONNXReduce = new char[4];
+            switch (onnxLayoutDimensionsDropped.Length)
+            {
+                case 1:
+                    //ONNX 1D -> N -> Barracuda N,1,1,1
+                    barracudaSemanticLayoutFromONNXReduce[0] = onnxLayoutDimensionsDropped[0];
+                    barracudaSemanticLayoutFromONNXReduce[1] = missingDimensions[0];
+                    barracudaSemanticLayoutFromONNXReduce[2] = missingDimensions[1];
+                    barracudaSemanticLayoutFromONNXReduce[3] = missingDimensions[2];
+                    break;
+                case 2:
+                    //ONNX 2D -> NC -> Barracuda N,1,1,C
+                    barracudaSemanticLayoutFromONNXReduce[0] = onnxLayoutDimensionsDropped[0];
+                    barracudaSemanticLayoutFromONNXReduce[1] = missingDimensions[0];
+                    barracudaSemanticLayoutFromONNXReduce[2] = missingDimensions[1];
+                    barracudaSemanticLayoutFromONNXReduce[3] = onnxLayoutDimensionsDropped[1];
+                    break;
+                case 3:
+                    //3D -> NCW -> Barracuda N,1,W,C
+                    barracudaSemanticLayoutFromONNXReduce[0] = onnxLayoutDimensionsDropped[0];
+                    barracudaSemanticLayoutFromONNXReduce[1] = missingDimensions[0];
+                    barracudaSemanticLayoutFromONNXReduce[2] = onnxLayoutDimensionsDropped[2];
+                    barracudaSemanticLayoutFromONNXReduce[3] = onnxLayoutDimensionsDropped[1];
+                    break;
+            }
+
+            //Find permutation from NHWC Barracuda layout when mapped from ONNX with dropped dimensions.
+            var permutation = new int[4];
+            for(int idTarget = 0; idTarget<permutation.Length; ++idTarget)
+            {
+                char semantic = barracudaSemanticLayoutFromONNXReduce[idTarget];
+                permutation[idTarget] = "NHWC".IndexOf(semantic);;
+            }
+            return permutation;
+        }
+
         internal void Reduce(ModelBuilder net, ONNXNodeWrapper node, Layer.Type reduceType)
         {
             var keepdims = node.GetOptionalInt("keepdims", 1);
@@ -1112,29 +1463,25 @@ namespace Unity.Barracuda.ONNX
             var rank = node.Input0Rank;
             object input = node.Input0;
 
-            foreach (var onnxAxis in node.Axes)
+            var axes = node.AxesOptional(new[] { 0 });
+            foreach (var onnxAxis in axes)
             {
+                //TODO support 8D inputs
                 var axis = ONNXLayout.ConvertAxisToBarracuda(onnxAxis, onnxRank: rank, onnxLayout: "NCHW");
-                var name = $"{node.Name}__axis{axis}";
-                input = net.Reduce(reduceType, name, input, axis, true);
+                var nameR = $"{node.Name}__axis{axis}";
+                input = net.Reduce(reduceType, nameR, input, axis, true);
+                if (axis == TensorShape.C)
+                    features = 1; // this operation collapse all features to 1
+                Output(nameR, features: features, rank: rank);
+            }
 
-                if (keepdims != 1) // keepdims removes the dimension
-                {
-                    var nameT = $"{node.Name}__transpose";
-                    // @TODO: add cases when reduce on axis != 1 supported
-                    var transpose = ONNXLayout.SqueezeAxisPermutationForMappingONNXLayoutToBarracuda(rank, 1, "NCHW");
-                    input = net.Transpose(nameT, input, transpose);
+            if (keepdims != 1 && rank > 1) // keepdims removes dimensions in the context of onnx thus we need to repack/transpose to match behavior.
+            {
+                var nameT = $"{node.Name}__transpose";
+                var transpose = GetPermutationToMatchReduceWithDroppedDimensionsFromONNX(axes, rank);
+                input = net.Transpose(nameT, input, transpose);
 
-                    rank--;
-                    Output(name, -1, rank: rank);
-                }
-                else
-                {
-                    bool lastAxis = (axis == -1 || axis == node.Input0Rank - 1); // last axis in Barracuda is feature axis
-                    if (lastAxis)
-                        features = 1; // if reducing over the last feature axis, then operation will collapse all features to 1
-                    Output(name, features: features, rank: rank);
-                }
+                Output(nameT, features: -1, rank: rank - node.Axes.Length);
             }
 
             net.Identity(node.Name, input);
@@ -1198,7 +1545,7 @@ namespace Unity.Barracuda.ONNX
                         if (node.AreAllInputsConst && !m_ShouldNotBeBaked.Contains(opType))
                         {
                             Profiler.BeginSample($"Bake {opType} {node.Name}");
-                            var bakedTensor = BakeNodeIntoConstant(m_NodeImporters[opType], node);
+                            var bakedTensor = BakeNodeIntoConstant(opType, node);
                             Const(node.Name, bakedTensor);
                             var printTensor = bakedTensor.ToBarracuda("NCHW");
                             D.Log($"Baked node {nodeId} into constant of shape {printTensor.shape} and values: {printTensor.DataToString()}");
@@ -1257,10 +1604,14 @@ namespace Unity.Barracuda.ONNX
             int insertionIndex = 0; // insert constants at the beginning of the model
             foreach(var entry in constantTensors)
                 if (requiredConstants.Contains(entry.Key)) // skip if constant is unused
-                    modelBuilder.Const(entry.Key, entry.Value.ToBarracuda(onnxLayout: "CONST"),
+                    modelBuilder.Const(entry.Key, entry.Value.ToBarracuda(onnxLayout:GetONNXLayoutForConstant(model, entry.Key)),
                         insertionIndex++);
 
             model = ModelOptimizer.Optimize(model, allowFusing: optimizeModel, keepLayers:requiredConstants); // keep ML-Agents metadata
+
+            model = FixReshapeTransposePatternWhenChannelsAreSplitIntoMultipleDimensions(model);
+
+            model = PatchFromIncorrectlyAssumedChannelsFirstToChannelsLastLayoutUpstream(model, layerRequiringUpstreamPatch);
 
             // strip :0 at the end of string name for TF import
             if (fixTF2ONNXExportIssues)
@@ -1279,23 +1630,74 @@ namespace Unity.Barracuda.ONNX
             return model;
         }
 
-        private ONNXTensor BakeNodeIntoConstant(Action<ModelBuilder, ONNXNodeWrapper> opImportAction, ONNXNodeWrapper node)
+        private bool IsLayerInputChannelDependant(Layer.Type opType, int index)
+        {
+            return index == 0 ||               //First input is usually channel order dependants
+                   opType == Layer.Type.Add || //however some operator have all input channel dependants
+                   opType == Layer.Type.Sub ||
+                   opType == Layer.Type.Mul ||
+                   opType == Layer.Type.Div ||
+                   opType == Layer.Type.Pow ||
+                   opType == Layer.Type.Min ||
+                   opType == Layer.Type.Max ||
+                   opType == Layer.Type.Mean ||
+                   opType == Layer.Type.Greater ||
+                   opType == Layer.Type.GreaterEqual ||
+                   opType == Layer.Type.Less ||
+                   opType == Layer.Type.LessEqual ||
+                   opType == Layer.Type.Equal ||
+                   opType == Layer.Type.LogicalOr ||
+                   opType == Layer.Type.LogicalAnd ||
+                   opType == Layer.Type.LogicalXor ||
+                   opType == Layer.Type.Where ||
+                   opType == Layer.Type.Concat;
+        }
+
+        private string GetONNXLayoutForConstant(Model model, string nodeName)
+        {
+            int constLayoutRequestCount = 0;
+            int nctdhwRequestCount = 0;
+
+            //find all layer using that constant as an input.
+            foreach (var l in model.layers)
+            {
+                for (int i = 0; i < l.inputs.Length; ++i)
+                {
+                    if (l.inputs[i] == nodeName)
+                    {
+                        if (IsLayerInputChannelDependant(l.type, i))
+                            ++nctdhwRequestCount;
+                        else
+                            ++constLayoutRequestCount;
+                    }
+                }
+            }
+
+            if (nctdhwRequestCount != 0 && constLayoutRequestCount != 0)
+            {
+                Err(model, nodeName, $"{nodeName} is both used as channel order dependant constant and a plain constant, this is not supported at the moment.");
+            }
+
+            return nctdhwRequestCount>constLayoutRequestCount?"NCTDHW":"CONST";
+        }
+
+        private ONNXTensor BakeNodeIntoConstant(string opType, ONNXNodeWrapper node)
         {
             var model = new Model();
             var net = new ModelBuilder(model);
 
             // add all inputs as constants
-            Debug.Assert(node.AreAllInputsConst);
+            Assert.IsTrue(node.AreAllInputsConst);
             for (var i = 0; i < node.InputCount; ++i)
             {
-                var assumeOnnxLayout = i == 0 ? "NCHW" : "CONST";
+                var assumeOnnxLayout = (m_AllInputsChannelFirst.Contains(opType) || i == 0) ? "NCTDHW" : "CONST";
                 var input = node.Inputs[i];
                 net.Const(input,
                     constantTensors[input].ToBarracuda(assumeOnnxLayout));
             }
 
             // add node that we are going to bake into the constant
-            opImportAction(net, node);
+            m_NodeImporters[opType](net, node);
 
             // bake
             var useCPUforBaking = WorkerFactory.Device.CPU;
@@ -1305,7 +1707,7 @@ namespace Unity.Barracuda.ONNX
 
                 // convert from Barracuda back into ONNX layout
                 var onnxData = ONNXTensor.Permute(bakedConstant, new int[] {0,1,2,7,3,4,5,6}); // S,R,N,T,D,H,W,C (channelLast)-> S,R,N,C,H,W (channelFirst)
-                var onnxShape = onnxData.shape.ToArray().Select(x => (long)x).ToArray();
+                var onnxShape = onnxData.shape.ToArray();
 
                 return new ONNXTensor(onnxData, onnxShape).SqueezeAll();
             }
@@ -1315,7 +1717,7 @@ namespace Unity.Barracuda.ONNX
         {
             // Model should not contain any broken links in the end
             var unconnectedInputs = ModelAnalyzer.FindBrokenLinks(model);
-            Debug.Assert(unconnectedInputs.Length == 0);
+            Assert.IsTrue(unconnectedInputs.Length == 0);
             if (unconnectedInputs.Length > 0)
             {
                 var message = $"Broken links: {string.Join(", ", unconnectedInputs)}";
@@ -1418,6 +1820,76 @@ namespace Unity.Barracuda.ONNX
             return res;
         }
 
+        static private Model FixReshapeTransposePatternWhenChannelsAreSplitIntoMultipleDimensions(Model model)
+        {
+            var transposes = model.layers.Where(l => l.type == Layer.Type.Transpose).ToList();
+            foreach (var transposeLayer in transposes)
+            {
+                var previousLayer = model.layers.Find(l => l.name == transposeLayer.inputs[0]);
+                if (previousLayer == null)
+                    continue;
+
+                if (previousLayer.type != Layer.Type.Reshape)
+                    continue;
+
+                var numChannelsDimension = previousLayer.axis;
+                if (numChannelsDimension <= 1)
+                    continue;
+
+                //NOTE: See also ConvertReshapeToBarracuda() for mode detail on the problem.
+                //In some network like shufflenet and superresolution_cnn and yolov3 a reshape is used
+                //before a transpose to split the channels resulting in a tensor with
+                //multiple dimension used for channels, this is a problem when importing to
+                //barracuda as the semantic of the dimensions are changed and this change the
+                //way channel first to channel last conversion should happen. The code below
+                //is a limited to support for that.
+                Assert.IsTrue(numChannelsDimension == 2);
+
+                var permutationSRNTDHWC = transposeLayer.pool;
+                if (permutationSRNTDHWC.Length != 8)
+                {
+                    Warn(model, transposeLayer.name,
+                        $"Expecting a permutation of rank 8 after Reshape '{previousLayer.name}' itself outputting more than one channel dimension. Permutation can't be patched to account for the extra channel dimensions.");
+                    continue;
+                }
+
+                //Revert channel first to last conversion that was incorrectly done in the context of channels being one dimensional.
+                var permute8DChannelFirst = ONNXLayout.ConvertPermutationToLayout(permutationSRNTDHWC, "SRNTDHWC","SRNCTDHW");
+
+                //Find source layout format
+                int centerPaddingThatWasAddedInPermutation = transposeLayer.axis;
+                Assert.IsTrue(centerPaddingThatWasAddedInPermutation <= 1);
+                Assert.IsTrue(centerPaddingThatWasAddedInPermutation >= 0);
+                string sourceLayout = (centerPaddingThatWasAddedInPermutation == 0) ? "SRNT12HW" : "SRN1T2HW";
+
+                //TODO/HEURISTIC: We only use semantic when channel and other features are not interleaved during permutations.
+                //This is a work around to create the right permutation for the shufflenet(true)/superresolution(false)/yolov3(false),
+                //it probably does not generalise well however. In next version of the importer we might need to introduce transposes
+                //in channel last mode to generalise fully.
+                bool useSemanticToLookupInSourceLayout = !IsPermutationMixingChannelsAndOtherFeatures(sourceLayout, permute8DChannelFirst);
+
+                //Apply channel first to last conversion, considering channels are two dimensional (C1C2).
+                int[] permuteSRNTHWC1C2  = ONNXLayout.ConvertPermutationToLayout(permute8DChannelFirst, sourceLayout, "SRNTHW12", useSemanticToLookupInSourceLayout);
+                transposeLayer.pool = permuteSRNTHWC1C2;
+            }
+
+            return model;
+        }
+
+        static private bool IsPermutationMixingChannelsAndOtherFeatures(string layout, int[] permutation)
+        {
+            //Convention here is that channels are described as numbers, while other features by letters.
+            Assert.IsTrue(layout.Length == permutation.Length);
+            for (int i = 0; i < permutation.Length; ++i)
+            {
+                bool sourceIsAChannel = Char.IsNumber(layout[i]);
+                bool targetIsAChannel = Char.IsNumber(layout[permutation[i]]);
+                if (sourceIsAChannel != targetIsAChannel)
+                    return true;
+            }
+            return false;
+        }
+
         static private Model TrimTensorflowNames(Model model)
         {
             model.inputs   = model.inputs.Select(i   => {
@@ -1512,13 +1984,27 @@ namespace Unity.Barracuda.ONNX
         }
     }
 
+    /// <summary>
+    /// ONNX import exception
+    /// </summary>
     public class OnnxImportException : Exception
     {
+        /// <summary>
+        /// Create `OnnxImportException`
+        /// </summary>
+        /// <param name="message">message</param>
         public OnnxImportException(string message) : base(message) { }
     }
 
+    /// <summary>
+    /// ONNX layer import exception
+    /// </summary>
     public class OnnxLayerImportException : Exception
     {
+        /// <summary>
+        /// Create `OnnxLayerImportException`
+        /// </summary>
+        /// <param name="message">message</param>
         public OnnxLayerImportException(string message) : base(message) { }
     }
 }

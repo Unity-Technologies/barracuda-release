@@ -3,9 +3,19 @@ using UnityEngine;
 
 namespace Unity.Barracuda
 {
+    /// <summary>
+    /// Stores compute kernel cache for GPU compute backends
+    /// </summary>
     public sealed class ComputeShaderSingleton
     {
+        /// <summary>
+        /// Reference compute kernels
+        /// </summary>
         public readonly ComputeShader referenceKernels;
+
+        /// <summary>
+        /// Optimized kernels
+        /// </summary>
         public readonly ComputeShader[] kernels;
 
         private static readonly ComputeShaderSingleton instance = new ComputeShaderSingleton ();
@@ -28,10 +38,19 @@ namespace Unity.Barracuda
             kernels = kernelsList.ToArray();
         }
 
+        /// <summary>
+        /// Singleton
+        /// </summary>
         public static ComputeShaderSingleton Instance {
             get { return instance; }
         }
 
+        /// <summary>
+        /// Load kernel if `condition` is met
+        /// </summary>
+        /// <param name="condition">condition to check</param>
+        /// <param name="fileName">file name to load from</param>
+        /// <returns>`ComputeShader`</returns>
         public static ComputeShader LoadIf(bool condition, string fileName)
         {
             if (condition)
@@ -40,6 +59,12 @@ namespace Unity.Barracuda
             return null;
         }
 
+        /// <summary>
+        /// Load kernels if `condition` is met
+        /// </summary>
+        /// <param name="condition">condition to check</param>
+        /// <param name="fileName">file name to load from</param>
+        /// <param name="list">list to store loaded `ComputeShader` items</param>
         public static void LoadIf(bool condition, string fileName, List<ComputeShader> list)
         {
             ComputeShader shader = LoadIf(condition, fileName);
@@ -48,6 +73,9 @@ namespace Unity.Barracuda
                 list.Add(shader);
         }
 
+        /// <summary>
+        /// Check if GPU compute is supported
+        /// </summary>
         public bool supported { get { return SystemInfo.supportsComputeShaders; } }
     }
 }

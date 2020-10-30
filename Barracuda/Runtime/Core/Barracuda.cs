@@ -111,15 +111,21 @@ public interface IWorker : IDisposable
     /// Optional API to prepare network execution for inputs of particular shapes.
     /// Useful to initialize execution device ahead of the first call to `Execute`.
     /// </summary>
+    /// <param name="inputShapes">Dictionary of tensor name -> input shapes</param>
     void PrepareForInput(IDictionary<string, TensorShape> inputShapes);
+
     /// <summary>
     /// Specify single tensor `x` as the only input for the network.
     /// Useful when network has only one input and caller does not need to specify input's name.
     /// </summary>
+    /// <param name="x">input Tensor</param>
     void SetInput(Tensor x);
+
     /// <summary>
     /// Assign tensor `x` to the named input of the network. String `name` specifies the name of the input.
     /// </summary>
+    /// <param name="name">Tensor name</param>
+    /// <param name="x">Tensor</param>
     void SetInput(string name, Tensor x);
     #endregion
 
@@ -127,15 +133,24 @@ public interface IWorker : IDisposable
     /// <summary>
     /// Non-blocking API that schedules network execution in one go.
     /// </summary>
+    /// <returns>IWorker instance</returns>
     IWorker Execute();
+
+
     /// <summary>
     /// Non-blocking API that takes single `input` tensor and schedules network execution in one go.
     /// Useful when network have only one input as input name is not needed.
     /// </summary>
+    /// <param name="input">input Tensor</param>
+    /// <returns>IWorker instance</returns>
     IWorker Execute(Tensor input);
+
+
     /// <summary>
-    /// Non-blocking API that takes mutliple input tensors and schedules network execution in one go.
+    /// Non-blocking API that takes multiple input tensors and schedules network execution in one go.
     /// </summary>
+    /// <param name="inputs">input Tensor Dictionary: name -> Tensor</param>
+    /// <returns>IWorker instance</returns>
     IWorker Execute(IDictionary<string, Tensor> inputs);
     #endregion
 
@@ -144,22 +159,32 @@ public interface IWorker : IDisposable
     /// Non-blocking API that allows manual scheduling of the model one layer at the time.
     /// Call `MoveNext` on the `IEnumerator` obtained from calling this function to schedule next layer of the model.
     /// </summary>
+    /// <returns>Manual schedule iterator</returns>
     IEnumerator StartManualSchedule();
+
     /// <summary>
     /// Non-blocking API that takes single `input` tensor and schedules network execution one layer at the time.
     /// Call `MoveNext` on the `IEnumerator` obtained from calling this function to schedule next layer of the model.
     /// </summary>
+    /// <param name="input">input Tensor</param>
+    /// <returns>Manual schedule iterator</returns>
     IEnumerator StartManualSchedule(Tensor input);
+
     /// <summary>
     /// Non-blocking API that takes mutliple input tensors and schedules network execution one layer at the time.
     /// Call `MoveNext` on the `IEnumerator` obtained from calling this function to schedule next layer of the model.
     /// </summary>
+    /// <param name="inputs">input Tensor Dictionary: name -> Tensor</param>
+    /// <returns>Manual schedule iterator</returns>
     IEnumerator StartManualSchedule(IDictionary<string, Tensor> inputs);
+
     /// <summary>
     /// Non-blocking API that starts immediate execution on the part of the network that was scheduled so far.
     /// Optional `blocking` flag can force this function to block until execution is complete.
     /// </summary>
+    /// <param name="blocking">if blocking True, wait for completion</param>
     void FlushSchedule(bool blocking = false);
+
     /// <summary>
     /// Reports the fraction (from 0.0 to 1.0) of the model that was scheduled for the execution since the last call to `StartManualSchedule`.
     /// This property will return 0.0 immediately after calling `StartManualSchedule` and will return 1.0 once the complete model was scheduled.
@@ -174,11 +199,15 @@ public interface IWorker : IDisposable
     /// Useful when network has only one output.
     /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor.
     /// </summary>
+    /// <returns>output Tensor</returns>
     Tensor PeekOutput();
+
     /// <summary>
     /// Non-blocking API that returns a reference to output tensor by specified `name`. This reference will be valid only until the next `Execute()` or `Dispose()` method is called on the worker.
     /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor.
     /// </summary>
+    /// <param name="name">output name</param>
+    /// <returns>output Tensor</returns>
     Tensor PeekOutput(string name);
     #endregion
 
@@ -187,14 +216,20 @@ public interface IWorker : IDisposable
     /// IMPORTANT: if you want tensor to outlive the worker, use `CopyOutput()` method or follow with `TakeOwnership()` call on the tensor, also worker Execute()
     /// or PrepareForInput() should have been called at least once for the tensors to exist.
     /// </summary>
+    /// <param name="layerName">Layer name</param>
+    /// <returns>array of constant Tensors</returns>
     Tensor[] PeekConstants(string layerName);
 
     /// <summary>
     /// Returns a string summary after execution.
     /// </summary>
+    /// <returns>string summary after execution</returns>
     string Summary();
 }
 
+/// <summary>
+/// IWorker interface extensions
+/// </summary>
 public static class WorkerExtensions
 {
     // @TODO: add optional targetDevice argument of type WorkerFactory.Device
@@ -203,6 +238,8 @@ public static class WorkerExtensions
     /// This method is a blocking call and will wait until network execution is completed.
     /// Useful when network has only one output.
     /// </summary>
+    /// <param name="worker">IWorker</param>
+    /// <returns>output Tensor</returns>
     public static Tensor CopyOutput(this IWorker worker)
     {
         // @TODO: implement as PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
@@ -212,11 +249,15 @@ public static class WorkerExtensions
         output.TakeOwnership();
         return output;
     }
+
     // @TODO: add optional targetDevice argument of type WorkerFactory.Device
     /// <summary>
     /// Returns CPU copy of output tensor by name.
     /// This method is a blocking call and will wait until network execution is completed.
     /// </summary>
+    /// <param name="worker">IWorker</param>
+    /// <param name="name">output Tensor name</param>
+    /// <returns>output Tensor</returns>
     public static Tensor CopyOutput(this IWorker worker, string name)
     {
         // @TODO: implement as PeekOutput()+DeepCopy() instead of Unpin()+TakeOwnership()
@@ -236,33 +277,45 @@ public interface ITensorData : IDisposable
     /// <summary>
     /// Reserve uninitialized memory.
     /// </summary>
+    /// <param name="count">element count to reserve</param>
     void Reserve(int count);
+
     /// <summary>
     /// Initialize with `data`.
     /// `shape` is the TensorShape (and thus length) of the data to copy.
     /// `managedBufferStartIndex` is the offset where to start the copy in the `data`
     /// </summary>
+    /// <param name="data">data as `float` array</param>
+    /// <param name="shape">Tensor shape</param>
+    /// <param name="managedBufferStartIndex">managed buffer start index</param>
     void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0);
+
     /// <summary>
     /// Schedule an asynchronous download from device memory.
     /// `count` is the number of element to readback.
-    /// returns `false` until data from device arrives to CPU and is ready for access.
     /// </summary>
+    /// <param name="count">count of elements to download</param>
+    /// <returns>`false` until data from device arrives to CPU and is ready for access</returns>
     bool ScheduleAsyncDownload(int count);
+
     /// <summary>
     /// Returns an array filled with the values of a tensor.
     /// Depending on the implementation and underlying device this array might be a copy or direct reference to the tensor values.
     /// This is a blocking call, unless data from device was requested via `ScheduleAsyncDownload` beforehand and has already arrived.
-    /// `shape` is the TensorShape (and thus length) of the data to copy.
     /// </summary>
+    /// <param name="shape">the TensorShape (and thus length) of the data to copy</param>
+    /// <returns>Tensor data as `float` arrary</returns>
     float[] Download(TensorShape shape);
+
     /// <summary>
     /// Returns an array filled with the values of multiple tensors that share the same tensorData on device.
-    /// This function outputs `offset` from the beginning of the array to location of values for specific tensor. `offset` parameters is specified in float elements.
     /// Depending on the implementation and underlying device this array might be a copy or direct reference to tensor values, no conversion from on device memory layout will occur.
     /// This is a blocking call, unless data from device was requested via `ScheduleAsyncDownload` beforehand and has already arrived.
     /// </summary>
+    /// <param name="offset">This function outputs `offset` from the beginning of the array to location of values for specific tensor. `offset` parameters is specified in float elements</param>
+    /// <returns>array filled with the values of multiple tensors that share the same tensorData on device</returns>
     float[] SharedAccess(out int offset);
+
     /// <summary>
     /// Returns the maximum number of element this tensorData can contain.
     /// </summary>
@@ -306,10 +359,10 @@ public class RecurrentState : IDisposable
 
     /// <summary>
     /// Constructs recurrent state for a specific model
-    /// `model` is the associated model.
-    /// `batchSize` has to match the batch dimension of the input tensor(s). Specifying -1 will use batch size of the memory tensors as declared in the model.
-    /// `grabFromInputs` optional dictionary of named tensors that can be used as a memory. If name of the tensor matches the memory, tensor will be removed from the dictionary and used as memory.
     /// </summary>
+    /// <param name="model">the associated model</param>
+    /// <param name="batchSize">has to match the batch dimension of the input tensor(s). Specifying -1 will use batch size of the memory tensors as declared in the model</param>
+    /// <param name="grabFromInputs">optional dictionary of named tensors that can be used as a memory. If name of the tensor matches the memory, tensor will be removed from the dictionary and used as memory</param>
     public RecurrentState(Model model, int batchSize = -1, Dictionary<string, Tensor> grabFromInputs = null)
     {
         bool overrideModelBatchSize = batchSize > 0;
@@ -344,11 +397,17 @@ public class RecurrentState : IDisposable
         m_BatchSize = batchSize;
     }
 
+    /// <summary>
+    /// Finalize RecurrentState
+    /// </summary>
     ~RecurrentState()
     {
         Dispose();
     }
 
+    /// <summary>
+    /// Dispose RecurrentState
+    /// </summary>
     public virtual void Dispose()
     {
         if (m_Memories == null)
@@ -363,6 +422,7 @@ public class RecurrentState : IDisposable
     /// <summary>
     /// Returns batch dimension used for the memories.
     /// </summary>
+    /// <returns>batch dimension used for the memories</returns>
     public int GetBatchSize()
     {
         return m_BatchSize;
@@ -372,6 +432,7 @@ public class RecurrentState : IDisposable
     /// Internal callback called before the execution of the model.
     /// This callback prepares model for the next iteration according to the memory.
     /// </summary>
+    /// <param name="worker">IWorker</param>
     public void BeforeExecution(IWorker worker)
     {
         Assert.AreEqual(m_Model.memories.Count, m_Memories.Length);
@@ -385,6 +446,7 @@ public class RecurrentState : IDisposable
     /// Internal callback called after execution of the model finished.
     /// This callback stores results of the current iteration in the memory.
     /// </summary>
+    /// <param name="worker">IWorker</param>
     public void AfterExecution(IWorker worker)
     {
         Assert.AreEqual(m_Model.memories.Count, m_Memories.Length);
@@ -412,12 +474,30 @@ public class WorkerFactory
     /// </summary>
     public enum Device
     {
+        /// <summary>
+        /// GPU
+        /// </summary>
         GPU                 = 1 << 8,
+
+        /// <summary>
+        /// CPU
+        /// </summary>
         CPU                 = 1 << 9,
+
+        /// <summary>
+        /// Auto
+        /// </summary>
         Auto                = 1 << 15,
 
         // aliases
+        /// <summary>
+        /// Alias for GPU
+        /// </summary>
         Compute             = GPU,
+
+        /// <summary>
+        /// Alias for CPU
+        /// </summary>
         CSharp              = CPU,
     }
 
@@ -426,14 +506,39 @@ public class WorkerFactory
     /// </summary>
     public enum Type
     {
+        /// <summary>
+        /// Auto
+        /// </summary>
         Auto                = 0 | Device.Auto,
 
+        /// <summary>
+        /// Compute Precompiled, least CPU overhead when scheduling
+        /// </summary>
         ComputePrecompiled  = 0 | Device.GPU,
+
+        /// <summary>
+        /// Fast Compute implementation
+        /// </summary>
         Compute             = 1 | Device.GPU,
+
+        /// <summary>
+        /// Reference Compute implementation, very slow
+        /// </summary>
         ComputeRef          = 2 | Device.GPU,
 
+        /// <summary>
+        /// Unity Burst implementation, fastest CPU option
+        /// </summary>
         CSharpBurst         = 0 | Device.CPU,
+
+        /// <summary>
+        /// Fast C# implementation when Burst is not available
+        /// </summary>
         CSharp              = 1 | Device.CPU,
+
+        /// <summary>
+        /// Reference C# implementation, very very slow
+        /// </summary>
         CSharpRef           = 2 | Device.CPU
     }
 
@@ -445,10 +550,33 @@ public class WorkerFactory
     /// `compareEpsilon` the maximum tolerance before a difference is reported (default == 0.0001f).
     /// </summary>
     public struct WorkerConfiguration {
+        /// <summary>
+        /// Print debug information on model execution to the console
+        /// </summary>
         public bool verbose;
+
+        /// <summary>
+        /// Compare layer by layer outputs against other worker type
+        /// </summary>
         public Type compareAgainstType;
+
+        /// <summary>
+        /// Comparison log level
+        /// </summary>
         public CompareOpsUtils.LogLevel compareLogLevel;
+
+        /// <summary>
+        /// Comparison error tolerance
+        /// </summary>
         public float compareEpsilon;
+
+        /// <summary>
+        /// Construct worker configuration
+        /// </summary>
+        /// <param name="compareAgainstType">Compare layer by layer outputs against other worker type</param>
+        /// <param name="verbose">Print debug information on model execution to the console</param>
+        /// <param name="compareLogLevel">Comparison log level</param>
+        /// <param name="compareEpsilon">Comparison error tolerance</param>
         public WorkerConfiguration(Type compareAgainstType, bool verbose=false, CompareOpsUtils.LogLevel compareLogLevel = CompareOpsUtils.LogLevel.Warning, float compareEpsilon = 0.0001f)
         {
             this.verbose = verbose;
@@ -460,14 +588,15 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `verbose` will log scheduling of layers execution to the console.
-    /// `compareAgainstType` if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
-    /// `differenceAsError` if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise.
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="verbose"> will log scheduling of layers execution to the console</param>
+    /// <param name="compareAgainstType">if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed</param>
+    /// <param name="differenceLogLevel">if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, bool verbose, Type compareAgainstType, CompareOpsUtils.LogLevel differenceLogLevel=CompareOpsUtils.LogLevel.Warning)
     {
         var workerConfiguration = new WorkerConfiguration(type, verbose);
@@ -478,12 +607,13 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `workerConfiguration` define configurations such as logging and comparison backend, see WorkerConfiguration API docs.
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="workerConfiguration">define configurations such as logging and comparison backend, see WorkerConfiguration API docs</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerConfiguration workerConfiguration)
     {
         return BarracudaBackendsFactory.CreateWorker(type, model, additionalOutputs, trimOutputs, workerConfiguration);
@@ -491,12 +621,13 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Model model, string[] additionalOutputs, string[] trimOutputs, Device device = Device.Auto, bool verbose = false)
     {
         var type = GetBestTypeForDevice(device);
@@ -506,10 +637,11 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console.
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, bool verbose)
     {
         var workerConfiguration = new WorkerConfiguration(type, verbose);
@@ -518,11 +650,12 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, bool verbose = false)
     {
         var workerConfiguration = new WorkerConfiguration(type, verbose);
@@ -531,12 +664,13 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs = null, string[] trimOutputs = null, bool verbose = false)
     {
         var workerConfiguration = new WorkerConfiguration(type, verbose);
@@ -545,12 +679,13 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console.
-    /// `compareAgainstType` if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed.
-    /// `differenceAsError` if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise.
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console</param>
+    /// <param name="compareAgainstType">if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed</param>
+    /// <param name="differenceLogLevel">if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, bool verbose, Type compareAgainstType, CompareOpsUtils.LogLevel differenceLogLevel=CompareOpsUtils.LogLevel.Warning)
     {
         var workerConfiguration = new WorkerConfiguration(type, verbose);
@@ -561,10 +696,11 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker with explicitly specified backend `type` to execute the given `model`.
-    /// `type` is backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `workerConfiguration` define configurations such as logging and comparison backend, see WorkerConfiguration API docs.
     /// </summary>
+    /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="workerConfiguration">define configurations such as logging and comparison backend, see WorkerConfiguration API docs</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, WorkerConfiguration workerConfiguration)
     {
         return CreateWorker(type, model, additionalOutputs:null, trimOutputs:null, workerConfiguration);
@@ -572,9 +708,10 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console.
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Model model, bool verbose = false)
     {;
         return CreateWorker(model, Device.Auto, verbose);
@@ -582,10 +719,11 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `device` is the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console.
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="device">the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Model model, Device device, bool verbose = false)
     {
         return CreateWorker(model, additionalOutputs:null, device, verbose);
@@ -593,11 +731,12 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Model model, string[] additionalOutputs, Device device = Device.Auto, bool verbose = false)
     {
         return CreateWorker(model, additionalOutputs, trimOutputs:null, device, verbose);
@@ -605,9 +744,10 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker using the reference CPU backend for the given `model`.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateReferenceCPUWorker(Model model, bool verbose = false)
     {
         return CreateWorker(Type.CSharpRef, model, verbose);
@@ -615,9 +755,10 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker using the reference GPU backend for the given `model`.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateReferenceComputeWorker(Model model, bool verbose = false)
     {
         return CreateWorker(Type.ComputeRef, model, verbose);
@@ -625,9 +766,10 @@ public class WorkerFactory
 
     /// <summary>
     /// Create a worker using the precompiled GPU backend for the given `model`.
-    /// `model` is the associated model. See ModelLoader.cs.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose"></param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateComputeWorker(Model model, bool verbose = false)
     {
         return CreateWorker(Type.ComputePrecompiled, model, verbose);
@@ -637,6 +779,10 @@ public class WorkerFactory
     /// Check if a backend is of a given type.
     /// For example: IsType(Type.CSharpRef, Device.GPU) == true
     /// </summary>
+    /// <param name="type">type to check against</param>
+    /// <param name="device">device to check against</param>
+    /// <returns>`true` if backend is of specified type</returns>
+    /// <exception cref="ArgumentException">thrown if type is `Type.Auto`</exception>
     public static bool IsType(Type type, Device device)
     {
         type = BarracudaBackendsFactory.ResolveAutoType(type);
@@ -648,6 +794,8 @@ public class WorkerFactory
     /// <summary>
     /// Returns the best backend type that can run on a `device` given the `model`.
     /// </summary>
+    /// <param name="device">device</param>
+    /// <returns>Best worker type for specified `device`</returns>
     public static Type GetBestTypeForDevice(Device device)
     {
         return BarracudaBackendsFactory.GetBestTypeForDevice(device);
@@ -656,6 +804,8 @@ public class WorkerFactory
     /// <summary>
     /// Validate if a backend of `type` is supported, otherwise return a fallback type.
     /// </summary>
+    /// <param name="type">type</param>
+    /// <returns>returns `type` if valid, otherwise returns fallback type</returns>
     public static Type ValidateType(Type type)
     {
         return BarracudaBackendsFactory.ValidateType(type);
@@ -672,6 +822,9 @@ public class WaitForCompletion : CustomYieldInstruction
 {
     private Tensor m_Tensor;
 
+    /// <summary>
+    /// Returns `true` while results are not yet ready
+    /// </summary>
     public override bool keepWaiting
     {
         get
@@ -684,23 +837,27 @@ public class WaitForCompletion : CustomYieldInstruction
     /// <summary>
     /// Suspends the coroutine execution until worker has completed execution on a device and
     /// contents of the specified tensor are downloaded to the main CPU memory.
-    /// `tensor` that will be downloaded once worker execution is finished.
     /// </summary>
+    /// <param name="tensor">`Tensor` that will be downloaded once worker execution is finished</param>
     public WaitForCompletion(Tensor tensor)
     {
         m_Tensor = tensor;
     }
 }
 
+/// <summary>
+/// Extensions for `Model` class
+/// </summary>
 public static class ModelExtensions
 {
     /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
     /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
-    /// `model` is the associated Model to execute.
-    /// `device` is the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console.
     /// </summary>
+    /// <param name="model">the associated Model to execute</param>
+    /// <param name="device">the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(this Model model,
         WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
     {
@@ -710,12 +867,13 @@ public static class ModelExtensions
     /// <summary>
     /// Create a worker that will execute `model` using the best backend that is available for a given `device` type.
     /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
-    /// `model` is the associated Model to execute.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="model">the associated Model to execute</param>
+    /// <param name="additionalOutputs">are the additional outputs to track but not directly specified by the model</param>
+    /// <param name="trimOutputs">are the outputs not discard even if they are specified by the model</param>
+    /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(this Model model,
         string[] additionalOutputs, string[] trimOutputs, WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
     {
@@ -723,15 +881,19 @@ public static class ModelExtensions
     }
 }
 
+/// <summary>
+/// Extensions for `NNModel` class
+/// </summary>
 public static class NNModelExtensions
 {
     /// <summary>
     /// Create a worker that will execute `asset` using the best backend that is available for a given `device` type.
     /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
-    /// `asset` is the associated NNModel asset.
-    /// `device` is the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console.
     /// </summary>
+    /// <param name="asset">the associated NNModel asset</param>
+    /// <param name="device">the preferred device for execution. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(this NNModel asset,
         WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
     {
@@ -742,12 +904,13 @@ public static class NNModelExtensions
     /// <summary>
     /// Create a worker that will execute `asset` using the best backend that is available for a given `device` type.
     /// This is just a convenience function that internally calls `ModelLoader.Load` followed by ``WorkerFactory.CreateWorker`.
-    /// `asset` is the associated NNModel asset.
-    /// `additionalOutputs` are the additional outputs to track but not directly specified by the model.
-    /// `trimOutputs` are the outputs not discard even if they are specified by the model.
-    /// `device` is the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path.
-    /// `verbose` will log scheduling of layers execution to the console (default == false).
     /// </summary>
+    /// <param name="asset">the associated NNModel asset</param>
+    /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
+    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(this NNModel asset,
         string[] additionalOutputs, string[] trimOutputs, WorkerFactory.Device device = WorkerFactory.Device.Auto, bool verbose = false)
     {

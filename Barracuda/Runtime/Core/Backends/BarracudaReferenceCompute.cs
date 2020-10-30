@@ -16,7 +16,7 @@ using System.Threading.Tasks;
 
 namespace Unity.Barracuda {
 
-public static class ComputeHelper
+internal static class ComputeHelper
 {
     public static int IDivC(int v, int div)
     {
@@ -24,6 +24,9 @@ public static class ComputeHelper
     }
 }
 
+/// <summary>
+/// `Tensor` data storage for GPU backends
+/// </summary>
 public class ComputeTensorData : ITensorData
 {
     private bool m_DisposeBufferAfterUse;
@@ -32,15 +35,37 @@ public class ComputeTensorData : ITensorData
     private int m_Offset;
     private ComputeInfo.ChannelsOrder m_OnDeviceChannelsOrder;
 
+    /// <summary>
+    /// Data storage as `ComputeBuffer`
+    /// </summary>
     public ComputeBuffer buffer { get { return m_Buffer; } }
+
+    /// <summary>
+    /// Offset in the data storage buffer
+    /// </summary>
     public int offset { get { return m_Offset; } }
+
+    /// <summary>
+    /// Parent `Tensor` name
+    /// </summary>
     public string name;
+
+    /// <summary>
+    /// Channel order channels-first vs channels-last
+    /// </summary>
     public ComputeInfo.ChannelsOrder channelsOrder { get { return m_OnDeviceChannelsOrder; } }
 
 #if DEBUG_TRACK_ALLOCATIONS
     protected StackTrace m_AllocationTrace;
 #endif
 
+    /// <summary>
+    /// Create `ComputeTensorData`
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="buffername">buffer name</param>
+    /// <param name="onDeviceChannelsOrder">channel order</param>
+    /// <param name="clearOnInit">clear on init</param>
     public ComputeTensorData(TensorShape shape, string buffername, ComputeInfo.ChannelsOrder onDeviceChannelsOrder, bool clearOnInit = true)
     {
         m_OnDeviceChannelsOrder = onDeviceChannelsOrder;
@@ -64,6 +89,14 @@ public class ComputeTensorData : ITensorData
 #endif
     }
 
+    /// <summary>
+    /// Create `ComputeTensorData` with specified `buffer`
+    /// </summary>
+    /// <param name="buffer">buffer</param>
+    /// <param name="shape">shape</param>
+    /// <param name="offset">offset</param>
+    /// <param name="buffername">buffer name</param>
+    /// <param name="onDeviceChannelsOrder">channels order</param>
     public ComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset, string buffername, ComputeInfo.ChannelsOrder onDeviceChannelsOrder)
     {
         m_OnDeviceChannelsOrder = onDeviceChannelsOrder;
@@ -75,6 +108,9 @@ public class ComputeTensorData : ITensorData
         m_DisposeBufferAfterUse = false;
     }
 
+    /// <summary>
+    /// Finalizer
+    /// </summary>
     ~ComputeTensorData()
     {
         if (m_Buffer == null)
@@ -87,6 +123,9 @@ public class ComputeTensorData : ITensorData
         Dispose();
     }
 
+    /// <summary>
+    /// Dispose internal storage
+    /// </summary>
     public virtual void Dispose()
     {
         if (m_DisposeBufferAfterUse)
@@ -97,12 +136,14 @@ public class ComputeTensorData : ITensorData
         m_DisposeBufferAfterUse = false;
     }
 
+    /// <inheritdoc/>
     public virtual void Reserve(int count)
     {
         if (m_Offset + count > maxCapacity)
             throw new ArgumentException("ComputeTensorData buffer is too small to reserve " + count + " elements.");
     }
 
+    /// <inheritdoc/>
     public virtual void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
         var count = shape.length;
@@ -113,7 +154,7 @@ public class ComputeTensorData : ITensorData
         {
             //Transpose from HWC to CHW, TODO use a compute shader or threaded code.
             float[] chwData = new float[count];
-            for (var it = new TensorIterator(shape); it.IsValid(); ++it)
+            for (var it = new TensorIterator(shape); it.IsValid(); it.Next())
             {
                 int writeIndex = shape.IndexChannelFirst(it.d0, it.d1,it.d2, it.d3, it.d4, it.d5,it.d6, it.d7);
                 chwData[writeIndex] = data[managedBufferStartIndex+it.index];
@@ -131,6 +172,7 @@ public class ComputeTensorData : ITensorData
         #endif
     }
 
+    /// <inheritdoc/>
     public virtual bool ScheduleAsyncDownload(int count)
     {
         #if UNITY_2018_2_OR_NEWER
@@ -273,6 +315,7 @@ public class ComputeTensorData : ITensorData
         }
     }
 
+    /// <inheritdoc/>
     public virtual float[] Download(TensorShape shape)
     {
         //;;D.logStackTraceEnabled = true;
@@ -314,17 +357,23 @@ public class ComputeTensorData : ITensorData
         return data;
     }
 
+    /// <inheritdoc/>
     public virtual float[] SharedAccess(out int offset)
     {
         offset = m_Offset;
         return Download(new TensorShape(0,0,0,maxCapacity));
     }
 
+    /// <inheritdoc/>
     public virtual int maxCapacity { get
     {
         return m_Buffer.count;
     } }
 
+    /// <summary>
+    /// Summary
+    /// </summary>
+    /// <returns>summary</returns>
     public override string ToString()
     {
         string allocationSource = "";
@@ -396,12 +445,21 @@ internal class TextureFormatUtils
                 format == TextureFormat.ETC_RGB4Crunched ||
                 #endif
                 format == TextureFormat.ETC2_RGB ||
+                #if UNITY_2019_1_OR_NEWER
+                format == TextureFormat.ASTC_4x4 ||
+                format == TextureFormat.ASTC_5x5 ||
+                format == TextureFormat.ASTC_6x6 ||
+                format == TextureFormat.ASTC_8x8 ||
+                format == TextureFormat.ASTC_10x10 ||
+                format == TextureFormat.ASTC_12x12 ||
+                #else
                 format == TextureFormat.ASTC_RGB_4x4 ||
                 format == TextureFormat.ASTC_RGB_5x5 ||
                 format == TextureFormat.ASTC_RGB_6x6 ||
                 format == TextureFormat.ASTC_RGB_8x8 ||
                 format == TextureFormat.ASTC_RGB_10x10 ||
                 format == TextureFormat.ASTC_RGB_12x12 ||
+                #endif
                 format == TextureFormat.BC6H;
     }
 
@@ -529,22 +587,50 @@ internal class TextureFormatUtils
     }
 }
 
+/// <summary>
+/// Texture based `Tensor` storage
+/// </summary>
 public class TextureAsTensorData : ITensorData
 {
+    /// <summary>
+    /// Flip flag enum
+    /// </summary>
     public enum Flip
     {
+        /// <summary>
+        /// None
+        /// </summary>
         None,
+        /// <summary>
+        /// Flip Y
+        /// </summary>
         Y,
     }
 
+    /// <summary>
+    /// Interpret depth as enum
+    /// </summary>
     public enum InterpretDepthAs
     {
+        /// <summary>
+        /// Batch
+        /// </summary>
         Batch,
+
+        /// <summary>
+        /// Channels
+        /// </summary>
         Channels,
     }
 
+    /// <summary>
+    /// Interpret color enum
+    /// </summary>
     public enum InterpretColorAs
     {
+        /// <summary>
+        /// Average multiple channels
+        /// </summary>
         AverageMultipleChannels,
         // TODO: PickFirstChannel,
     }
@@ -556,14 +642,46 @@ public class TextureAsTensorData : ITensorData
     private InterpretColorAs m_InterpretColorAs;
     private Flip m_Flip;
 
+    /// <summary>
+    /// Shape
+    /// </summary>
     public TensorShape shape { get { return m_Shape; } }
+
+    /// <summary>
+    /// Backing textures
+    /// </summary>
     public Texture[] textures { get { return m_Textures; } }
+
+    /// <summary>
+    /// Interpret pixel as channels
+    /// </summary>
     public int interpretPixelAsChannels { get { return m_InterpretPixelAsChannels; } }
+
+    /// <summary>
+    /// Interpret depth as
+    /// </summary>
     public InterpretDepthAs interpretDepthAs { get { return m_InterpretDepthAs; } }
+
+    /// <summary>
+    /// Interpret color as
+    /// </summary>
     public InterpretColorAs interpretColorAs { get { return m_InterpretColorAs; } }
+
+    /// <summary>
+    /// Flip flag
+    /// </summary>
     public Flip flip { get { return m_Flip; } }
 
-
+    /// <summary>
+    /// Create `TextureAsTensorData` from supplied `textures`
+    /// </summary>
+    /// <param name="textures">backing textures</param>
+    /// <param name="interpretPixelAsChannels">interpret pixel as channels</param>
+    /// <param name="flip">flip</param>
+    /// <param name="depthAs">depth as</param>
+    /// <param name="colorAs">color as</param>
+    /// <exception cref="ArgumentException">thrown if textures array is empty or texture types are different</exception>
+    /// <exception cref="InvalidOperationException">thrown if unsupported texture type is supplied</exception>
     public TextureAsTensorData(Texture[] textures, int interpretPixelAsChannels = -1,
         Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels)
     {
@@ -621,28 +739,40 @@ public class TextureAsTensorData : ITensorData
         m_Shape = new TensorShape(batch, height, width, channels);
     }
 
+    /// <summary>
+    /// Create `TextureAsTensorData` from supplied `texture`
+    /// </summary>
+    /// <param name="texture">texture</param>
+    /// <param name="interpretPixelAsChannels">interpret pixel as channels</param>
+    /// <param name="flip">flip</param>
+    /// <param name="depthAs">depth as</param>
+    /// <param name="colorAs">color as</param>
     public TextureAsTensorData(Texture texture, int interpretPixelAsChannels = -1,
         Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels)
     : this(new [] { texture }, interpretPixelAsChannels, flip, depthAs, colorAs) {}
 
+    /// <inheritdoc/>
     public virtual void Reserve(int count)
     {
         // currently always readonly
         throw new InvalidOperationException("TextureAsTensorData is readonly");
     }
 
+    /// <inheritdoc/>
     public virtual void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
         // currently always readonly
         throw new InvalidOperationException("TextureAsTensorData is readonly");
     }
 
+    /// <inheritdoc/>
     public virtual bool ScheduleAsyncDownload(int count)
     {
         // @TODO: cache compute tensor data and request async
         return true;
     }
 
+    /// <inheritdoc/>
     public virtual float[] Download(TensorShape shape)
     {
         var gpuBackend = new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels);
@@ -653,32 +783,50 @@ public class TextureAsTensorData : ITensorData
         }
     }
 
+    /// <inheritdoc/>
     public virtual float[] SharedAccess(out int offset)
     {
         offset = 0;
         return Download(shape);
     }
 
+    /// <inheritdoc/>
     public virtual int maxCapacity { get
     {
         return m_Shape.length;
     } }
 
+    /// <summary>
+    /// Dispose
+    /// </summary>
     public virtual void Dispose()
     {
     }
 }
 
+/// <summary>
+/// Reference GPU compute `IOps` implementation
+/// </summary>
 public class ReferenceComputeOps : ReferenceCPUOps
 {
     private ComputeShader[] m_Kernels;
 
+    /// <summary>
+    /// Create `ReferenceComputeOps`
+    /// </summary>
+    /// <param name="kernels">compute kernels</param>
+    /// <param name="allocator">allocator</param>
     public ReferenceComputeOps(ComputeShader kernels, ITensorAllocator allocator = null)
     : base(allocator)
     {
         m_Kernels = new [] {kernels};
     }
 
+    /// <summary>
+    /// Pin `Tensor` to GPU compute device
+    /// </summary>
+    /// <param name="X">`Tensor`</param>
+    /// <returns>`ComputeTensorData`</returns>
     public ComputeTensorData Pin(Tensor X)
     {
         X.FlushCache();
@@ -699,20 +847,20 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return X.tensorOnDevice as ComputeTensorData;
     }
 
-    public void SetTensor(ComputeFunc fn, string name, Tensor X)
+    internal void SetTensor(ComputeFunc fn, string name, Tensor X)
     {
         var XonDevice = Pin(X);
         fn.SetTensor(name, X.shape, XonDevice.buffer, XonDevice.offset);
     }
 
-    public Tensor NewTensor(ComputeFunc fn, string name, TensorShape shape)
+    internal Tensor NewTensor(ComputeFunc fn, string name, TensorShape shape)
     {
         var o = NewTensor(shape, name);
         fn.SetTensor(name, shape, Pin(o).buffer);
         return o;
     }
 
-    public Tensor Dispatch(ComputeFunc fn, TensorShape outputShape, int workItemsX, int workItemsY, int workItemsZ, string outputName = "O")
+    internal Tensor Dispatch(ComputeFunc fn, TensorShape outputShape, int workItemsX, int workItemsY, int workItemsZ, string outputName = "O")
     {
         var o = NewTensor(fn, outputName, outputShape);
         fn.Dispatch(workItemsX, workItemsY, workItemsZ);
@@ -762,6 +910,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return tensorData;
     }
 
+    /// <summary>
+    /// Copy `Tensor` data to `RenderTexture`
+    /// </summary>
+    /// <param name="X">source `Tensor`</param>
+    /// <param name="target">target `RenderTexture`</param>
+    /// <param name="batch">batch</param>
+    /// <param name="fromChannel">from channel</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="lut">LUT table</param>
     public void TensorToRenderTexture(Tensor X, RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut)
     {
         if (!target.enableRandomWrite || !target.IsCreated())
@@ -787,6 +945,11 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.Dispatch(target.width, target.height, 1);
     }
 
+    /// <summary>
+    /// Check if `Flatten` is needed for `Dense` layer input
+    /// </summary>
+    /// <param name="X">input shape</param>
+    /// <returns>`true` if `Flatten` is needed</returns>
     protected bool ShouldFlattenInputForDenseLayer(TensorShape X)
     {
         //In HWC flatten is a no-op memory wise.
@@ -800,6 +963,11 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return flattenDimensions > 1;
     }
 
+    /// <summary>
+    /// Check if `fusedActivation` type is supported
+    /// </summary>
+    /// <param name="fusedActivation">fused activation type</param>
+    /// <returns>`true` if supported</returns>
     protected bool IsFusedActivationSupported(Layer.FusedActivation fusedActivation)
     {
         switch (fusedActivation)
@@ -814,8 +982,31 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     // ---------------------------------------------------------------------------------
-
+    /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    {
+        if(X.dimensions <= 2 && Y.dimensions <= 2)
+        {
+            return MatMul2D(X, false, Y, false);
+        }
+
+        Assert.AreEqual(X.dimensions, Y.dimensions);
+        Assert.AreEqual(X.batch*X.channels, Y.batch*Y.channels);
+
+        // N.B: Current implementation is inefficient as it introduces Transposes/Slice and Concat.
+        // => consider refactoring dense to support batch
+        // X and Y can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
+        // => permute them if there is a layout mismatch
+        if (Pin(X).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+            X = TransposeToNCHW(X);
+        if (Pin(Y).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+            Y = TransposeToNCHW(Y);
+
+        return base.MatMul(X, xTranspose, Y, yTranspose);
+    }
+
+    /// <inheritdoc/>
+    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         // MatMul implementation in terms of Dense
         var A = (xTranspose) ? Transpose(X): X;
@@ -832,6 +1023,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(W.dimensions <= 2);
@@ -858,6 +1050,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <summary>
+    /// Convolution implementation via Winograd transform
+    /// </summary>
+    /// <param name="X">input</param>
+    /// <param name="K">convolution kernel</param>
+    /// <param name="B">bias</param>
+    /// <param name="stride">stride</param>
+    /// <param name="pad">padding</param>
+    /// <param name="fusedActivation">fused activation type</param>
+    /// <returns>output `Tensor`</returns>
     private Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -886,6 +1088,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -920,6 +1123,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
@@ -952,6 +1156,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -987,6 +1192,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1006,6 +1212,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor Resample2D(Tensor X, int[] size, bool bilinear)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1020,6 +1227,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor DepthToSpace(Tensor X, int[] blocksize, Layer.DepthToSpaceMode mode)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1037,6 +1245,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor SpaceToDepth(Tensor X, int[] blocksize)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1054,6 +1263,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     protected virtual Tensor Pool2D(string kernelName, Tensor X, int[] pool, int[] stride, int[] pad)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1072,16 +1282,24 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         return Pool2D("MaxPool2D", X, pool, stride, pad);
     }
 
+    /// <inheritdoc/>
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         return Pool2D("AvgPool2D", X, pool, stride, pad);
     }
 
+    /// <summary>
+    /// Generic pooling 2D
+    /// </summary>
+    /// <param name="kernelName">kernel name</param>
+    /// <param name="X">input</param>
+    /// <returns>output `Tensor`</returns>
     protected virtual Tensor GlobalPool2D(string kernelName, Tensor X)
     {
         var O = new TensorShape(X.batch, 1, 1, X.channels);
@@ -1093,16 +1311,19 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, 1, 1);
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalMaxPool2D(Tensor X)
     {
         return GlobalPool2D("GlobalMaxPool2D", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
         return GlobalPool2D("GlobalAvgPool2D", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalAvgVariancePool2D(Tensor X)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1115,6 +1336,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, 1, 1);
     }
 
+    /// <summary>
+    /// Apply padding
+    /// </summary>
+    /// <param name="X">input</param>
+    /// <param name="pad">padding</param>
+    /// <param name="kernelName">kernel name</param>
+    /// <param name="constant">constant</param>
+    /// <returns>output `Tensor`</returns>
     protected virtual Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
         Assert.IsTrue(X.shape.IsNHWC());
@@ -1144,26 +1373,31 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor Border2D(Tensor X, int[] pad, float constant)
     {
         return ApplyPadding(X, pad, "Border2D", constant);
     }
 
+    /// <inheritdoc/>
     public override Tensor Pad2DReflect(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, "Pad2DReflect");
     }
 
+    /// <inheritdoc/>
     public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, "Pad2DSymmetric");
     }
 
+    /// <inheritdoc/>
     public override Tensor Pad2DEdge(Tensor X, int[] pad)
     {
         return ApplyPadding(X, pad, "Pad2DEdge");
     }
 
+    /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         if (!X.shape.IsNHWC())
@@ -1182,6 +1416,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
         if (!X.shape.IsNHWC())
@@ -1213,6 +1448,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
         if (!X.shape.IsNHWC())
@@ -1231,6 +1467,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     // @TODO: debug & fix
+    /// <inheritdoc/>
     public override Tensor Dropout(Tensor X, float alpha)
     {
         if (!X.shape.IsNHWC())
@@ -1248,6 +1485,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <summary>
+    /// Generic activation function
+    /// </summary>
+    /// <param name="kernelName">kernel name</param>
+    /// <param name="X">input</param>
+    /// <param name="alpha">alpha</param>
+    /// <param name="beta">beta</param>
+    /// <returns>output Tensor</returns>
     protected virtual Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
     {
         var O = X.shape;
@@ -1260,6 +1505,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor Relu(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1268,6 +1514,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Relu", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         if (!X.shape.IsNHWC())
@@ -1284,10 +1531,11 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
-    public override Tensor Softmax(Tensor X)
+    /// <inheritdoc/>
+    public override Tensor Softmax(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            return base.Softmax(X);
+        if (!X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+            return base.Softmax(X, axis);
 
         var O = X.shape.Flatten();
 
@@ -1298,6 +1546,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
 
+    /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1312,6 +1561,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
 
+    /// <inheritdoc/>
     public override Tensor Tanh(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1320,6 +1570,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Tanh", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sigmoid(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1328,6 +1579,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Sigmoid", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Relu6(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1336,6 +1588,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Relu6", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Elu(Tensor X, float alpha)
     {
         if (!X.shape.IsNHWC())
@@ -1344,6 +1597,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Elu", X, alpha);
     }
 
+    /// <inheritdoc/>
     public override Tensor LeakyRelu(Tensor X, float alpha)
     {
         if (!X.shape.IsNHWC())
@@ -1352,6 +1606,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("LeakyRelu", X, alpha);
     }
 
+    /// <inheritdoc/>
     public override Tensor Selu(Tensor X, float alpha, float gamma)
     {
         if (!X.shape.IsNHWC())
@@ -1360,6 +1615,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Selu", X, alpha, gamma);
     }
 
+    /// <inheritdoc/>
     public override Tensor Swish(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1368,6 +1624,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Swish", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Abs(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1376,6 +1633,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Abs", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Neg(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1384,6 +1642,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Neg", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Ceil(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1392,6 +1651,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Ceil", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Clip(Tensor X, float min, float max)
     {
         if (!X.shape.IsNHWC())
@@ -1400,6 +1660,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Clip", X, min, max);
     }
 
+    /// <inheritdoc/>
     public override Tensor Floor(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1408,6 +1669,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Floor", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Reciprocal(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1416,6 +1678,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Reciprocal", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Pow(Tensor X, float alpha)
     {
         if (!X.shape.IsNHWC())
@@ -1424,6 +1687,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Pow", X, alpha);
     }
 
+    /// <inheritdoc/>
     public override Tensor Exp(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1432,6 +1696,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Exp", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Log(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1440,6 +1705,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Log", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sqrt(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1448,6 +1714,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Sqrt", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Acos(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1455,6 +1722,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Acos", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Acosh(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1462,6 +1731,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Acosh", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Asin(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1469,6 +1740,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Asin", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Asinh(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1476,6 +1749,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Asinh", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Atan(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1483,6 +1758,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Atan", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Atanh(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1490,6 +1767,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Atanh", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Cos(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1497,6 +1776,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Cos", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Cosh(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1504,6 +1785,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Cosh", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Sin(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1511,6 +1794,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Sin", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Sinh(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1518,6 +1803,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         return Activation("Sinh", X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Tan(Tensor X)
     {
         if (!X.shape.IsNHWC())
@@ -1526,6 +1813,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Activation("Tan", X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Expand(Tensor X, TensorShape newShape)
     {
         Assert.IsTrue(newShape.batch == X.batch || X.batch == 1);
@@ -1539,6 +1827,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, newShape, newShape.channels, newShape.width, newShape.height);
     }
 
+    /// <summary>
+    /// Elementwise broadcast for specified kernel
+    /// </summary>
+    /// <param name="kernelName">kernel name</param>
+    /// <param name="tensors">input tensors</param>
+    /// <returns>output `Tensor`</returns>
+    /// <exception cref="NotImplementedException">thrown if input `Tensor` is not compatible with 4D shape</exception>
     protected virtual Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
@@ -1574,134 +1869,181 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return X;
     }
 
+    /// <inheritdoc/>
     public override Tensor Add(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastAdd", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Sub(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastSub", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Mul(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastMul", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Div(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastDiv", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Pow(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastPow", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Min(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastMin", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Max(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastMax", tensors);
     }
 
+    /// <inheritdoc/>
     public override Tensor Mean(Tensor[] tensors)
     {
         return ElementwiseWithBroadcast("BroadcastMean", tensors);
     }
 
+    /// <summary>
+    /// Reduce with specified kernel
+    /// </summary>
+    /// <param name="kernelName">kernel name</param>
+    /// <param name="X">input</param>
+    /// <param name="axis">axis</param>
+    /// <returns>output `Tensor`</returns>
+    /// <exception cref="NotImplementedException">thrown if `axis` is not 4D compatible (depends on compute backend limitations)</exception>
     protected virtual Tensor Reduce(string kernelName, Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
+        axis = X.shape.Axis(axis);
+
+        if (!X.shape.IsNHWC() || !TensorExtensions.Is8DAxisConvertibleToNHWC(axis))
             throw new NotImplementedException();
 
-        if (axis != TensorShape.C && axis != -1)
-            throw new NotImplementedException();
+        //TODO optimize when reducing not on channel.
+        bool needTranpose = axis != TensorShape.C;
+        var axisNCHW = TensorExtensions.Convert8DAxisToNHWC(axis);
+        var permuteTargetAxisAndC = new int[] {0, 1, 2, axisNCHW};
+        permuteTargetAxisAndC[axisNCHW] = 3;
+        if (needTranpose)
+            X = Transpose(X, permuteTargetAxisAndC);
 
-        var O = X.shape.Reduce(axis);
-        Assert.AreEqual(O.channels, 1);
+        var oShape = X.shape.Reduce(TensorShape.C);
+        Assert.AreEqual(oShape.channels, 1);
 
         var fn = new ComputeFunc(m_Kernels, kernelName);
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.width, O.height, 1);
+        var O = Dispatch(fn, oShape, oShape.width, oShape.height, 1);
+
+        if (needTranpose)
+            O = Transpose(O, permuteTargetAxisAndC);
+
+        return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceMin(Tensor X, int axis)
     {
         return Reduce("ReduceMin", X, axis);
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceMax(Tensor X, int axis)
     {
         return Reduce("ReduceMax", X, axis);
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceSum(Tensor X, int axis)
     {
         return Reduce("ReduceSum", X, axis);
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceMean(Tensor X, int axis)
     {
         return Reduce("ReduceMean", X, axis);
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceProd(Tensor X, int axis)
     {
         return Reduce("ReduceProd", X, axis);
     }
 
-
+    /// <inheritdoc/>
     public override Tensor Greater(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastGreater", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor GreaterEqual(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastGreaterEqual", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor Less(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastLess", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor LessEqual(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastLessEqual", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor Equal(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastEqual", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor LogicalOr(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastLogicalOr", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor LogicalAnd(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastLogicalAnd", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor LogicalXor(Tensor A, Tensor B)
     {
         return ElementwiseWithBroadcast("BroadcastLogicalXor", new Tensor[] { A, B });
     }
 
+    /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
         return Activation("LogicalNot", X);
     }
 
+    /// <summary>
+    /// Copy and reshape tensor for NCHW layout
+    /// </summary>
+    /// <param name="X">input</param>
+    /// <param name="newShape">new shape</param>
+    /// <returns>output `Tensor`</returns>
     protected virtual Tensor CopyAndReshape_NCHW(Tensor X, TensorShape newShape)
     {
         Assert.AreEqual(X.length, newShape.length);
@@ -1709,68 +2051,87 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = NewTensor(newShape, "O");
 
-        var fn = new ComputeFunc(m_Kernels, "ReshapeFromNHWCModel_NCHW");
-        SetTensor(fn, "X", X);
-        SetTensor(fn, "O", O);
-        fn.Dispatch(O.channels, O.width, O.height);
+        if (X.shape.IsNHWC() && newShape.IsNHWC())
+        {
+            var fn = new ComputeFunc(m_Kernels, "ReshapeFromNHWCModel_NCHW");
+            SetTensor(fn, "X", X);
+            SetTensor(fn, "O", O);
+            fn.Dispatch( O.width, O.height, O.channels);
+        }
+        else
+        {
+            var fn = new ComputeFunc(m_Kernels, "Reshape8DFromChannelFirstModel_NCHW");
+            SetTensor(fn, "X", X);
+            SetTensor(fn, "O", O);
+            var xD  = new[] {X.shape[0], X.shape[1],X.shape[3],X.shape[4]};
+            var oD  = new[] {O.shape[0], O.shape[1],O.shape[3],O.shape[4]};
+            fn.shader.SetInts("_Pad", xD);
+            fn.shader.SetInts("_Pool", oD);
+            fn.Dispatch( O.width, O.height, O.channels);
+        }
 
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor CopyAndReshape(Tensor X, TensorShape newShape)
     {
-        //8D reshape not supported on GPU (especially in ChannelFirst mode) atm.
-        if (!X.shape.IsNHWC() || !newShape.IsNHWC())
-            return base.CopyAndReshape(X, newShape);
-
         Assert.AreEqual(X.length, newShape.length);
         if (X.shape != newShape)
         {
             //In CHW mode one should call CopyAndReshape_NCHW if shape is modified
             Assert.AreEqual(ComputeInfo.ChannelsOrder.NHWC, ComputeInfo.channelsOrder);
         }
-
-        var copyShape = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "Copy");
-        SetTensor(fn, "X", X);
+        bool isNHWCCopy = X.shape.IsNHWC() && newShape.IsNHWC();
 
         // NOTE: "Copy" kernel copies tensor data while preserving the shape
         // However here in CopyAndReshape we want to both copy and change the shape,
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
-
         var O = NewTensor(newShape, "O");
+        var fn = new ComputeFunc(m_Kernels, isNHWCCopy?"Copy":"Copy8D");
+        SetTensor(fn, "X", X);
+        var copyShape = X.shape;
         fn.SetTensor("O", copyShape, Pin(O).buffer);
 
-        var offsets = new int[] { 0,0,0,0 };
-        fn.shader.SetInts("_Pad", offsets);
-        fn.Dispatch(X.channels, X.width, X.height);
+        if (isNHWCCopy)
+        {
+            var offsets = new int[] {0, 0, 0, 0};
+            fn.shader.SetInts("_Pad", offsets);
+        }
+        else
+        {
+            var XonDeviceShape = GetOnDeviceShape(X.shape);
+            var d0_3  = new[] {XonDeviceShape[0], XonDeviceShape[1],XonDeviceShape[2],XonDeviceShape[3]};
+            var d4_7  = new[] {XonDeviceShape[4], XonDeviceShape[5],XonDeviceShape[6],XonDeviceShape[7]};
+            fn.shader.SetInts("_Stride", d0_3);
+            fn.shader.SetInts("_Pool", d4_7);
+        }
 
+        fn.Dispatch(X.channels, X.width, X.height);
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Flatten(Tensor X)
     {
         var newShape = X.shape.Flatten();
-        //TODO support Flatten on GPU for 8D tensors.
-        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC || X.shape == newShape || !X.shape.IsNHWC())
+        if (X.shape == newShape)
             return base.Flatten(X);
 
         return CopyAndReshape_NCHW(X, newShape);
     }
 
+    /// <inheritdoc/>
     public override Tensor Reshape(Tensor X, TensorShape newShape)
     {
         if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC || X.shape == newShape)
             return base.Reshape(X, newShape);
 
-        //8D reshape not supported in ChannelFirst atm.
-        if (!X.shape.IsNHWC() || !newShape.IsNHWC())
-            return base.Reshape(X, newShape);
-
         return CopyAndReshape_NCHW(X, newShape);
     }
 
+    /// <inheritdoc/>
     public override Tensor Transpose(Tensor X)
     {
         Assert.IsTrue(X.dimensions <= 2);
@@ -1781,10 +2142,97 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
 
+    /// <summary>
+    /// Get `Tensor` shape on GPU device
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <returns>ouput shape as int array</returns>
+    protected int[] GetOnDeviceShape(TensorShape shape)
+    {
+        var onDeviceShape = shape.ToArray();
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+        {
+            //SRNTDHWC --> SRNCTDHW
+            var numChannel = onDeviceShape[7];
+            onDeviceShape[7] = onDeviceShape[6];
+            onDeviceShape[6] = onDeviceShape[5];
+            onDeviceShape[5] = onDeviceShape[4];
+            onDeviceShape[4] = onDeviceShape[3];
+            onDeviceShape[3] = numChannel;
+        }
+        return onDeviceShape;
+    }
+
+    /// <summary>
+    /// Convert permutation list to device specific layout
+    /// </summary>
+    /// <param name="permutationChannelLast">permutations channels last</param>
+    /// <returns>new permutation list</returns>
+    protected int[] ConvertPermutationToDeviceLayout(int[] permutationChannelLast)
+    {
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+            return permutationChannelLast;
+
+        var permutationChannelFirst = new int[TensorShape.MaxRank];
+        var channelLastToFirst = new[] {0, 1, 2, 7, 3, 4, 5, 6};
+        for (int i = 0; i < TensorShape.MaxRank; ++i)
+        {
+            int sourceDestinationSemanticIndex = channelLastToFirst[i];
+            int sourcePermutationSemanticIndex = permutationChannelLast[sourceDestinationSemanticIndex];
+            permutationChannelFirst[i] = Array.IndexOf(channelLastToFirst, sourcePermutationSemanticIndex);
+        }
+
+        return permutationChannelFirst;
+    }
+
+    /// <inheritdoc/>
+    public Tensor Transpose8D(Tensor X, int[] permutations)
+    {
+        permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
+
+        // See: Permute() in ONNXTensor.cs and https://stackoverflow.com/a/32034565
+        var Oshape = X.shape.Permute(permutations);
+
+        var OonDeviceShape = GetOnDeviceShape(Oshape);
+        var XonDeviceShape = GetOnDeviceShape(X.shape);
+        var onDevicePermutation = ConvertPermutationToDeviceLayout(permutations);
+
+        // outTensor strides
+        var reversePermute = new int[permutations.Length];
+        for (var i = 0; i < permutations.Length; ++i)
+            reversePermute[i] = Array.IndexOf(onDevicePermutation, i);
+        var tempOutStrides = new int[TensorShape.MaxRank+1];
+        tempOutStrides[8] = 1;
+        for (int i = 7; i >= 0; --i)
+            tempOutStrides[i] = tempOutStrides[i+1] * OonDeviceShape[i];
+        var outStride = new int[reversePermute.Length];
+        for (var i = 0; i < reversePermute.Length; ++i)
+            outStride[i] = tempOutStrides[reversePermute[i] + 1];
+
+        var d0_3  = new[] {XonDeviceShape[0], XonDeviceShape[1],XonDeviceShape[2],XonDeviceShape[3]};
+        var d4_7  = new[] {XonDeviceShape[4], XonDeviceShape[5],XonDeviceShape[6],XonDeviceShape[7]};
+        var outStride0_3 = new[] {outStride[0],outStride[1],outStride[2],outStride[3]};
+        var outStride4_7 = new[] {outStride[4],outStride[5],outStride[6],outStride[7]};
+
+        var fn = new ComputeFunc(m_Kernels, "Transpose8D");
+        SetTensor(fn, "X", X);
+        fn.shader.SetInts("_Pad", d0_3);
+        fn.shader.SetInts("_Pool", d4_7);
+        fn.shader.SetInts("_Stride", outStride0_3);
+        fn.shader.SetInts("_ChannelWriteMask", outStride4_7);
+
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+            return Dispatch(fn, Oshape, X.width, X.height, X.depth);
+        else
+            return Dispatch(fn, Oshape, X.channels, X.width, X.height);
+
+    }
+
+    /// <inheritdoc/>
     public override Tensor Transpose(Tensor X, int[] permutations)
     {
         if (!X.shape.IsNHWC() || permutations.Length != 4)
-            return base.Transpose(X, permutations);
+            return Transpose8D(X, permutations);
 
         Assert.AreEqual(permutations.Length, 4);
 
@@ -1795,6 +2243,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pool", permutations);
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
+
     Tensor TransposeToNCHW(Tensor X)
     {
         var O = X.shape;
@@ -1803,7 +2252,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
-    protected static int[] s_ConcatOffsets = new int[4];
+    internal static int[] s_ConcatOffsets = new int[4];
+    /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
         if (axis != TensorShape.C && axis != -1)
@@ -1832,6 +2282,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     static private int[] s_StridedSliceStart = new int[4];
+    /// <inheritdoc/>
     public override Tensor StridedSlice(Tensor X, int[] starts, int[] ends, int[] stride)
     {
         if (!X.shape.IsNHWC())
@@ -1859,12 +2310,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor Tile(Tensor X, int[] repeats)
     {
         // @TODO: GPU implementation
         return base.Tile(X, repeats);
     }
 
+    /// <inheritdoc/>
     public override Tensor Gather(Tensor[] tensors, int axis)
     {
         if (!TensorExtensions.Is8DAxisConvertibleToNHWC(axis) || !tensors[0].shape.IsNHWC())
@@ -1877,7 +2330,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Tensor indices = tensors[1];
 
         var outputShape = X.shape;
-        outputShape[axis] = indices.flatWidth;
+        outputShape[axis] = indices.length;
 
         var fn = new ComputeFunc(m_Kernels, "Gather");
         SetTensor(fn, "X", X);
@@ -1887,11 +2340,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, outputShape, outputShape.channels, outputShape.width, outputShape.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor Copy(Tensor X)
     {
         return base.Copy(X);
     }
 
+    /// <inheritdoc/>
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);
@@ -1899,7 +2354,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 }
 
-public struct ComputeFunc
+internal struct ComputeFunc
 {
     // dispatch dimension limitation coming from D3D11
     const uint SafeDispatchLimit = 65535;

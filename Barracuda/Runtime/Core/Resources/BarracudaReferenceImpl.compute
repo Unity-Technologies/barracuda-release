@@ -106,7 +106,9 @@
 #pragma kernel Clip_NCHW CHANNELS_FIRST=1
 #pragma kernel Copy_NHWC CHANNELS_FIRST=0
 #pragma kernel Copy_NCHW CHANNELS_FIRST=1
+#pragma kernel Copy8D
 #pragma kernel ReshapeFromNHWCModel_NCHW CHANNELS_FIRST=1
+#pragma kernel Reshape8DFromChannelFirstModel_NCHW CHANNELS_FIRST=1
 #pragma kernel BroadcastAdd_NHWC CHANNELS_FIRST=0
 #pragma kernel BroadcastAdd_NCHW CHANNELS_FIRST=1
 #pragma kernel BroadcastSub_NHWC CHANNELS_FIRST=0
@@ -141,6 +143,8 @@
 #pragma kernel BroadcastLogicalXor_NCHW CHANNELS_FIRST=1
 #pragma kernel LogicalNot_NHWC CHANNELS_FIRST=0
 #pragma kernel LogicalNot_NCHW CHANNELS_FIRST=1
+#pragma kernel BroadcastWhere_NHWC CHANNELS_FIRST=0
+#pragma kernel BroadcastWhere_NCHW CHANNELS_FIRST=1
 #pragma kernel ReduceMin_NHWC CHANNELS_FIRST=0
 #pragma kernel ReduceMin_NCHW CHANNELS_FIRST=1
 #pragma kernel ReduceMax_NHWC CHANNELS_FIRST=0
@@ -173,6 +177,7 @@
 #pragma kernel Transpose2D_NCHW CHANNELS_FIRST=1
 #pragma kernel Transpose_NHWC CHANNELS_FIRST=0
 #pragma kernel Transpose_NCHW CHANNELS_FIRST=1
+#pragma kernel Transpose8D
 #pragma kernel TransposeToNCHW
 #pragma kernel Expand_NHWC CHANNELS_FIRST=0
 #pragma kernel Expand_NCHW CHANNELS_FIRST=1
@@ -1220,6 +1225,32 @@ void KERNEL_FUNC(LogicalNot)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+[numthreads(4, 4, 4)]
+void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_THREEINPUTS(X, W, K, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        bool cond = (X.BroadcastGet(n, y, x, c) != 0.0f);
+        float a = W.BroadcastGet(n, y, x, c);
+        float b = K.BroadcastGet(n, y, x, c);
+        float v = cond ? a : b;
+        O.Set(n, y, x, c, v);
+    }
+}
+
 [numthreads(4,4,1)]
 void KERNEL_FUNC(ReduceMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -1336,25 +1367,149 @@ void KERNEL_FUNC(Copy)(uint3 dispatchThreadID : SV_DispatchThreadID)
 }
 
 [numthreads(4,4,4)]
-void ReshapeFromNHWCModel_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+void Copy8D(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
+    // TODO: handle `_Pad` for 8D concats (see `Copy` kernel and `Concat()` operator).
+    // NOTE: dispatched over X (not O)
+    //DISPATCH_ARGS(X.channels, X.width, X.height); in ChannelLast aka  SRNTDHWC
+    //DISPATCH_ARGS(X.width, X.height, X.depth);    in ChannelFirst aka SRNCTDHW
     TENSOR_ARGS2(X, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint d0_size = _Stride.x;
+    uint d1_size = _Stride.y;
+    uint d2_size = _Stride.z;
+    uint d3_size = _Stride.w;
+    uint d4_size = _Pool.x;
+    uint d5_size = _Pool.y;
+    uint d6_size = _Pool.z;
+    uint d7_size = _Pool.w;
+
+    uint d7 = dispatchThreadID.x;
+    uint d6 = dispatchThreadID.y;
+    uint d5 = dispatchThreadID.z;
+    if (d7 >= d7_size) return;
+    if (d6 >= d6_size) return;
+    if (d5 >= d5_size) return;
+
+    uint d5_7offset = d5 * d6_size * d7_size + d6 * d7_size + d7;
+    uint d0_4stride = d5_size * d6_size * d7_size;
+    uint d0_4offset = 0;
+
+    for (uint d0 = 0; d0 < d0_size; ++d0)
+    for (uint d1 = 0; d1 < d1_size; ++d1)
+    for (uint d2 = 0; d2 < d2_size; ++d2)
+    for (uint d3 = 0; d3 < d3_size; ++d3)
+    for (uint d4 = 0; d4 < d4_size; ++d4)
+    {
+        uint srcIndex = d0_4offset + d5_7offset;
+        float value = X.FastGet(srcIndex);
+        O.FastSet(srcIndex, value);
+
+        d0_4offset += d0_4stride;
+    }
+}
+
+[numthreads(4,4,4)]
+void ReshapeFromNHWCModel_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.width, O.height,O.channels);
+    TENSOR_ARGS2(X, O);
+
+    uint w = dispatchThreadID.x;
+    uint h = dispatchThreadID.y;
+    uint c = dispatchThreadID.z;
+    if (c >= O.channels) return;
+    if (h >= O.height) return;
+    if (w >= O.width) return;
 
     for (uint n = 0; n < O.batch; ++n)
     {
         //find the memory offset of target item in HWC format
-        uint index_NHWC = O.IndexHWC(n,y,x,c);
+        uint index_NHWC = O.IndexHWC(n,h,w,c);
         //from this offset find indices of item in HWC format before the reshape
         uint c_NHWC, y_NHWC, x_NHWC, b_NHWC;
         X.GetPositionFromIndexNHWC(index_NHWC, b_NHWC, y_NHWC, x_NHWC, c_NHWC);
 
         //finally copy item
         float v = X.Get(b_NHWC, y_NHWC, x_NHWC, c_NHWC);
-        O.Set(n, y, x, c, v);
+        O.Set(n, h, w, c, v);
+    }
+}
+
+uint Get8DOffsetFromIndices(uint d0,uint d1,uint d2,uint d3,uint d4,uint d5,uint d6,uint d7,
+                            uint s0,uint s1,uint s2,uint s3,uint s4,uint s5,uint s6,uint s7)
+{
+    return d0 * s7 * s6 * s5 * s4 * s3 * s2 * s1 +
+           d1 * s7 * s6 * s5 * s4 * s3 * s2 +
+           d2 * s7 * s6 * s5 * s4 * s3 +
+           d3 * s7 * s6 * s5 * s4 +
+           d4 * s7 * s6 * s5 +
+           d5 * s7 * s6 +
+           d6 * s7 +
+           d7;
+}
+
+[numthreads(4,4,4)]
+void Reshape8DFromChannelFirstModel_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.width, O.height,O.channels);
+    TENSOR_ARGS2(X, O);
+
+    uint sX = _Pad.x;
+    uint rX = _Pad.y;
+    uint nX = X.batch;
+    uint cX = X.channels;
+    uint tX = _Pad.z;
+    uint dX = _Pad.w;
+    uint hX = X.height;
+    uint wX = X.width;
+
+    uint sO = _Pool.x;
+    uint rO = _Pool.y;
+    uint nO = O.batch;
+    uint cO = O.channels;
+    uint tO = _Pool.z;
+    uint dO = _Pool.w;
+    uint hO = O.height;
+    uint wO = O.width;
+
+    uint w = dispatchThreadID.x;
+    uint h = dispatchThreadID.y;
+    uint c = dispatchThreadID.z;
+    if (c >= cO) return;
+    if (h >= hO) return;
+    if (w >= wO) return;
+
+    for (uint s = 0; s < sO; ++s)
+    for (uint r = 0; r < rO; ++r)
+    for (uint n = 0; n < nO; ++n)
+    for (uint t = 0; t < tO; ++t)
+    for (uint d = 0; d < dO; ++d)
+    {
+        //find the memory offset of target item in `channelLast` format
+        uint targetIndex_InChannelLast = Get8DOffsetFromIndices(s ,r ,n ,t ,d ,h ,w ,c ,
+                                                                sO,rO,nO,tO,dO,hO,wO,cO);
+
+        //from this offset find indices of item in `channelLast` format before the reshape
+        uint sL, rL, nL, tL, dL, hL, wL, cL;
+        sL = (targetIndex_InChannelLast / (cX * wX * hX * dX * tX * nX * rX)) % sX;
+        rL = (targetIndex_InChannelLast / (cX * wX * hX * dX * tX * nX)) % rX;
+        nL = (targetIndex_InChannelLast / (cX * wX * hX * dX * tX)) % nX;
+        tL = (targetIndex_InChannelLast / (cX * wX * hX * dX)) % tX;
+        dL = (targetIndex_InChannelLast / (cX * wX * hX)) % dX;
+        hL = (targetIndex_InChannelLast / (cX * wX)) % hX;
+        wL = (targetIndex_InChannelLast / cX) % wX;
+        cL = targetIndex_InChannelLast % cX;
+
+        //find `channelFirst` memory offsets
+        uint sourceIndex = Get8DOffsetFromIndices(sL,rL,nL,cL,tL,dL,hL,wL,
+                                                  sX,rX,nX,cX,tX,dX,hX,wX);
+        uint targetIndex = Get8DOffsetFromIndices(s ,r ,n ,c ,t ,d ,h ,w ,
+                                                  sO,rO,nO,cO,tO,dO,hO,wO);
+
+        //finally copy item
+        float v = X.FastGet(sourceIndex);
+        O.FastSet(targetIndex, v);
     }
 }
 
@@ -1550,7 +1705,7 @@ void KERNEL_FUNC(Resample2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
     float2 dstSize = float2(O.width, O.height);
     float2 srcSize = float2(X.width, X.height);
     float2 dstPos = float2(x, y);
-    float2 srcPos = floor(dstPos * (srcSize / dstSize));
+    float2 srcPos = floor(dstPos / (dstSize / srcSize));
 
     for (uint n = 0; n < O.batch; ++n)
     {
@@ -2501,6 +2656,63 @@ void KERNEL_FUNC(Transpose2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     float v = X.Get(readY, readX); // transposed
     O.Set(y, x, v);
+}
+
+[numthreads(4, 4, 4)]
+void Transpose8D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH_ARGS(X.channels, X.width, X.height); in ChannelLast aka  SRNTDHWC
+    //DISPATCH_ARGS(X.width, X.height, X.depth);    in ChannelFirst aka SRNCTDHW
+    TENSOR_ARGS2(X, O);
+
+    uint d0_size = _Pad.x;
+    uint d1_size = _Pad.y;
+    uint d2_size = _Pad.z;
+    uint d3_size = _Pad.w;
+    uint d4_size = _Pool.x;
+    uint d5_size = _Pool.y;
+    uint d6_size = _Pool.z;
+    uint d7_size = _Pool.w;
+
+    uint outputStrides[8];
+    outputStrides[0] = _Stride.x;
+    outputStrides[1] = _Stride.y;
+    outputStrides[2] = _Stride.z;
+    outputStrides[3] = _Stride.w;
+    outputStrides[4] = _ChannelWriteMask.x;
+    outputStrides[5] = _ChannelWriteMask.y;
+    outputStrides[6] = _ChannelWriteMask.z;
+    outputStrides[7] = _ChannelWriteMask.w;
+
+    uint d7 = dispatchThreadID.x;
+    uint d6 = dispatchThreadID.y;
+    uint d5 = dispatchThreadID.z;
+    if (d7 >= d7_size) return;
+    if (d6 >= d6_size) return;
+    if (d5 >= d5_size) return;
+
+    uint d5_7offset = d5 * d6_size * d7_size + d6 * d7_size + d7;
+    uint d0_4stride = d5_size * d6_size * d7_size;
+    uint d0_4offset = 0;
+
+    for (uint d0 = 0; d0 < d0_size; ++d0)
+    for (uint d1 = 0; d1 < d1_size; ++d1)
+    for (uint d2 = 0; d2 < d2_size; ++d2)
+    for (uint d3 = 0; d3 < d3_size; ++d3)
+    for (uint d4 = 0; d4 < d4_size; ++d4)
+    {
+        float value = X.FastGet(d0_4offset + d5_7offset);
+        O.FastSet(d0 * outputStrides[0] +
+            d1 * outputStrides[1] +
+            d2 * outputStrides[2] +
+            d3 * outputStrides[3] +
+            d4 * outputStrides[4] +
+            d5 * outputStrides[5] +
+            d6 * outputStrides[6] +
+            d7 * outputStrides[7], value);
+
+        d0_4offset += d0_4stride;
+    }
 }
 
 [numthreads(4, 4, 4)]

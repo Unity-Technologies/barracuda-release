@@ -2,7 +2,9 @@ using System.Collections.Generic;
 
 namespace Unity.Barracuda {
 
-
+/// <summary>
+/// Compares output of two different implementations of `IOps`. Useful for debugging purposes
+/// </summary>
 public class CompareOps : IOps, IModelCompiler
 {
     private readonly IOps m_Ops1;
@@ -10,6 +12,13 @@ public class CompareOps : IOps, IModelCompiler
     private readonly CompareOpsUtils.LogLevel m_DifferenceLogLevel;
     private readonly float m_Epsilon;
 
+    /// <summary>
+    /// Create `CompareOps`
+    /// </summary>
+    /// <param name="ops1">first `IOps` implementation</param>
+    /// <param name="ops2">second `IOps` implementation</param>
+    /// <param name="differenceLogLevel">difference log level</param>
+    /// <param name="epsilon">error threshold</param>
     public CompareOps(IOps ops1, IOps ops2, CompareOpsUtils.LogLevel differenceLogLevel, float epsilon)
     {
         m_Ops1 = ops1;
@@ -18,6 +27,7 @@ public class CompareOps : IOps, IModelCompiler
         m_Epsilon = epsilon;
     }
 
+    /// <inheritdoc/>
     public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes)
     {
         if (m_Ops1 is IModelCompiler)
@@ -27,6 +37,7 @@ public class CompareOps : IOps, IModelCompiler
             ((IModelCompiler)m_Ops2).PrepareModel(model, inputShapes);
     }
 
+    /// <inheritdoc/>
     public virtual void PreExecuteLayer(Layer layer, Tensor[] inputs)
     {
         if (m_Ops1 is IModelCompiler)
@@ -36,6 +47,7 @@ public class CompareOps : IOps, IModelCompiler
             ((IModelCompiler)m_Ops1).PreExecuteLayer(layer, inputs);
     }
 
+    /// <inheritdoc/>
     Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor W, bool wTranspose)
     {
         var Y = m_Ops1.MatMul(X, xTranspose, W, wTranspose);
@@ -43,6 +55,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.MatMul);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         var Y = m_Ops1.Dense(X, W, B, fusedActivation);
@@ -51,6 +65,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         var Y = m_Ops1.Conv2D(X, K, B, stride, pad, fusedActivation);
@@ -58,6 +73,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Conv2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         var Y = m_Ops1.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
@@ -65,6 +82,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.DepthwiseConv2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         var Y = m_Ops1.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
@@ -72,6 +91,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Conv2DTrans);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
         var Y = m_Ops1.Upsample2D(X, scale, bilinear);
@@ -79,6 +100,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Upsample2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Resample2D(Tensor X, int[] size, bool bilinear)
     {
         var Y = m_Ops1.Resample2D(X, size, bilinear);
@@ -86,6 +109,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Resample2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.DepthToSpace(Tensor X, int[] scale, Layer.DepthToSpaceMode mode)
     {
         var Y = m_Ops1.DepthToSpace(X, scale, mode);
@@ -93,6 +118,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.DepthToSpace);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.SpaceToDepth(Tensor X, int[] scale)
     {
         var Y = m_Ops1.SpaceToDepth(X, scale);
@@ -100,6 +127,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.SpaceToDepth);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         var Y = m_Ops1.MaxPool2D(X, pool, stride, pad);
@@ -107,6 +136,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.MaxPool2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
         var Y = m_Ops1.AvgPool2D(X, pool, stride, pad);
@@ -114,6 +145,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.AvgPool2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.GlobalMaxPool2D(Tensor X)
     {
         var Y = m_Ops1.GlobalMaxPool2D(X);
@@ -121,6 +154,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.GlobalMaxPool2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.GlobalAvgPool2D(Tensor X)
     {
         var Y = m_Ops1.GlobalAvgPool2D(X);
@@ -128,6 +163,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.GlobalAvgPool2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.GlobalAvgVariancePool2D(Tensor X)
     {
         var Y = m_Ops1.GlobalAvgVariancePool2D(X);
@@ -135,6 +172,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.GlobalAvgPool2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Border2D(Tensor x, int[] pad, float value)
     {
         var Y = m_Ops1.Border2D(x, pad, value);
@@ -142,6 +181,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Border2D);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Pad2DReflect(Tensor x, int[] pad)
     {
         var Y = m_Ops1.Pad2DReflect(x, pad);
@@ -149,6 +190,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Pad2DReflect);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Pad2DSymmetric(Tensor x, int[] pad)
     {
         var Y = m_Ops1.Pad2DSymmetric(x, pad);
@@ -156,6 +199,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Pad2DSymmetric);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Pad2DEdge(Tensor x, int[] pad)
     {
         var Y = m_Ops1.Pad2DEdge(x, pad);
@@ -163,6 +208,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Pad2DEdge);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         var Y = m_Ops1.ScaleBias(X, S, B);
@@ -170,6 +217,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.ScaleBias);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
         var Y = m_Ops1.Normalization(X, S, B, pool, axis, epsilon, fusedActivation);
@@ -177,6 +226,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Normalization);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
         var Y = m_Ops1.LRN(X, alpha, beta, bias, size);
@@ -185,6 +236,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.Dropout(Tensor X, float alpha)
     {
         var Y = m_Ops1.Dropout(X, alpha);
@@ -193,6 +245,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.RandomNormal(TensorShape s, float mean, float scale, int seed)
     {
         var Y = m_Ops1.RandomNormal(s, mean, scale, seed);
@@ -200,6 +253,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.RandomNormal);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.RandomUniform(TensorShape s, float mean, float scale, int seed)
     {
         var Y = m_Ops1.RandomUniform(s, mean, scale, seed);
@@ -207,6 +262,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.RandomUniform);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Multinomial(Tensor X, int count, int seed)
     {
         var Y = m_Ops1.Multinomial(X, count, seed);
@@ -214,6 +271,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Multinomial);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue)
     {
         var Y = m_Ops1.OneHot(X, depth, onValue, offValue);
@@ -222,6 +281,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
     {
         var Y = m_Ops1.TopKIndices(X, k, axis, largest, sorted);
@@ -230,6 +290,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     public Tensor TopKValues(Tensor X, Tensor I, int axis)
     {
         var Y = m_Ops1.TopKValues(X, I, axis);
@@ -238,6 +299,16 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
+    public Tensor NonZero(Tensor X)
+    {
+        var Y = m_Ops1.NonZero(X);
+        var Z = m_Ops2.NonZero(X);
+        CheckSame(Y, Z, Layer.Type.NonZero);
+        return Y;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Relu(Tensor X)
     {
         var Y = m_Ops1.Relu(X);
@@ -245,13 +316,17 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Relu);
         return Y;
     }
-    Tensor IOps.Softmax(Tensor X)
+
+    /// <inheritdoc/>
+    Tensor IOps.Softmax(Tensor X, int axis)
     {
-        var Y = m_Ops1.Softmax(X);
-        var Z = m_Ops2.Softmax(X);
+        var Y = m_Ops1.Softmax(X, axis);
+        var Z = m_Ops2.Softmax(X, axis);
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Softmax);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LogSoftmax(Tensor X)
     {
         var Y = m_Ops1.LogSoftmax(X);
@@ -259,6 +334,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.LogSoftmax);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Tanh(Tensor X)
     {
         var Y = m_Ops1.Tanh(X);
@@ -266,6 +343,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Tanh);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Sigmoid(Tensor X)
     {
         var Y = m_Ops1.Sigmoid(X);
@@ -273,6 +352,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sigmoid);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Elu(Tensor X, float alpha)
     {
         var Y = m_Ops1.Elu(X, alpha);
@@ -280,6 +361,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Elu);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Relu6(Tensor X)
     {
         var Y = m_Ops1.Relu6(X);
@@ -287,6 +370,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Relu6);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LeakyRelu(Tensor X, float alpha)
     {
         var Y = m_Ops1.LeakyRelu(X, alpha);
@@ -294,6 +379,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.LeakyRelu);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Selu(Tensor X, float alpha, float gamma)
     {
         var Y = m_Ops1.Selu(X, alpha, gamma);
@@ -301,6 +388,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Selu);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.PRelu(Tensor X, Tensor S)
     {
         var Y = m_Ops1.PRelu(X, S);
@@ -308,6 +397,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.PRelu);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Swish(Tensor X)
     {
         var Y = m_Ops1.Swish(X);
@@ -316,6 +407,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.Abs(Tensor X)
     {
         var Y = m_Ops1.Abs(X);
@@ -323,6 +415,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Abs);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Neg(Tensor X)
     {
         var Y = m_Ops1.Neg(X);
@@ -330,6 +424,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Neg);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Ceil(Tensor X)
     {
         var Y = m_Ops1.Ceil(X);
@@ -337,6 +433,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Ceil);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Clip(Tensor X, float min, float max)
     {
         var Y = m_Ops1.Clip(X, min, max);
@@ -344,6 +442,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Clip);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Floor(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -352,6 +452,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.Reciprocal(Tensor X)
     {
         var Y = m_Ops1.Reciprocal(X);
@@ -359,6 +460,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Reciprocal);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Pow(Tensor X, float alpha)
     {
         var Y = m_Ops1.Pow(X, alpha);
@@ -366,6 +469,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Pow);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Exp(Tensor X)
     {
         var Y = m_Ops1.Exp(X);
@@ -373,6 +478,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Exp);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Log(Tensor X)
     {
         var Y = m_Ops1.Log(X);
@@ -380,6 +487,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Log);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Sqrt(Tensor X)
     {
         var Y = m_Ops1.Sqrt(X);
@@ -387,6 +496,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sqrt);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Acos(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -394,6 +505,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Acos);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Acosh(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -401,6 +514,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Acosh);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Asin(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -408,6 +523,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Asin);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Asinh(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -415,6 +532,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Asinh);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Atan(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -422,6 +541,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Atan);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Atanh(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -429,6 +550,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Atanh);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Cos(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -436,6 +559,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Cos);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Cosh(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -443,6 +568,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Cosh);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Sin(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -450,6 +577,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sin);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Sinh(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -457,6 +586,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sinh);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Tan(Tensor X)
     {
         var Y = m_Ops1.Floor(X);
@@ -464,6 +595,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Tan);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Add(Tensor[] tensors)
     {
         var Y = m_Ops1.Add(tensors);
@@ -471,6 +604,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Add);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Sub(Tensor[] tensors)
     {
         var Y = m_Ops1.Sub(tensors);
@@ -478,6 +613,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Sub);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Mul(Tensor[] tensors)
     {
         var Y = m_Ops1.Mul(tensors);
@@ -485,6 +622,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Mul, tensors);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Div(Tensor[] tensors)
     {
         var Y = m_Ops1.Div(tensors);
@@ -492,6 +631,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Div);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Pow(Tensor[] tensors)
     {
         var Y = m_Ops1.Pow(tensors);
@@ -499,6 +640,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Pow);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Min(Tensor[] tensors)
     {
         var Y = m_Ops1.Min(tensors);
@@ -506,6 +649,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Min);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Max(Tensor[] tensors)
     {
         var Y = m_Ops1.Max(tensors);
@@ -513,6 +658,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Max);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Mean(Tensor[] tensors)
     {
         var Y = m_Ops1.Mean(tensors);
@@ -521,6 +668,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.ReduceMax(Tensor X, int axis)
     {
         var Y = m_Ops1.ReduceMax(X, axis);
@@ -528,6 +676,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.ReduceMax);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.ReduceMean(Tensor X, int axis)
     {
         var Y = m_Ops1.ReduceMean(X, axis);
@@ -535,6 +685,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.ReduceMean);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.ReduceMin(Tensor X, int axis)
     {
         var Y = m_Ops1.ReduceMin(X, axis);
@@ -542,6 +694,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.ReduceMin);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.ReduceProd(Tensor X, int axis)
     {
         var Y = m_Ops1.ReduceProd(X, axis);
@@ -549,6 +703,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.ReduceProd);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.ReduceSum(Tensor X, int axis)
     {
         var Y = m_Ops1.ReduceSum(X, axis);
@@ -557,6 +713,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.Greater(Tensor a, Tensor b)
     {
         var Y = m_Ops1.Greater(a, b);
@@ -564,6 +721,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Greater);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.GreaterEqual(Tensor a, Tensor b)
     {
         var Y = m_Ops1.GreaterEqual(a, b);
@@ -571,6 +730,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.GreaterEqual);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Less(Tensor a, Tensor b)
     {
         var Y = m_Ops1.Less(a, b);
@@ -579,6 +740,8 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
 
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LessEqual(Tensor a, Tensor b)
     {
         var Y = m_Ops1.LessEqual(a, b);
@@ -586,6 +749,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.LessEqual);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Equal(Tensor a, Tensor b)
     {
         var Y = m_Ops1.Equal(a, b);
@@ -593,6 +758,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Equal);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LogicalOr(Tensor a, Tensor b)
     {
         var Y = m_Ops1.LogicalOr(a, b);
@@ -600,6 +767,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.LogicalOr);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LogicalAnd(Tensor a, Tensor b)
     {
         var Y = m_Ops1.LogicalAnd(a, b);
@@ -607,6 +776,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.LogicalAnd);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LogicalXor(Tensor a, Tensor b)
     {
         var Y = m_Ops1.LogicalXor(a, b);
@@ -614,6 +785,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.LogicalXor);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.LogicalNot(Tensor x)
     {
         var Y = m_Ops1.LogicalNot(x);
@@ -622,6 +795,16 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
+    Tensor IOps.Where(Tensor c, Tensor a, Tensor b)
+    {
+        var Y = m_Ops1.Where(c, a, b);
+        var Z = m_Ops2.Where(c, a, b);
+        CheckSame(Y, Z, Layer.Type.Where);
+        return Y;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Flatten(Tensor X)
     {
         var Y = m_Ops1.Flatten(X);
@@ -629,6 +812,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Flatten);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Reshape(Tensor X, TensorShape shape)
     {
         var Y = m_Ops1.Reshape(X, shape);
@@ -636,6 +821,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Reshape);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Expand(Tensor X, TensorShape shape)
     {
         var Y = m_Ops1.Expand(X, shape);
@@ -643,6 +830,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Expand);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Transpose(Tensor X)
     {
         var Y = m_Ops1.Transpose(X);
@@ -650,6 +839,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Transpose);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Transpose(Tensor X, int[] permutations)
     {
         var Y = m_Ops1.Transpose(X, permutations);
@@ -657,13 +848,26 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Transpose);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Gather(Tensor[] tensors, int axis)
     {
         var Y = m_Ops1.Gather(tensors, axis);
         var Z = m_Ops2.Gather(tensors, axis);
-        CheckSame(Y,Z, Layer.Type.Gather);
+        CheckSame(Y, Z, Layer.Type.Gather);
         return Y;
     }
+
+    /// <inheritdoc/>
+    Tensor IOps.NonMaxSuppression(Tensor[] tensors, int maxOutputBoxesPerClass, float iouThreshold, float scoreThreshold, int centerPointBox)
+    {
+        var Y = m_Ops1.NonMaxSuppression(tensors, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, centerPointBox);
+        var Z = m_Ops2.NonMaxSuppression(tensors, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, centerPointBox);
+        CheckSame(Y, Z, Layer.Type.NonMaxSuppression);
+        return Y;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Concat(Tensor[] tensors, int axis)
     {
         var Y = m_Ops1.Concat(tensors, axis);
@@ -671,6 +875,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Concat);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.StridedSlice(Tensor X, int[] starts, int[] ends, int[] strides)
     {
         var Y = m_Ops1.StridedSlice(X, starts, ends, strides);
@@ -678,6 +884,8 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.StridedSlice);
         return Y;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Tile(Tensor X, int[] repeats)
     {
         var Y = m_Ops1.Tile(X, repeats);
@@ -685,6 +893,17 @@ public class CompareOps : IOps, IModelCompiler
         CheckSame(Y, Z, Layer.Type.Tile);
         return Y;
     }
+
+    /// <inheritdoc/>
+    Tensor IOps.Shape(Tensor X, int axis)
+    {
+        var Y = m_Ops1.Shape(X, axis);
+        var Z = m_Ops2.Shape(X, axis);
+        CheckSame(Y, Z, Layer.Type.Shape);
+        return Y;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Copy(Tensor x)
     {
         var Y = m_Ops1.Copy(x);
@@ -693,6 +912,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     Tensor IOps.Prepare(Tensor X)
     {
         var Y = m_Ops1.Prepare(X);
@@ -701,6 +921,7 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+    /// <inheritdoc/>
     void IOps.ResetAllocator(bool keepCachedMemory)
     {
         m_Ops1.ResetAllocator(keepCachedMemory);

@@ -4,17 +4,46 @@ using UnityEngine;
 
 namespace Unity.Barracuda
 {
+    /// <summary>
+    /// Barracuda debug logging utility
+    /// </summary>
     public class D
     {
+        /// <summary>
+        /// Warning stack trace collection enabling flag
+        /// </summary>
         public static bool warningStackTraceEnabled = Application.isEditor;
+
+        /// <summary>
+        /// Error stack trace collection enabling flag
+        /// </summary>
         public static bool errorStackTraceEnabled = true;
+
+        /// <summary>
+        /// Debug log stack trace collection enabling flag
+        /// </summary>
         public static bool logStackTraceEnabled = false;
 
+        /// <summary>
+        /// Warning logging enabled flag
+        /// </summary>
         public static bool warningEnabled = true;
+
+        /// <summary>
+        /// Error logging enabled flag
+        /// </summary>
         public static bool errorEnabled = true;
+
+        /// <summary>
+        /// Debug logging enabled flag
+        /// </summary>
         public static bool logEnabled = true;
 
 #if BARRACUDA_LOG_ENABLED
+        /// <summary>
+        /// Log warning
+        /// </summary>
+        /// <param name="message">message</param>
         public static void LogWarning(object message)
         {
             if (!warningEnabled)
@@ -33,6 +62,11 @@ namespace Unity.Barracuda
             }
         }
 
+        /// <summary>
+        /// Log warning
+        /// </summary>
+        /// <param name="message">message</param>
+        /// <param name="context">context</param>
         public static void LogWarning(object message, Object context)
         {
             if (!warningEnabled)
@@ -51,6 +85,10 @@ namespace Unity.Barracuda
             }
         }
 
+        /// <summary>
+        /// Log error
+        /// </summary>
+        /// <param name="message">message</param>
         public static void LogError(object message)
         {
             if (!errorEnabled)
@@ -69,6 +107,11 @@ namespace Unity.Barracuda
             }
         }
 
+        /// <summary>
+        /// Log error
+        /// </summary>
+        /// <param name="message">message</param>
+        /// <param name="context">context</param>
         public static void LogError(object message, Object context)
         {
             if (!errorEnabled)
@@ -87,6 +130,10 @@ namespace Unity.Barracuda
             }
         }
 
+        /// <summary>
+        /// Log debug info
+        /// </summary>
+        /// <param name="message">message</param>
         public static void Log(object message)
         {
             if (!logEnabled)
@@ -105,6 +152,11 @@ namespace Unity.Barracuda
             }
         }
 
+        /// <summary>
+        /// Log debug info
+        /// </summary>
+        /// <param name="message">message</param>
+        /// <param name="context">context</param>
         public static void Log(object message, Object context)
         {
             if (!logEnabled)

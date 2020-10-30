@@ -24,19 +24,34 @@ namespace Unity.Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(10, new[] { "onnx" })]
+    [ScriptedImporter(13, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
+        /// <summary>
+        /// Enable ONNX model optimization during import. Set via importer UI
+        /// </summary>
         public bool optimizeModel = true;
+
+        /// <summary>
+        /// Fix batch size for ONNX models. Set via importer UI
+        /// </summary>
         public bool forceArbitraryBatchSize = true;
+
+        /// <summary>
+        /// Treat errors as warnings. Set via importer UI
+        /// </summary>
         public bool treatErrorsAsWarnings = false;
 
-        public const string iconName = "ONNXModelIcon";
+        internal const string iconName = "ONNXModelIcon";
 
 
         private Texture2D m_IconTexture;
 
+        /// <summary>
+        /// Scripted importer callback
+        /// </summary>
+        /// <param name="ctx">Asset import context</param>
         public override void OnImportAsset(AssetImportContext ctx)
         {
             var converter = new ONNXModelConverter(optimizeModel);

@@ -7,45 +7,77 @@ namespace Unity.Barracuda {
 // BarracudaBurstCPU.Ops.cs  -- impl. IOps, job schedulers
 // BarracudaBurstCPU.Jobs.cs -- impl. jobs
 
+/// <summary>
+/// Burst specific internal `Tensor` data storage
+/// </summary>
 public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
 {
     private JobHandle m_ReadFence;
     private JobHandle m_WriteFence;
     private bool m_SafeToDispose = true;
+
+    /// <summary>
+    /// Read fence
+    /// </summary>
     public JobHandle fence { get { return m_ReadFence; }  set { m_ReadFence = value; m_WriteFence = value; m_SafeToDispose = false; } }
+
+    /// <summary>
+    /// Write fence
+    /// </summary>
     public JobHandle reuse { get { return m_WriteFence; } set { m_WriteFence = value;                      m_SafeToDispose = false; } }
 
-    // creates new array
+    /// <summary>
+    /// Creates new array
+    /// </summary>
+    /// <param name="count">count</param>
     public BurstTensorData(int count) : base(count)
     {
     }
 
-    // creates new array
+    /// <summary>
+    /// Creates new array
+    /// </summary>
+    /// <param name="shape">shape</param>
     public BurstTensorData(TensorShape shape) : base(shape)
     {
     }
 
-    // uses shared array
+    /// <summary>
+    /// Uses shared array
+    /// </summary>
+    /// <param name="sharedArray">shared array</param>
     public BurstTensorData(ArrayTensorData sharedArray) : base(sharedArray)
     {
     }
 
-    // uses shared array
+    /// <summary>
+    /// Uses shared array
+    /// </summary>
+    /// <param name="sharedArray">shared array</param>
     public BurstTensorData(SharedArrayTensorData sharedArray) : base(sharedArray)
     {
     }
 
-    // uses unsafe array
+    /// <summary>
+    /// Uses unsafe array
+    /// </summary>
+    /// <param name="unsafeArray">unsafe array</param>
     public BurstTensorData(UnsafeArrayTensorData unsafeArray) : base(unsafeArray.array, unsafeArray.offset, unsafeArray.count, unsafeArray.m_Readonly)
     {
     }
 
+    /// <summary>
+    /// Finalizer
+    /// </summary>
     ~BurstTensorData()
     {
         if (!m_SafeToDispose)
             D.LogWarning($"Found unreferenced, but undisposed Tensor data that potentially participates in an unfinished job and might lead to hazardous memory overwrites: {ToString()}");
     }
 
+    /// <summary>
+    /// Dispose contents
+    /// </summary>
     public override void Dispose()
     {
         try
@@ -68,6 +100,10 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
         m_SafeToDispose = true;
     }
 
+    /// <summary>
+    /// Reserve (allocate) storage for `count` elements
+    /// </summary>
+    /// <param name="count">count</param>
     public override void Reserve(int count)
     {
         if (count > m_Array.Length)
@@ -80,12 +116,23 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
         base.Reserve(count);
     }
 
+    /// <summary>
+    /// Upload data to internal storage
+    /// </summary>
+    /// <param name="data">data</param>
+    /// <param name="shape">shape</param>
+    /// <param name="managedBufferStartIndex">`data` start index</param>
     public override void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
         CompleteAllPendingOperations();
         base.Upload(data, shape, managedBufferStartIndex);
     }
 
+    /// <summary>
+    /// Return data from internal storage
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <returns>managed array</returns>
     public override float[] Download(TensorShape shape)
     {
         // Download() as optimization gives direct access to the internal buffer
@@ -94,6 +141,11 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
         return base.Download(shape);
     }
 
+    /// <summary>
+    /// Return shared array from internal storage
+    /// </summary>
+    /// <param name="offset">offset in returned data array</param>
+    /// <returns>shared array from internal storage</returns>
     public override float[] SharedAccess(out int offset)
     {
         // SharedAccess() by design gives direct access to the interna
@@ -102,11 +154,20 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
         return base.SharedAccess(out offset);
     }
 
+    /// <summary>
+    /// Schedule async internal data download
+    /// </summary>
+    /// <param name="count">count to download</param>
+    /// <returns>`true` if download is completed</returns>
     public override bool ScheduleAsyncDownload(int count)
     {
         return fence.IsCompleted;
     }
 
+    /// <summary>
+    /// Object summary as string
+    /// </summary>
+    /// <returns>object summary</returns>
     public override string ToString()
     {
         string readyToRead = m_SafeToDispose ? "true": "unknown";
@@ -122,16 +183,28 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     }
 }
 
+/// <summary>
+/// Burst specific implementation of `IOps`
+/// </summary>
 public partial class BurstCPUOps : UnsafeArrayCPUOps
 {
     private bool m_UseBlas;
 
+    /// <summary>
+    /// Create `BurstCPUOps`
+    /// </summary>
+    /// <param name="allocator">allocator</param>
     public BurstCPUOps(ITensorAllocator allocator = null)
     : base(allocator)
     {
         m_UseBlas = blas.IsNative();
     }
 
+    /// <summary>
+    /// Pin `Tensor` to Burst backend device
+    /// </summary>
+    /// <param name="X">`Tensor`</param>
+    /// <returns>`BurstTensorData`</returns>
     new public static BurstTensorData Pin(Tensor X)
     {
         X.FlushCache();
@@ -153,6 +226,11 @@ public partial class BurstCPUOps : UnsafeArrayCPUOps
         return X.tensorOnDevice as BurstTensorData;
     }
 
+    /// <summary>
+    /// Prepare `Tensor` for use with Burst backend
+    /// </summary>
+    /// <param name="X">`Tensor`</param>
+    /// <returns>`Tensor`</returns>
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);

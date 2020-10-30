@@ -7,9 +7,18 @@ using System.Collections.Generic;
 
 namespace Unity.Barracuda {
 
-
+/// <summary>
+/// Precompiled GPU compute `IOps` implementation
+/// </summary>
 public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 {
+    /// <summary>
+    /// Create `PrecompiledComputeOps`
+    /// </summary>
+    /// <param name="kernels">compute kernels</param>
+    /// <param name="referenceKernel">reference compute kernels</param>
+    /// <param name="allocator">allocator</param>
+    /// <param name="verbose">verbose flag</param>
     public PrecompiledComputeOps(ComputeShader[] kernels, ComputeShader referenceKernel,  ITensorAllocator allocator = null, bool verbose = false)
     : base(kernels, referenceKernel, allocator, verbose)
     {
@@ -17,22 +26,22 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
     // ---------------------------------------------------------------------------------
 
-    static public ComputeFunc.TensorDecl _DeclX = ComputeFunc.GetTensorDecl("X");
-    static public ComputeFunc.TensorDecl _DeclO = ComputeFunc.GetTensorDecl("O");
-    static public ComputeFunc.TensorDecl _DeclW = ComputeFunc.GetTensorDecl("W");
-    static public ComputeFunc.TensorDecl _DeclK = ComputeFunc.GetTensorDecl("K");
-    static public ComputeFunc.TensorDecl _DeclB = ComputeFunc.GetTensorDecl("B");
-    static public int _DataX = ComputeFunc.GetTensorData("X");
-    static public int _DataO = ComputeFunc.GetTensorData("O");
-    static public int _DataW = ComputeFunc.GetTensorData("W");
-    static public int _DataK = ComputeFunc.GetTensorData("K");
-    static public int _DataB = ComputeFunc.GetTensorData("B");
-    static public int _DataWBK = ComputeFunc.GetTensorData("WBK");
-    static public int _Stride = Shader.PropertyToID("_Stride");
-    static public int _Pad = Shader.PropertyToID("_Pad");
-    static public int _Pool = Shader.PropertyToID("_Pool");
-    static public int _Alpha = Shader.PropertyToID("_Alpha");
-    static public int _Beta  = Shader.PropertyToID("_Beta");
+    static internal ComputeFunc.TensorDecl _DeclX = ComputeFunc.GetTensorDecl("X");
+    static internal ComputeFunc.TensorDecl _DeclO = ComputeFunc.GetTensorDecl("O");
+    static internal ComputeFunc.TensorDecl _DeclW = ComputeFunc.GetTensorDecl("W");
+    static internal ComputeFunc.TensorDecl _DeclK = ComputeFunc.GetTensorDecl("K");
+    static internal ComputeFunc.TensorDecl _DeclB = ComputeFunc.GetTensorDecl("B");
+    static internal int _DataX = ComputeFunc.GetTensorData("X");
+    static internal int _DataO = ComputeFunc.GetTensorData("O");
+    static internal int _DataW = ComputeFunc.GetTensorData("W");
+    static internal int _DataK = ComputeFunc.GetTensorData("K");
+    static internal int _DataB = ComputeFunc.GetTensorData("B");
+    static internal int _DataWBK = ComputeFunc.GetTensorData("WBK");
+    static internal int _Stride = Shader.PropertyToID("_Stride");
+    static internal int _Pad = Shader.PropertyToID("_Pad");
+    static internal int _Pool = Shader.PropertyToID("_Pool");
+    static internal int _Alpha = Shader.PropertyToID("_Alpha");
+    static internal int _Beta  = Shader.PropertyToID("_Beta");
 
     private struct CompiledInstruction
     {
@@ -70,6 +79,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return m_CachedModelBuffers[name];
     }
 
+    /// <inheritdoc/>
     public override void ResetAllocator(bool keepCachedMemory = true)
     {
         if (!keepCachedMemory)
@@ -218,6 +228,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return new Tensor[] { Kw, Bw };
     }
 
+    /// <inheritdoc/>
     public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes)
     {
         var modelHash = CalcModelWithInputsHashCode(model, inputShapes);
@@ -238,7 +249,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             if (l.inputs.Length == 0)
                 continue;   // don't need to compile layers without inputs, so far all of them are CPU only
 
-            if (shapesByName[l.inputs[0]] == null || shapesByName[l.name] == null)
+            if (!shapesByName.TryGetValue(l.inputs[0], out TensorShape? input0Shape)
+                || input0Shape == null
+                || !shapesByName.TryGetValue(l.name, out TensorShape? outputShape)
+                || outputShape == null)
                 continue;
 
             var X = shapesByName[l.inputs[0]].Value;
@@ -279,7 +293,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 // Conv2D
                 var kernelConv = BestKernel(ComputeKernelLibrary.Conv2D(X, l.datasets[0].shape, O, l.stride, l.pad));
-                bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd_2x2_3x3"));
+                bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd"));
+
                 instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd(model, l) : null });
 
                 // FusedActivation
@@ -336,7 +351,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                     var kernelConv = BestKernel(
                         ComputeKernelLibrary.Conv2D(XpaddedShape, K, O, new int[] { 1, 1 }, pad));
-                    bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd_2x2_3x3"));
+                    bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd"));
 
                     instructions.Add(new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape });
                     instructions.Add(new CompiledInstruction { shape = K, tensors = PrepareConv2DTrans(model, l) });
@@ -552,6 +567,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         }
     }
 
+    /// <inheritdoc/>
     public virtual void PreExecuteLayer(Layer layer, Tensor[] inputs)
     {
         m_Compiled = new CompiledLayer();
@@ -582,6 +598,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         if (m_Compiled.kernel.shader == null)
@@ -621,6 +638,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (m_Compiled.kernel.shader == null)
@@ -660,6 +678,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
+    /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1 || m_Compiled.kernel.shader == null)
@@ -693,6 +712,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
+    /// <inheritdoc/>
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         if (m_Compiled.instructions == null)
@@ -774,6 +794,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
+    /// <inheritdoc/>
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
         if (m_Compiled.kernel.shader == null)
@@ -795,6 +816,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor Pool2D(string kernelName, Tensor X, int[] pool, int[] stride, int[] pad)
     {
         if (m_Compiled.kernel.shader == null)
@@ -818,6 +840,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         if (m_Compiled.kernel.shader == null)
@@ -884,15 +907,19 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalMaxPool2D(Tensor X)
     {
         return GlobalPool2D(X);
     }
 
+    /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
         return GlobalPool2D(X);
     }
+
+    /// <inheritdoc/>
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
         if (!X.shape.IsNHWC())
@@ -984,6 +1011,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
+    /// <inheritdoc/>
     protected override Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
     {
         if (m_Compiled.kernel.shader == null)
@@ -1003,6 +1031,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
         if (m_Compiled.kernel.shader == null)
@@ -1022,10 +1051,11 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
-    public override Tensor Softmax(Tensor X)
+    /// <inheritdoc/>
+    public override Tensor Softmax(Tensor X, int axis)
     {
-        if (m_Compiled.kernel.shader == null)
-            return base.Softmax(X);
+        if (m_Compiled.kernel.shader == null || !X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+            return base.Softmax(X, axis);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
         var O = NewTensor(m_Compiled.shape);
@@ -1038,6 +1068,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
         if (m_Compiled.kernel.shader == null)
@@ -1054,6 +1085,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         if (m_Compiled.kernel.shader == null)
@@ -1096,6 +1128,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors) || !TensorExtensions.Is8DAxisConvertibleToNHWC(axis))

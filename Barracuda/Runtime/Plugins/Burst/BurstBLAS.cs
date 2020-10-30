@@ -10,22 +10,26 @@ using UnityEngine.Scripting;
 namespace Unity.Barracuda
 {
 
+    /// <summary>
+    /// Burst specific BLAS implementation
+    /// </summary>
     [Preserve]
     public class BurstBLAS : BLASPlugin
     {
+        /// <inheritdoc/>
         public bool IsNative()
         {
             return false; // not a native fast BLAS implementation
         }
 
+        /// <inheritdoc/>
         public bool IsCurrentPlatformSupported()
         {
             try
             {
                 // Sanity test if all the dependencies of the job are met at runtime
                 // Also prevent compiler from optimising this out
-                var test = new UnsafeMatrixBlockMultiplyUnrolled8xhJob();
-                D.Log($"Loaded: {test}");
+                new UnsafeMatrixBlockMultiplyUnrolled8xhJob();
             }
             catch (Exception e)
             {
@@ -36,6 +40,7 @@ namespace Unity.Barracuda
             return true;
         }
 
+        /// <inheritdoc/>
         public unsafe void SGEMM(float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
             int bs,
             bool transposeA = false, bool transposeB = false)
@@ -45,6 +50,7 @@ namespace Unity.Barracuda
             fence.Complete();
         }
 
+        /// <inheritdoc/>
         public unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
             float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
             int bs,

@@ -30,15 +30,19 @@
 #pragma kernel BroadcastLogicalAnd_NCHW CHANNELS_FIRST=1
 #pragma kernel BroadcastLogicalXor_NHWC CHANNELS_FIRST=0
 #pragma kernel BroadcastLogicalXor_NCHW CHANNELS_FIRST=1
+#pragma kernel BroadcastWhere_NHWC CHANNELS_FIRST=0
+#pragma kernel BroadcastWhere_NCHW CHANNELS_FIRST=1
 
 #include "Tensor.cginc"
 
 float _Alpha;
 int _IsFirstDispatch;
 uint4 _XStrides;
+uint4 _SStrides;
 uint4 _BStrides;
 
 TENSOR_DECL(X)
+TENSOR_DECL(S)
 TENSOR_DECL(B)
 TENSOR_DECL_RW(O)
 
@@ -377,6 +381,29 @@ void KERNEL_FUNC(BroadcastLogicalXor)(uint3 dispatchThreadID : SV_DispatchThread
         float a = X.FastGet(dot(uint4(n, y, x, c), _XStrides)) != 0.0f ? 1.0f : 0.0f;
         float b = B.FastGet(dot(uint4(n, y, x, c), _BStrides)) != 0.0f ? 1.0f : 0.0f;
         float v = a * (1 - 2 * b) + b;
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_THREEINPUTS(X, S, B, O);
+    uint c, x, y;
+    DispatchThreadIdToTensorIndices(dispatchThreadID, c, x, y);
+    if (c >= O.channels)
+        return;
+    if (x >= O.width)
+        return;
+    if (y >= O.height)
+        return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        bool cond = (X.FastGet(dot(uint4(n, y, x, c), _XStrides)) != 0.0f);
+        float a = S.FastGet(dot(uint4(n, y, x, c), _SStrides));
+        float b = B.FastGet(dot(uint4(n, y, x, c), _BStrides));
+        float v = cond ? a : b;
         O.Set(n, y, x, c, v);
     }
 }

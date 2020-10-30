@@ -5,14 +5,60 @@ using Unity.Jobs;
 
 namespace Unity.Barracuda
 {
+    /// <summary>
+    /// BLAS plugin interface, allows to supply platform specific implementation of matrix multiplication
+    /// </summary>
     public interface BLASPlugin
     {
+        /// <summary>
+        /// Query if BLAS implementation is coming from platform's native library
+        /// </summary>
+        /// <returns>`true` if BLAS implementation is coming from platform's native library</returns>
         bool IsNative();
+
+        /// <summary>
+        /// Query if current platform is supported by the BLAS plugin
+        /// </summary>
+        /// <returns>`true` if plugin supports current platform</returns>
         bool IsCurrentPlatformSupported();
+
+        /// <summary>
+        /// Perform matrix multiplication C = A x B + C
+        /// </summary>
+        /// <param name="Ap">pointer to the matrix A</param>
+        /// <param name="AN">matrix A row count</param>
+        /// <param name="AM">matrix A column count</param>
+        /// <param name="Bp">pointer to the matrix B</param>
+        /// <param name="BN">matrix B row count</param>
+        /// <param name="BM">matrix B column count</param>
+        /// <param name="Cp">pointer to the matrix C</param>
+        /// <param name="CN">matrix C row count</param>
+        /// <param name="CM">matrix C column count</param>
+        /// <param name="bs">inner loop block size (if applicable) bs x bs</param>
+        /// <param name="transposeA">matrix A data is in transposed layout</param>
+        /// <param name="transposeB">matrix B data is in transposed layout</param>
         unsafe void SGEMM(float* Ap, int AN, int AM,
             float* Bp, int BN, int BM,
             float* Cp, int CN, int CM, int bs,
             bool transposeA = false, bool transposeB = false);
+
+        /// <summary>
+        /// Launches matrix multiplication C = A x B + C in async-manner
+        /// </summary>
+        /// <param name="dependsOn">input data dependency job handle</param>
+        /// <param name="Ap">pointer to the matrix A</param>
+        /// <param name="AN">matrix A row count</param>
+        /// <param name="AM">matrix A column count</param>
+        /// <param name="Bp">pointer to the matrix B</param>
+        /// <param name="BN">matrix B row count</param>
+        /// <param name="BM">matrix B column count</param>
+        /// <param name="Cp">pointer to the matrix C</param>
+        /// <param name="CN">matrix C row count</param>
+        /// <param name="CM">matrix C column count</param>
+        /// <param name="bs">inner loop block size (if applicable) bs x bs</param>
+        /// <param name="transposeA">matrix A data is in transposed layout</param>
+        /// <param name="transposeB">matrix B data is in transposed layout</param>
+        /// <returns>job handle</returns>
         unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
             float* Ap, int AN, int AM,
             float* Bp, int BN, int BM,
@@ -39,7 +85,6 @@ namespace Unity.Barracuda
             while (plugins.Count > 0)
             {
                 var candidate = plugins.Pop();
-                D.Log($"Probing {candidate}");
                 foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     var t = assembly.GetType(candidate);

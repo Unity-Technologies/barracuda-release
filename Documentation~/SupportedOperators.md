@@ -15,7 +15,7 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 * Gather
 * <a href="#OneHot">OneHot</a>
 * TopK
-* LSTM
+* LSTM (ML-Agents models only)
 * Add
 * Sum
 * Sub
@@ -63,6 +63,8 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 * DepthToSpace
 * SpaceToDepth
 * LRN
+* NonMaxSuppression
+* <a href="#ConstantOfShape">ConstantOfShape</a>
   
 
 ### Activations
@@ -141,6 +143,10 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 <dt><tt>dilations</tt> : not supported, default to {1,1}</dt>
 <dt><tt>group</tt> : not supported, default to 1</dt>
 <dt><tt>output_shape</tt> : not supported, default to [0]</dt>
+<br/>
+
+#### <a name="ConstantOfShape">**ConstantOfShape**</a>
+<dt><tt>input</tt> : dynamic shapes not supported, must supply constant tensor input</dt>
 <br/>
 
 #### <a name="Softmax">**Softmax**</a>

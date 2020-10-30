@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 
 namespace Unity.Barracuda {
 
-public class ComputeDebugUtils
+internal class ComputeDebugUtils
 {
     /// <summary>
     /// DEBUG ONLY: `debugKernels` allow to track out of bound read/write and assertion in kernels.

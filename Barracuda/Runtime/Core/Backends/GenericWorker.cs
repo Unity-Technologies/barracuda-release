@@ -8,7 +8,7 @@ using UnityEngine.Assertions;
 using UnityEngine.Profiling;
 
 using System.Runtime.CompilerServices;
-
+using System.Threading;
 
 [assembly: InternalsVisibleTo("Unity.Barracuda.PerformanceTests")]
 [assembly: InternalsVisibleTo("Unity.Barracuda.Tests")]
@@ -16,7 +16,9 @@ using System.Runtime.CompilerServices;
 namespace Unity.Barracuda
 {
 
-
+/// <summary>
+/// Generic `IWorker` implementation
+/// </summary>
 public class GenericWorker : IWorker
 {
     private Model m_Model;
@@ -26,6 +28,7 @@ public class GenericWorker : IWorker
     private IOps m_Ops;
     private IVars m_Vars;
     private IModelCompiler m_ModelCompiler;
+    private Tensor m_DummyInput;
     private bool m_RequestResetAllocator;
     private bool m_Verbose;
     private float m_Progress = 0f;
@@ -37,6 +40,13 @@ public class GenericWorker : IWorker
     const int m_MaxBatchThatAutoTriggersAsyncDownload = 64;
     const int m_MaxFlatWidthThatAutoTriggersAsyncDownload = 1000;
 
+    /// <summary>
+    /// Create `GenericWorker` for specified `model` and `ops`
+    /// </summary>
+    /// <param name="model">`Model`</param>
+    /// <param name="ops">`IOps`</param>
+    /// <param name="vars">`IVars`</param>
+    /// <param name="verbose">verbose execution flag</param>
     public GenericWorker(Model model, IOps ops, IVars vars, bool verbose = false)
     {
         m_Model = model;
@@ -45,34 +55,43 @@ public class GenericWorker : IWorker
         m_Ops = ops;
         m_Vars = vars;
         m_ModelCompiler = ops as IModelCompiler;
+        m_DummyInput = new Tensor();
         m_Verbose = verbose;
 
         m_RequestResetAllocator = true;
     }
 
+    /// <summary>
+    /// Finalizer
+    /// </summary>
     ~GenericWorker()
     {
         Dispose();
     }
 
-    protected void ResetAllocatorIfRequested()
+    internal void ResetAllocatorIfRequested()
     {
         if (m_RequestResetAllocator)
             m_Ops.ResetAllocator();
         m_RequestResetAllocator = false;
     }
 
+    /// <summary>
+    /// Dispose all internal storage structures
+    /// </summary>
     public virtual void Dispose()
     {
         m_Vars?.Dispose();
         m_Ops?.ResetAllocator(false); // clear allocator's memory
         m_InputShapes?.Clear();
+        m_DummyInput?.Dispose();
 
         m_Vars = null;
         m_Ops = null;
         m_InputShapes = null;
     }
 
+    /// <inheritdoc/>
     public virtual void PrepareForInput(IDictionary<string, TensorShape> inputShapes)
     {
         m_InputShapes.Clear();
@@ -81,6 +100,7 @@ public class GenericWorker : IWorker
         m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes);
     }
 
+    /// <inheritdoc/>
     public virtual void SetInput(string name, Tensor x)
     {
         ResetAllocatorIfRequested();
@@ -94,11 +114,13 @@ public class GenericWorker : IWorker
         m_InputShapes[name] = x.shape;
     }
 
+    /// <inheritdoc/>
     public virtual void SetInput(Tensor x)
     {
         SetInput(m_DefaultInputName, x);
     }
 
+    /// <inheritdoc/>
     public virtual IWorker Execute(IDictionary<string, Tensor> inputs)
     {
         foreach (var entry in inputs)
@@ -106,19 +128,24 @@ public class GenericWorker : IWorker
         return Execute();
     }
 
+    /// <inheritdoc/>
     public virtual IWorker Execute(Tensor input)
     {
         SetInput(input);
         return Execute();
     }
 
+    /// <inheritdoc/>
     public virtual IWorker Execute()
     {
+        Profiler.BeginSample ("Barracuda.Execute");
         var enumerator = StartManualSchedule();
         while (enumerator.MoveNext()) {};
+        Profiler.EndSample ();
         return this;
     }
 
+    /// <inheritdoc/>
     public virtual IEnumerator StartManualSchedule(IDictionary<string, Tensor> inputs)
     {
         foreach (var entry in inputs)
@@ -126,18 +153,21 @@ public class GenericWorker : IWorker
         return StartManualSchedule();
     }
 
+    /// <inheritdoc/>
     public virtual void FlushSchedule(bool blocking)
     {
         // force execution of scheduled ops by requesting results of the intermedite tensor from the device
         m_SyncTensor.PrepareCacheForAccess(blocking);
     }
 
+    /// <inheritdoc/>
     public virtual IEnumerator StartManualSchedule(Tensor input)
     {
         SetInput(input);
         return StartManualSchedule();
     }
 
+    /// <inheritdoc/>
     public virtual float scheduleProgress
     {
         get
@@ -155,10 +185,9 @@ public class GenericWorker : IWorker
         return (Layer.FusedActivation) l.activation;
     }
 
+    /// <inheritdoc/>
     public virtual IEnumerator StartManualSchedule()
     {
-        Profiler.BeginSample ("Barracuda.Execute");
-
         ResetAllocatorIfRequested();
         m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes);
 
@@ -175,7 +204,7 @@ public class GenericWorker : IWorker
             Profiler.BeginSample(l.name);
             var inputs = m_Vars.GatherInputs(l);
 
-            Tensor X = inputs.Length > 0 ? inputs[0] : new Tensor();
+            Tensor X = inputs.Length > 0 ? inputs[0] : m_DummyInput;
 
             if (m_Verbose)
                 D.Log("Layer: " + l.type + ((l.type == Layer.Type.Activation) ? ("." + l.activation) : "") + " " + l.name );
@@ -450,6 +479,12 @@ public class GenericWorker : IWorker
 
                 X = m_Ops.TopKValues(X, inputs[1], l.axis);
             }
+            else if (l.type == Layer.Type.NonZero)
+            {
+                Profiler.BeginSample ("Barracuda.NonZero");
+
+                X = m_Ops.NonZero(X);
+            }
             // Broadcast layers
             else if (l.type == Layer.Type.Add)
             {
@@ -500,7 +535,7 @@ public class GenericWorker : IWorker
                 X = m_Ops.Mean(inputs);
             }
             // Reduction layers
-            else if (l.type == Layer.Type.ReduceMax  || 
+            else if (l.type == Layer.Type.ReduceMax  ||
                      l.type == Layer.Type.ReduceMean ||
                      l.type == Layer.Type.ReduceMin  ||
                      l.type == Layer.Type.ReduceProd ||
@@ -508,28 +543,43 @@ public class GenericWorker : IWorker
             {
                 Profiler.BeginSample ("Barracuda.Reduce");
 
-                if(X.shape[l.axis] == 1)
+                TensorShape xShape = X.shape;
+                int axis = xShape.Axis(l.axis); // Adjust for negative axis values
+
+                if (xShape[axis] == 1) // Nothing to reduce
                     break;
 
-                var Xshape = X.shape;
+                // All Reduce operations assume that the reduction happens in C, so transpose accordingly
+                axis = TensorExtensions.Convert8DAxisToNHWC(axis);
+                int[] permutation = { 0, 1, 2, 3 }; // Transpose permutations are still in NHWC (rank 4)
+                permutation[3] = axis;
+                permutation[axis] = 3;
+
+                if (axis != 3) // In NHWC this is C
+                    X = m_Ops.Transpose(X, permutation);
+
+                int defaultAxis = TensorExtensions.NHWCTo8DAxis(3);
                 switch (l.type)
                 {
                     case Layer.Type.ReduceMax:
-                        X = m_Ops.ReduceMax(X, l.axis);
+                        X = m_Ops.ReduceMax(X, defaultAxis);
                         break;
                     case Layer.Type.ReduceMean:
-                        X = m_Ops.ReduceMean(X, l.axis);
+                        X = m_Ops.ReduceMean(X, defaultAxis);
                         break;
                     case Layer.Type.ReduceMin:
-                        X = m_Ops.ReduceMin(X, l.axis);
+                        X = m_Ops.ReduceMin(X, defaultAxis);
                         break;
                     case Layer.Type.ReduceProd:
-                        X = m_Ops.ReduceProd(X, l.axis);
+                        X = m_Ops.ReduceProd(X, defaultAxis);
                         break;
                     case Layer.Type.ReduceSum:
-                        X = m_Ops.ReduceSum(X, l.axis);
+                        X = m_Ops.ReduceSum(X, defaultAxis);
                         break;
                 }
+
+                if (axis != 3)
+                    X = m_Ops.Transpose(X, permutation);
             }
             else if (
                 l.type == Layer.Type.ReduceL1 ||
@@ -594,6 +644,12 @@ public class GenericWorker : IWorker
                 Profiler.BeginSample("Barracuda.LogicalNot");
                 X = m_Ops.LogicalNot(X);
             }
+            else if (l.type == Layer.Type.Where)
+            {
+                Assert.AreEqual(inputs.Length, 3);
+                Profiler.BeginSample("Barracuda.Where");
+                X = m_Ops.Where(X, inputs[1], inputs[2]);
+            }
             // Shape affecting layers
             else if (l.type == Layer.Type.Flatten)
             {
@@ -604,13 +660,30 @@ public class GenericWorker : IWorker
             {
                 Profiler.BeginSample ("Barracuda.Reshape");
 
-                // pool size is treated as reshape coefficient, if not empty
-                // otherwise shape of the 2nd input tensor is used
+                // pool size is treated as the shape, if not empty
                 var size = l.pool;
 
                 Assert.IsNotNull(size);
                 if (size.Length == 0 && inputs.Length > 1)
-                    size = inputs[1].shape.ToArray();
+                {
+                    switch (l.axis)
+                    {
+                        // Legacy - use the shape of the input tensor as the shape
+                        case -1:
+                            size = inputs[1].shape.ToArray();
+                            break;
+
+                        // Use the tensor values as the shape
+                        case 1:
+                            Tensor shapeTensor = inputs[1];
+                            size = new [] { 1, 1, 1, 1 };
+                            for (var i = 0; i < shapeTensor.length; i++)
+                            {
+                                size[i] = (int)shapeTensor[i];
+                            }
+                            break;
+                    }
+                }
 
                 var newShape = X.shape.Reshape(size);
                 X = m_Ops.Reshape(X, newShape);
@@ -627,6 +700,12 @@ public class GenericWorker : IWorker
 
                 X = m_Ops.Expand(X, new TensorShape(newShape));
             }
+            else if (l.type == Layer.Type.Shape)
+            {
+                Profiler.BeginSample("Barracuda.Shape");
+
+                X = m_Ops.Shape(X, l.axis);
+            }
             else if (l.type == Layer.Type.Transpose)
             {
                 Profiler.BeginSample ("Barracuda.Transpose");
@@ -641,6 +720,34 @@ public class GenericWorker : IWorker
             {
                 Profiler.BeginSample ("Barracuda.Gather");
                 X = m_Ops.Gather(inputs, l.axis);
+            }
+            else if (l.type == Layer.Type.NonMaxSuppression)
+            {
+                Profiler.BeginSample("Barracuda.NonMaxSuppression");
+
+                int maxOutputBoxesPerClass = 0;
+                float iouThreshold = 0f;
+                float scoreThreshold = 0f;
+
+                if (l.pool.Length > 0)
+                {
+                    maxOutputBoxesPerClass = l.pool[0];
+                    iouThreshold = l.alpha;
+                    scoreThreshold = l.beta;
+                }
+                else
+                {
+                    if (inputs.Length > 2)
+                        maxOutputBoxesPerClass = (int)inputs[2][0];
+
+                    if (inputs.Length > 3)
+                        iouThreshold = inputs[3][0];
+
+                    if (inputs.Length > 4)
+                        scoreThreshold = inputs[4][0];
+                }
+
+                X = m_Ops.NonMaxSuppression(inputs, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, l.axis);
             }
             else if (l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)
@@ -676,7 +783,7 @@ public class GenericWorker : IWorker
                 }
                 else if (l.activation == Layer.Activation.Softmax)
                 {
-                    X = m_Ops.Softmax(X);
+                    X = m_Ops.Softmax(X, l.axis);
                 }
                 else if (l.activation == Layer.Activation.LogSoftmax)
                 {
@@ -832,12 +939,12 @@ public class GenericWorker : IWorker
 
         // request ResetAllocator before next Execute() starts
         m_RequestResetAllocator = true;
-        Profiler.EndSample ();
 
         if (m_Verbose)
             D.Log(m_Vars.GetAllocator());
     }
 
+    /// <inheritdoc/>
     public virtual Tensor PeekOutput()
     {
         Profiler.BeginSample("Barracuda.PeekOutput");
@@ -851,6 +958,7 @@ public class GenericWorker : IWorker
         return X;
     }
 
+    /// <inheritdoc/>
     public virtual Tensor PeekOutput(string name)
     {
         Profiler.BeginSample("Barracuda.PeekOutput");
@@ -864,12 +972,17 @@ public class GenericWorker : IWorker
         return X;
     }
 
+    /// <inheritdoc/>
     public virtual Tensor[] PeekConstants(string layerName)
     {
         Profiler.BeginSample("Barracuda.PeekConstants");
         return m_Vars.PeekConstants(layerName);
     }
 
+    /// <summary>
+    /// Execution summary
+    /// </summary>
+    /// <returns>execution summary</returns>
     public virtual string Summary()
     {
         return m_Vars.GetAllocator().ToString() + "\n" + m_Ops.ToString();

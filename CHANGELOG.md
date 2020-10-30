@@ -1,5 +1,27 @@
 # Release notes
 
+## [1.2.0] - 2020-08-27
+- Improvement: Added axis support other than C to `Reduce` ops.
+- Improvement: Added YOLOv3/TinyYOLOv3 support.
+- Improvement: Added Shufflenet/super resolution CNN support.
+- Improvement: Added >4D `Transpose` and `Reshape` support on GPU.
+- ONNX: Added `Split` op support.
+- ONNX: Added `NonMaxSuppression` op support.
+- ONNX: Added axis support to `Softmax`.
+- ONNX: Added `ConstantOfShape` op support (constant inputs only).
+- ONNX: Added constant as argument support for `Add/Sum/Sub/Mul/Div`.
+- ONNX: Added `NonZero` op support.
+- ONNX: Fixed Rank 1 tensor winding up in C channel rather than N.
+- ONNX: Fixes `TopK` implementation to index in default Barracuda format (NHWC).
+- ONNX: Fixed improper conversion of Int64, UInt64, Double.
+- ONNX: Fixed several issues when importing networks with channels-last input layout and for operation on >4 rank.
+- Fix: Fixed `Sub/Div` fusing when operation order is important.
+- Fix: Fixed TensorShape(int[]) constructor when rank is <4.
+- Fix: Fixed Resample2D op on GPU path.
+- Performance: Improved Conv2D execution performance when Winograd kernel is in use.
+- Change: Moved some of internal-only intended APIs from `public` to `internal` visibility.
+- Docs: Added multiple missing API docs.
+
 ## [1.1.2] - 2020-10-14
 - Fix/Forward port: Fixed matrix multiplication issue in Universal Mac Standalone builds. 
 
@@ -31,10 +53,6 @@
 
 ## [1.0.3] - 2020-09-15
 - Fix: Fixed matrix multiplication issue in Universal Mac Standalone builds. 
-
-## [1.0.2] - 2020-07-30
-- Upgraded Burst dependency to 1.3.4.
-- Docs: Minor fixes. 
 
 ## [1.0.2] - 2020-07-30
 - Upgraded Burst dependency to 1.3.4.

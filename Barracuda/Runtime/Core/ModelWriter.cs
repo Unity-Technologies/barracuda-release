@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 using UnityEngine;
@@ -9,9 +10,17 @@ using UnityEngine.Profiling;
 
 namespace Unity.Barracuda {
 
-
+    /// <summary>
+    /// Serializes model to binary stream
+    /// </summary>
     public class ModelWriter
     {
+        /// <summary>
+        /// Save model to file
+        /// </summary>
+        /// <param name="fileName">file name</param>
+        /// <param name="model">`Model`</param>
+        /// <param name="verbose">verbose flag</param>
         public static void Save(string fileName, Model model, bool verbose = false)
         {
             BinaryWriter writer = new BinaryWriter(File.Open(fileName, FileMode.Create));
@@ -19,6 +28,12 @@ namespace Unity.Barracuda {
             writer.Close();
         }
 
+        /// <summary>
+        /// Save model to file
+        /// </summary>
+        /// <param name="writer">`BinaryWriter`</param>
+        /// <param name="model">`Model`</param>
+        /// <param name="verbose">verbose flag</param>
         public static void Save(BinaryWriter writer, Model model, bool verbose = false)
         {
             Profiler.BeginSample("Barracuda.ModelWriter.Save");

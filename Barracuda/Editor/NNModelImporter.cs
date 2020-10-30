@@ -19,6 +19,10 @@ namespace Unity.Barracuda
 
         private Texture2D iconTexture;
 
+        /// <summary>
+        /// Scripted importer callback
+        /// </summary>
+        /// <param name="ctx">Asset import context</param>
         public override void OnImportAsset(AssetImportContext ctx)
         {
             var model = File.ReadAllBytes(ctx.assetPath);

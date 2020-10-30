@@ -12,23 +12,102 @@ namespace Unity.Barracuda {
 [Serializable]
 public struct TensorShape
 {
+    /// <summary>
+    /// Max rank
+    /// </summary>
     public const int MaxRank = 8;
+
     // The following dimension names are based on ONNX Dimension Denotation.
     // see: https://github.com/onnx/onnx/blob/master/docs/DimensionDenotation.md
-    public const int DataChannel  = 7; public const int C = DataChannel;
-    public const int DataFeature0 = 6; public const int W = DataFeature0;
-    public const int DataFeature1 = 5; public const int H = DataFeature1;
-    public const int DataFeature2 = 4; public const int D = DataFeature2;
+
+    /// <summary>
+    /// Data channel dimension index number
+    /// </summary>
+    public const int DataChannel  = 7;
+    /// <summary>
+    /// Channels dimension index number
+    /// </summary>
+    public const int C = DataChannel;
+
+    /// <summary>
+    /// Data feature 0 dimension index number
+    /// </summary>
+    public const int DataFeature0 = 6;
+    /// <summary>
+    /// Width dimension index number
+    /// </summary>
+    public const int W = DataFeature0;
+
+    /// <summary>
+    /// Data feature 1 dimension index number
+    /// </summary>
+    public const int DataFeature1 = 5;
+    /// <summary>
+    /// Height dimension index number
+    /// </summary>
+    public const int H = DataFeature1;
+
+    /// <summary>
+    /// Data feature 2 dimension index number
+    /// </summary>
+    public const int DataFeature2 = 4;
+    /// <summary>
+    /// Depth dimension index number
+    /// </summary>
+    public const int D = DataFeature2;
+
+    /// <summary>
+    /// Data feature 3 dimension index number
+    /// </summary>
     public const int DataFeature3 = 3;
+    /// <summary>
+    /// Batch dimension index number
+    /// </summary>
     public const int DataBatch = 2;
-    public const int DataTime = 0;
+
+    /// <summary>
+    /// Sequence length dimension index number
+    /// </summary>
+    public const int SequenceLength = 0;
+
+    /// <summary>
+    /// Data features
+    /// </summary>
     public readonly static int[] DataFeatures = new int[] { W, H, D, DataFeature3 };
+
+    /// <summary>
+    /// Kernel input channel dimension
+    /// </summary>
     public const int KernelInChannel = 6;
+
+    /// <summary>
+    /// Kernel output channel dimension
+    /// </summary>
     public const int KernelOutChannel = 7;
+
+    /// <summary>
+    /// Kernel spatial dimension 0
+    /// </summary>
     public const int KernelSpatial0 = 5;
+
+    /// <summary>
+    /// Kernel spatial dimension 1
+    /// </summary>
     public const int KernelSpatial1 = DataBatch;    // NOTE: maps to batch
+
+    /// <summary>
+    /// Kernel spatial dimension 2
+    /// </summary>
     public const int KernelSpatial2 = DataBatch-1;  // NOTE: maps to numDirections
-    public const int KernelSpatial3 = DataTime;  // NOTE: maps to sequenceLength
+
+    /// <summary>
+    /// Kernel spatial dimension 3
+    /// </summary>
+    public const int KernelSpatial3 = SequenceLength;  // NOTE: maps to sequenceLength
+
+    /// <summary>
+    /// Kernel spatial dimensions
+    /// </summary>
     public readonly static int[] KernelSpatials = new int[] { KernelSpatial0, KernelSpatial1, KernelSpatial2, KernelSpatial3 };
 
     /// <summary>
@@ -70,6 +149,14 @@ public struct TensorShape
     /// Create a TensorShape of shape [S,R,N,T,D,H,W,C].
     /// Currently seqLen must be 1.
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     public TensorShape(int s, int r, int n, int t, int d, int h, int w, int c)
     {
         sequenceLength = s > 0 ? s : 1;
@@ -81,9 +168,15 @@ public struct TensorShape
         width = w > 0 ? w : 1;
         channels = c > 0 ? c : 1;
     }
+
     /// <summary>
     /// Create a TensorShape of shape [1,1,N,1,D,H,W,C].
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     public TensorShape(int n, int d, int h, int w, int c)
     {
         sequenceLength = 1;
@@ -95,9 +188,14 @@ public struct TensorShape
         width = w > 0 ? w : 1;
         channels = c > 0 ? c : 1;
     }
+
     /// <summary>
     /// Create a TensorShape of shape [1,1,N,1,1,H,W,C].
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     public TensorShape(int n, int h, int w, int c)
     {
         sequenceLength = 1;
@@ -109,9 +207,12 @@ public struct TensorShape
         width = w > 0 ? w : 1;
         channels = c > 0 ? c : 1;
     }
+
     /// <summary>
     /// Create a TensorShape of shape [1,1,N,1,1,1,1,C].
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
     public TensorShape(int n, int c)
     {
         sequenceLength = 1;
@@ -123,20 +224,22 @@ public struct TensorShape
         width = 1;
         channels = c > 0 ? c : 1;
     }
+
     /// <summary>
     /// Create a TensorShape of arbitrary `shape`.
     /// `shape` must be of length 4 [N,H,W,C] or 8 [S,R,N,T,D,H,W,C].
     /// If `shape.length` is 4 then the dimensions S,R,T and D will be defaulted to 1.
     /// </summary>
+    /// <param name="shape">shape as int array</param>
     public TensorShape(int[] shape)
         : this( shape.Length > 4 ? shape[0] : 1,
                 shape.Length > 4 ? shape[1] : 1,
                 shape.Length > 4 ? shape[2] : shape[0],
                 shape.Length > 4 ? shape[3] : 1,
                 shape.Length > 4 ? shape[4] : 1,
-                shape.Length > 4 ? shape[5] : shape[1],
-                shape.Length > 4 ? shape[6] : shape[2],
-                shape.Length > 4 ? shape[7] : shape[3])
+                shape.Length > 4 ? shape[5] : (shape.Length > 1?shape[1]:1),
+                shape.Length > 4 ? shape[6] : (shape.Length > 2?shape[2]:1),
+                shape.Length > 4 ? shape[7] : (shape.Length > 3?shape[3]:1))
     {
     }
     #endregion
@@ -206,14 +309,22 @@ public struct TensorShape
     /// Allow to use negative axis to access tensorShape backward.
     /// `axis` should be from -rank to rank (exclusive).
     /// </summary>
+    /// <param name="axis">axis</param>
+    /// <returns>adjusted axis</returns>
     public int Axis(int axis)
     {
         Assert.IsTrue(axis > -rank && axis < rank);
         return axis >= 0 ? axis: rank + axis;
     }
+
     /// <summary>
     /// Given an offset in memory return the dimensions indices of the element as [_,_,N,_,_,H,W,C].
     /// </summary>
+    /// <param name="index">one dimensional index (offset) in the memory</param>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     public void GetPositionsFromIndex(int index, ref int n, ref int h, ref int w, ref int c)
     {
         c = index % channels;
@@ -221,9 +332,19 @@ public struct TensorShape
         h = (index / (channels * width)) % height;
         n = (index / (channels * width * height * depth * extraDimension)) % batch;
     }
+
     /// <summary>
     /// Given an offset in memory return the dimensions indices of the element as [S,R,N,T,D,H,W,C].
     /// </summary>
+    /// <param name="index">one dimensional index (offset) in the memory</param>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     public void GetPositionsFromIndex(int index, ref int s, ref int r, ref int n, ref int t, ref int d, ref int h, ref int w, ref int c)
     {
         c =  index % channels;
@@ -235,9 +356,19 @@ public struct TensorShape
         r = (index / (channels * width * height * depth * extraDimension * batch)) % numberOfDirections;
         s = (index / (channels * width * height * depth * extraDimension * batch * numberOfDirections)) % sequenceLength;
     }
+
     /// <summary>
     /// Given an offset in memory return the dimensions indices of the element as [S,R,N,T,D,H,W,C] in ChannelFirst memory layout.
     /// </summary>
+    /// <param name="index">one dimensional index (offset) in the memory</param>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     internal void GetPositionsFromIndexChannelFirst(int index, ref int s, ref int r, ref int n, ref int t, ref int d, ref int h, ref int w, ref int c)
     {
         w  = index % width;
@@ -253,6 +384,11 @@ public struct TensorShape
     /// <summary>
     /// Given an offset in memory return the dimensions indices of the element as [_,_,N,_,_,H,W,C] in ChannelFirst format.
     /// </summary>
+    /// <param name="index">one dimensional index (offset) in the memory</param>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     internal void GetPositionsFromIndexChannelFirst(int index, ref int n, ref int h, ref int w, ref int c)
     {
         w = index % width;
@@ -260,9 +396,15 @@ public struct TensorShape
         c  = (index / (width * height * depth * extraDimension)) % channels;
         n  = (index / (width * height * depth * extraDimension * channels)) % batch;
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,H,W,C] with broadcast support, return this element offset in memory.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns></returns>
     public int IndexWithBroadcast(int n, int h, int w, int c)
     {
         n %= batch;
@@ -271,9 +413,19 @@ public struct TensorShape
         c %= channels;
         return Index(n, h, w, c);
     }
+
     /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] with broadcast support, return this element offset in memory.
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithBroadcast(int s, int r, int n, int t, int d, int h, int w, int c)
     {
         s %= sequenceLength;
@@ -290,6 +442,11 @@ public struct TensorShape
     /// <summary>
     /// Given an element dimensions indices [1,N,1,1,1,H,W,C] return this element offset in memory, clamping indices to tensor dimensions.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithClamp(int n, int h, int w, int c)
     {
         n = Math.Max(n, 0);
@@ -302,9 +459,20 @@ public struct TensorShape
         c = Math.Min(c, channels - 1);
         return Index(n, h, w, c);
     }
+
+
     /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] return this element offset in memory, clamping indices to tensor dimensions.
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithClamp(int s, int r, int n, int t, int d, int h, int w, int c)
     {
         s = Math.Max(s, 0);
@@ -325,9 +493,19 @@ public struct TensorShape
         c = Math.Min(c, channels - 1);
         return Index(s,r,n,t,d,h,w,c);
     }
+
     /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] return this element offset in memory.
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int s, int r, int n, int t, int d, int h, int w, int c)
     {
         int index =
@@ -341,9 +519,15 @@ public struct TensorShape
             c;
         return index;
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,H,W,C] return this element offset in memory.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int n, int h, int w, int c)
     {
         int index =
@@ -353,9 +537,19 @@ public struct TensorShape
             c;
         return index;
     }
+
     /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] return this element offset in memory in ChannelFirst format.
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     internal int IndexChannelFirst(int s, int r, int n, int t, int d, int h, int w, int c)
     {
         int index =
@@ -369,9 +563,15 @@ public struct TensorShape
             w;
         return index;
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,H,W,C] return this element offset in memory in ChannelFirst format.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     internal int IndexChannelFirst(int n, int h, int w, int c)
     {
         int index =
@@ -381,9 +581,13 @@ public struct TensorShape
             w;
         return index;
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,0,0,C] return this element offset in memory.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int n, int c)
     {
         int index =
@@ -391,10 +595,12 @@ public struct TensorShape
             c;
         return index;
     }
+
     /// <summary>
     /// Indexer to return a dimension of this tensorShape as [S,R,N,T,D,H,W,C]
     /// Prefer this over ToArray() to avoid GC allocation/collection.
     /// </summary>
+    /// <param name="axis">axis</param>
     public int this[int axis]
     {
         get
@@ -442,6 +648,7 @@ public struct TensorShape
     /// Return an array representation of this tensorShape as [S,R,N,T,D,H,W,C]
     /// Prefer tensorShape[x] to avoid GC allocation/collection.
     /// </summary>
+    /// <returns>shape as int array</returns>
     public int[] ToArray()
     {
         return new[] { sequenceLength, numberOfDirections, batch, extraDimension, depth, height, width, channels };
@@ -451,6 +658,7 @@ public struct TensorShape
     /// Remove single-dimensional entries from the shape.
     /// [s=1,r=1,b=4,t=1,d=1h=1,w=1,c=128] => [s=1,r=1,b=1,t=1,d=1,h=1,w=4,c=128]
     /// </summary>
+    /// <returns>new TensorShape</returns>
     public TensorShape Squeeze()
     {
         var dims = ToArray();
@@ -467,6 +675,7 @@ public struct TensorShape
     /// <summary>
     /// Return a TensorShape of dimensions [S,R,N,1,1,1,1,T*D*H*W*C]
     /// </summary>
+    /// <returns>new TensorShape</returns>
     public TensorShape Flatten()
     {
         return new TensorShape(sequenceLength, numberOfDirections, batch, 1, 1, 1, 1, flatWidth);
@@ -474,6 +683,12 @@ public struct TensorShape
     #endregion
 
     #region Comparison operators
+    /// <summary>
+    /// Compares two `TensorShape` objects
+    /// </summary>
+    /// <param name="a">left object</param>
+    /// <param name="b">right object</param>
+    /// <returns>`true` if contents of the objects `a` and `b` are equal</returns>
     public static bool operator ==(TensorShape a, TensorShape b)
     {
         for (var i = 0; i < TensorShape.MaxRank; ++i)
@@ -482,11 +697,22 @@ public struct TensorShape
         return true;
     }
 
+    /// <summary>
+    /// Compares two `TensorShape` objects
+    /// </summary>
+    /// <param name="a">left object</param>
+    /// <param name="b">right object</param>
+    /// <returns>`true` if contents of the objects `a` and `b` are not equal</returns>
     public static bool operator !=(TensorShape a, TensorShape b)
     {
         return !(a == b);
     }
 
+    /// <summary>
+    /// Compares `this` object to other object
+    /// </summary>
+    /// <param name="obj">other object</param>
+    /// <returns>`true` if contents of the objects `a` and `b` are equal</returns>
     public override bool Equals(System.Object obj)
     {
         // Check for null values and compare run-time types.
@@ -496,40 +722,100 @@ public struct TensorShape
         return this == (TensorShape)obj;
     }
 
+    /// <summary>
+    /// Object hash code
+    /// </summary>
+    /// <returns>object hash code</returns>
     public override int GetHashCode()
     {
         return sequenceLength ^ numberOfDirections ^ batch ^ extraDimension ^ depth ^ height ^ width ^ channels;
     }
     #endregion
 
+    /// <summary>
+    /// Object summary
+    /// </summary>
+    /// <returns>object summary as a string</returns>
     public override string ToString()
     {
         return $"({sequenceLength}, {numberOfDirections}, {batch}, {extraDimension}, {depth}, {height}, {width}, {channels})";
     }
 }
-
-public class TensorIterator
+/// <summary>
+/// Helper structure to iterate over tensor shape
+/// </summary>
+public struct TensorIterator
 {
+    /// <summary>
+    /// Tensor shape
+    /// </summary>
     public readonly TensorShape shape;
-    private readonly int m_shapeLenght;
+    private readonly int m_shapeLength;
+
+    /// <summary>
+    /// Index
+    /// </summary>
     public int index;
+
+    /// <summary>
+    /// dimension 0
+    /// </summary>
     public int d0;
+
+    /// <summary>
+    /// dimension 1
+    /// </summary>
     public int d1;
+
+    /// <summary>
+    /// dimension 2
+    /// </summary>
     public int d2;
+
+    /// <summary>
+    /// dimension 3
+    /// </summary>
     public int d3;
+
+    /// <summary>
+    /// dimension 4
+    /// </summary>
     public int d4;
+
+    /// <summary>
+    /// dimension 5
+    /// </summary>
     public int d5;
+
+    /// <summary>
+    /// dimension 6
+    /// </summary>
     public int d6;
+
+    /// <summary>
+    /// dimension 7
+    /// </summary>
     public int d7;
 
+    /// <summary>
+    /// Constructs Tensor shape iterator
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="index">starting index</param>
     public TensorIterator(TensorShape shape, int index = 0)
     {
         this.shape = shape;
-        m_shapeLenght = shape.length;
+        m_shapeLength = shape.length;
         this.index = index;
         d0 = 0; d1 = 0; d2 = 0; d3 = 0; d4 = 0; d5 = 0; d6 = 0; d7 = 0;
         AssignIndexAndInvalidateDimensions(index);
     }
+
+    /// <summary>
+    /// Constructs Tensor shape iterator
+    /// </summary>
+    /// <param name="tensor">Tensor</param>
+    /// <param name="index">starting index</param>
     public TensorIterator(Tensor tensor, int index = 0) : this(tensor.shape, index)
     {
     }
@@ -543,23 +829,28 @@ public class TensorIterator
                 ref d0, ref d1, ref d2, ref d3, ref d4, ref d5, ref d6, ref d7);
     }
 
-    public TensorIterator Inc()
+    /// <summary>
+    /// Next element in the Tensor shape space
+    /// </summary>
+    public void Next()
     {
         ++index;
         ++d7;
         // carry-over chain
-        if (d7 < shape[7]) return this; d7 = 0; ++d6;
-        if (d6 < shape[6]) return this; d6 = 0; ++d5;
-        if (d5 < shape[5]) return this; d5 = 0; ++d4;
-        if (d4 < shape[4]) return this; d4 = 0; ++d3;
-        if (d3 < shape[3]) return this; d3 = 0; ++d2;
-        if (d2 < shape[2]) return this; d2 = 0; ++d1;
-        if (d1 < shape[1]) return this; d1 = 0; ++d0;
-
-        return this;
+        if (d7 < shape[7]) return; d7 = 0; ++d6;
+        if (d6 < shape[6]) return; d6 = 0; ++d5;
+        if (d5 < shape[5]) return; d5 = 0; ++d4;
+        if (d4 < shape[4]) return; d4 = 0; ++d3;
+        if (d3 < shape[3]) return; d3 = 0; ++d2;
+        if (d2 < shape[2]) return; d2 = 0; ++d1;
+        if (d1 < shape[1]) return; d1 = 0; ++d0;
     }
 
-    public TensorIterator Inc(int step)
+    /// <summary>
+    /// Advance iterator by `step`
+    /// </summary>
+    /// <param name="step">step count</param>
+    public void Advance(int step)
     {
         index += step;
         d7 += step;
@@ -568,26 +859,50 @@ public class TensorIterator
         { // step is too large and would overflow the carry-over into the next dimension
           // or step is negative and would require a borrow from the next dimension
             AssignIndexAndInvalidateDimensions(index);
-            return this;
+            return;
         }
 
         // carry-over chain
-        if (d7 < shape[7]) return this; d7 -= shape[7]; Assert.IsTrue(d7 < shape[7]); ++d6;
-        if (d6 < shape[6]) return this; d6 = 0; ++d5;
-        if (d5 < shape[5]) return this; d5 = 0; ++d4;
-        if (d4 < shape[4]) return this; d4 = 0; ++d3;
-        if (d3 < shape[3]) return this; d3 = 0; ++d2;
-        if (d2 < shape[2]) return this; d2 = 0; ++d1;
-        if (d1 < shape[1]) return this; d1 = 0; ++d0;
-
-        return this;
+        if (d7 < shape[7]) return; d7 -= shape[7]; Assert.IsTrue(d7 < shape[7]); ++d6;
+        if (d6 < shape[6]) return; d6 = 0; ++d5;
+        if (d5 < shape[5]) return; d5 = 0; ++d4;
+        if (d4 < shape[4]) return; d4 = 0; ++d3;
+        if (d3 < shape[3]) return; d3 = 0; ++d2;
+        if (d2 < shape[2]) return; d2 = 0; ++d1;
+        if (d1 < shape[1]) return; d1 = 0; ++d0;
     }
 
+    /// <summary>
+    /// Is iterator in valid state
+    /// </summary>
+    /// <returns>`true` if iterator is still within shape</returns>
     public bool IsValid()
     {
-        return index < m_shapeLenght;
+        return index < m_shapeLength;
     }
 
+    /// <summary>
+    /// Index in reduced shape
+    /// </summary>
+    /// <param name="reducedShape">reduced shape</param>
+    /// <returns>index</returns>
+    public int IndexInReducedShape(TensorShape reducedShape)
+    {
+        int rd0 = Math.Min(d0, reducedShape[0]-1);
+        int rd1 = Math.Min(d1, reducedShape[1]-1);
+        int rd2 = Math.Min(d2, reducedShape[2]-1);
+        int rd3 = Math.Min(d3, reducedShape[3]-1);
+        int rd4 = Math.Min(d4, reducedShape[4]-1);
+        int rd5 = Math.Min(d5, reducedShape[5]-1);
+        int rd6 = Math.Min(d6, reducedShape[6]-1);
+        int rd7 = Math.Min(d7, reducedShape[7]-1);
+        return reducedShape.Index(rd0, rd1, rd2, rd3, rd4, rd5, rd6, rd7);
+    }
+
+    /// <summary>
+    /// Access specific axis value
+    /// </summary>
+    /// <param name="axis">axis</param>
     public int this[int axis]
     {
         get
@@ -606,16 +921,14 @@ public class TensorIterator
             }
         }
     }
-
-    public static TensorIterator operator ++(TensorIterator a) => a.Inc();
-    public static TensorIterator operator --(TensorIterator a) => a.Inc(-1);
-
-    public static implicit operator int(TensorIterator a) => a.index;
 }
 
 
 // @TODO: most likely Tensor should still be struct - that way passing Tensor as argument into IOps would be safer (no hidden state mods), and Flatten & Reshape could return modified Tensor
 // ITensorData & Dispose mechanism should however allow Tensors to share the same ITensorData
+/// <summary>
+/// Multidimensional array-like data storage
+/// </summary>
 public class Tensor : IDisposable
 {
     private ITensorData m_TensorOnDevice;
@@ -729,21 +1042,40 @@ public class Tensor : IDisposable
     /// S and R must be 1.
     /// `srcData` must be of size `s[0]*s[1]*s[2]*s[3]*s[4]*s[5]*s[6]*s[7]`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(int[] shape, float[] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [N,H,W,C], an array of data `srcData` and an optional debug `name`.
     /// `srcData` must be of size `n*h*w*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int h, int w, int c, float[] srcData, string name = "") : this(new TensorShape(n, h, w, c), srcData, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [N,1,1,C], an array of data `srcData` and an optional debug `name`.
     /// `srcData` must be of size `n*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int c, float[] srcData, string name = "") : this(new TensorShape(n, c), srcData, name) {}
+
     /// <summary>
     /// Create a Tensor with specified `shape`, an array of data `srcData` and an optional debug `name`.
     /// `srcData` must be of size `shape.length`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(TensorShape shape, float[] srcData, string name = "")
     {
         this.name = name;
@@ -755,27 +1087,47 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
     /// <summary>
     /// Create a Tensor from a `shape`, an array of data `srcData` and an optional name debug `name`.
     /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
     /// S and R must be 1.
     /// `srcData` must be of size `s[0]*s[1]*s[2]*s[3]*s[4]*s[5]*s[6]*s[7]`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(int[] shape, float[][] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an array of data `srcData` and an optional debug `name`.
     /// `srcData` must be of size `n*h*w*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int h, int w, int c, float[][] srcData, string name = "") : this(new TensorShape(n, h, w, c), srcData, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], an array of data `srcData` and an optional debug `name`.
     /// `srcData` must be of size `n*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int c, float[][] srcData, string name = "") : this(new TensorShape(n, c), srcData, name) {}
+
     /// <summary>
     /// Create a Tensor with specified `shape`, an array of data `srcData` and an optional debug `name`.
     /// `srcData` must be of size `shape.length`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
     public Tensor(TensorShape shape, float[][] srcData, string name = "")
     {
         this.name = name;
@@ -792,27 +1144,48 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
     /// <summary>
     /// Create a Tensor from a `shape`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
     /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
     /// S and R must be 1.
     /// `srcBuffer` must be larger than `s[0]*s[1]*s[2]*s[3]*s[4]*s[5]*s[6]*s[7]`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcBuffer">source buffer</param>
+    /// <param name="name">name</param>
     public Tensor(int[] shape, UnityEngine.ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(shape), srcBuffer, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
     /// `srcBuffer` must be larger than `n*h*w*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcBuffer">source buffer</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int h, int w, int c, UnityEngine.ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(n, h, w, c), srcBuffer, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
     /// `srcBuffer` must be larger than `n*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcBuffer">source buffer</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int c, UnityEngine.ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(n, c), srcBuffer, name) {}
+
     /// <summary>
     /// Create a Tensor with specified `shape`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
     /// `srcBuffer` must be larger than `shape.length`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcBuffer">source buffer</param>
+    /// <param name="name">name</param>
+    /// <exception cref="ArgumentException">thrown if specified buffer is too small or stride is mismatched</exception>
     public Tensor(TensorShape shape, UnityEngine.ComputeBuffer srcBuffer, string name = "")
     {
         this.name = name;
@@ -832,13 +1205,20 @@ public class Tensor : IDisposable
     /// If `channels` is set to -1 (default value), then number of channels in the new Tensor will match the number of channels in the texture.
     /// Just like `Texture2D.GetPixels` when reading from LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc) this function will remap pixel values from byte values to the range of [0.0 .. 1.0]. Pixel values from HDR textures (such as ARGBFloat or ARGBHalf) will be left unchanged.
     /// </summary>
+    /// <param name="srcTexture">source texture</param>
+    /// <param name="channels">channels</param>
+    /// <param name="name">name</param>
     public Tensor(UnityEngine.Texture srcTexture, int channels = -1, string name = "") : this(new [] { srcTexture }, channels, name) {}
+
     /// <summary>
     /// Create a Tensor from multiple texture, shape is [1,1,1,1, `srcTextures.length`, `texture.height`, `texture.width`, `channels`].
     /// If `channels` is set to -1 (default value), then number of channels in the new Tensor will match the number of channels in the texture.
     /// All textures must be of the same size and dimension.
     /// Just like `Texture2D.GetPixels` when reading from LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc) this function will remap pixel values from byte values to the range of [0.0 .. 1.0]. Pixel values from HDR textures (such as ARGBFloat or ARGBHalf) will be left unchanged.
     /// </summary>
+    /// <param name="srcTextures">source textures</param>
+    /// <param name="channels">channels</param>
+    /// <param name="name">name</param>
     public Tensor(UnityEngine.Texture[] srcTextures, int channels = -1, string name = "")
     {
         this.name = name;
@@ -851,25 +1231,45 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
     /// <summary>
     /// Create a Tensor from a `shape`, an ITensorData `data` and an optional debug `name`.
     /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
     /// S and R must be 1.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="data">data</param>
+    /// <param name="name">name</param>
     public Tensor(int[] shape, ITensorData data, string name = "") : this(new TensorShape(shape), data, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an ITensorData `data` and an optional debug `name`.
     /// `srcData` must be of size `n*h*w*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="data">data</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int h, int w, int c, ITensorData data, string name = "") : this(new TensorShape(n, h, w, c), data, name) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], an ITensorData `data` and an optional debug `name`.
     /// `srcData` must be of size `n*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="data">data</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int c, ITensorData data, string name = "") : this(new TensorShape(n, c), data, name) {}
+
     /// <summary>
     /// Create a Tensor with specified `shape`, an ITensorData `data` and an optional debug `name`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="data">data</param>
+    /// <param name="name">name</param>
     public Tensor(TensorShape shape, ITensorData data, string name = "")
     {
         this.name = name;
@@ -879,27 +1279,45 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
     /// <summary>
     /// Create an uninitialized Tensor with a shape of [1,1,1,1,1,1,1,1] and an optional debug `name`.
     /// </summary>
+    /// <param name="name">name</param>
     public Tensor(string name = "") : this(new TensorShape(1,1,1,1), name) {}
+
     /// <summary>
     /// Create an uninitialized Tensor from a `shape` and an optional debug `name`.
     /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C]
     /// S and R must be 1.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="name">name</param>
     public Tensor(int[] shape, string name = "") : this(new TensorShape(shape), name) {}
+
     /// <summary>
     /// Create an uninitialized Tensor of shape [1,1,N,1,1,H,W,C] and an optional debug `name`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int h, int w, int c, string name = "") : this(new TensorShape(n, h, w, c), name) {}
+
     /// <summary>
     /// Create an uninitialized Tensor of shape [1,1,N,1,1,1,1,C] and an optional debug `name`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="name">name</param>
     public Tensor(int n, int c, string name = "") : this(new TensorShape(n, c), name) {}
+
     /// <summary>
     /// Create an uninitialized Tensor with specified `shape` and an optional debug `name`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="name">name</param>
     public Tensor(TensorShape shape, string name = "")
     {
         this.name = name;
@@ -909,25 +1327,45 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
     /// <summary>
     /// Create a Tensor from a `shape`, an ITensorData `data` and an ITensorAllocator `allocator`.
     /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
     /// S and R must be 1.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="data">data</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(int[] shape, ITensorData data, ITensorAllocator allocator) : this(new TensorShape(shape), data, allocator) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an ITensorData `data` and an ITensorAllocator `allocator`.
     /// `data` must be of size `n*h*w*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="data">data</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(int n, int h, int w, int c, ITensorData data, ITensorAllocator allocator) : this(new TensorShape(n, h, w, c), data, allocator) {}
+
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], an ITensorData `data` and an ITensorAllocator `allocator`.
     /// `srcData` must be of size `n*c`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="data">data</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(int n, int c, ITensorData data, ITensorAllocator allocator) : this(new TensorShape(n, c), data, allocator) {}
+
     /// <summary>
     /// Create a Tensor with specified `shape`, an ITensorData `data` and an ITensorAllocator `allocator`
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="data">data</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(TensorShape shape, ITensorData data, ITensorAllocator allocator)
     {
         this.name = "";
@@ -941,24 +1379,42 @@ public class Tensor : IDisposable
     /// <summary>
     /// Create an uninitialized Tensor with a shape of [1,1,1,1,1,1,1,1] and an ITensorAllocator `allocator`.
     /// </summary>
+    /// <param name="allocator">allocator</param>
     public Tensor(ITensorAllocator allocator) : this(new TensorShape(1,1,1,1,1,1,1,1), allocator) {}
+
+
     /// <summary>
     /// Create an uninitialized Tensor from a `shape` and an ITensorAllocator `allocator`.
     /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
     /// S and R must be 1.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(int[] shape, ITensorAllocator allocator) : this(new TensorShape(shape), allocator) {}
+
     /// <summary>
     /// Create an uninitialized Tensor of shape [1,1,N,1,1,H,W,C] and an ITensorAllocator `allocator`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(int n, int h, int w, int c, ITensorAllocator allocator) : this(new TensorShape(n, h, w, c), allocator) {}
+
     /// <summary>
     /// Create an uninitialized Tensor of shape [1,1,N,1,1,1,1,C] and an ITensorAllocator `allocator`.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(int n, int c, ITensorAllocator allocator) : this(new TensorShape(n, c), allocator) {}
+
     /// <summary>
     /// Create an uninitialized Tensor with specified `shape` and ITensorAllocator `allocator`.
     /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="allocator">allocator</param>
     public Tensor(TensorShape shape, ITensorAllocator allocator)
     {
         this.name = "";
@@ -996,6 +1452,8 @@ public class Tensor : IDisposable
     /// `destination` should be allocated on a target device. Previous contents of `destination` will be overwritten after this call.
     /// By default local cache will be discarded after this call, set `invalidateCacheAfterUpload` to false to keep the cache.
     /// </summary>
+    /// <param name="destination">destination</param>
+    /// <param name="invalidateCacheAfterUpload">invalidate cache after upload</param>
     public void UploadToDevice(ITensorData destination, bool invalidateCacheAfterUpload = true)
     {
         if (m_TensorOnDevice == destination && !m_CacheIsDirty)
@@ -1017,6 +1475,7 @@ public class Tensor : IDisposable
     /// `source` should contain initialized and valid data representing tensor values.
     /// See also `PrepareCacheForAccess()` to schedule download as soon as possible.
     /// </summary>
+    /// <param name="source">source</param>
     public void AttachToDevice(ITensorData source)
     {
         if (m_TensorOnDevice == source && !m_CacheIsDirty)
@@ -1031,6 +1490,8 @@ public class Tensor : IDisposable
     /// <summary>
     /// Remove tensor from device, will first sync the cache with device data.
     /// </summary>
+    /// <param name="disposeDeviceData">dispose device data</param>
+    /// <returns>Tensor data</returns>
     public ITensorData DetachFromDevice(bool disposeDeviceData = true)
     {
         PrepareCacheForAccess();
@@ -1064,6 +1525,8 @@ public class Tensor : IDisposable
     /// Populate the cache with on device data.
     /// Blocking read if `blocking` is true (default)
     /// </summary>
+    /// <param name="blocking">blocking read if `true`</param>
+    /// <returns>`true` if data is ready</returns>
     public bool PrepareCacheForAccess(bool blocking = true)
     {
         // non-blocking, schedule download for later
@@ -1115,6 +1578,8 @@ public class Tensor : IDisposable
     /// <summary>
     /// Create a copy of the current Tensor, sharing data storage with original tensor.
     /// </summary>
+    /// <param name="newName">new name</param>
+    /// <returns>shallow copy of the Tensor</returns>
     public Tensor ShallowCopy(string newName = null)
     {
         return ShallowCopy(shape, $"copy of {name}");
@@ -1123,6 +1588,8 @@ public class Tensor : IDisposable
     /// <summary>
     /// Create a flattened copy of the current Tensor ie of shape [1,1,N,1,1,1,1,T*D*H*W*C]
     /// </summary>
+    /// <param name="newName">new name</param>
+    /// <returns>shallow copy of the Tensor with new shape</returns>
     public Tensor Flatten(string newName = null)
     {
         var newShape = shape.Flatten();
@@ -1133,6 +1600,9 @@ public class Tensor : IDisposable
     /// Create a reshaped copy of the current Tensor.
     /// `newShape`.length must be equal to this.shape.length.
     /// </summary>
+    /// <param name="newShape">new shape</param>
+    /// <param name="newName">new name</param>
+    /// <returns>shallow copy of the Tensor with new shape and name</returns>
     public Tensor Reshape(TensorShape newShape, string newName = null)
     {
         Assert.AreEqual(shape.length, newShape.length);
@@ -1142,6 +1612,7 @@ public class Tensor : IDisposable
     /// <summary>
     /// Create a copy of the current Tensor.
     /// </summary>
+    /// <returns>new copy of the Tensor</returns>
     public Tensor DeepCopy()
     {
         // @TODO: use Tensor allocator
@@ -1218,6 +1689,12 @@ public class Tensor : IDisposable
     /// Resolution of the `target` must match the spatial dimensions of the tensor.
     /// `scale` multiplier and `bias` addition is applied to the values read from the tensor and, if `target` is LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc), clamped to the range from 0.0 to 1.0.
     /// </summary>
+    /// <param name="target">target RenderTexture</param>
+    /// <param name="batch">batch</param>
+    /// <param name="fromChannel">from channel</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="lut">lut table</param>
     public void ToRenderTexture(UnityEngine.RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut = null)
     {
         var gpuBackend = new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels);
@@ -1232,6 +1709,12 @@ public class Tensor : IDisposable
     /// Resolution of the `target` must match the spatial dimensions of the tensor.
     /// `scale` multiplier and `bias` addition is applied to the values read from the tensor and, if `target` is LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc), clamped to the range from 0.0 to 1.0.
     /// </summary>
+    /// <param name="target">target RenderTexture</param>
+    /// <param name="batch">batch</param>
+    /// <param name="fromChannel">from channel</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="lut">lut table</param>
     public void ToRenderTexture(UnityEngine.RenderTexture target, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
     {
         ToRenderTexture(target, batch, fromChannel, new Vector4(scale,scale,scale,scale), new Vector4(bias,bias,bias,bias), lut);
@@ -1245,6 +1728,13 @@ public class Tensor : IDisposable
     /// Number of channels in the `target` texture specifies how many channels to read from the tensor, starting from index `fromChannel`.
     /// `scale` multiplier and `bias` addition is applied to the values read from the tensor and, if `format` is LDR (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc), clamped to the range from 0.0 to 1.0.
     /// </summary>
+    /// <param name="format">RenderTexture format</param>
+    /// <param name="batch">batch</param>
+    /// <param name="fromChannel">from channel</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="lut">lut table</param>
+    /// <returns>created RenderTexture</returns>
     public UnityEngine.RenderTexture ToRenderTexture(RenderTextureFormat format, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
     {
         var target = new UnityEngine.RenderTexture(width, height, 0, format);
@@ -1260,6 +1750,12 @@ public class Tensor : IDisposable
     /// Resolution of the `target` must match the spatial dimensions of the tensor.
     /// `scale` multiplier and `bias` addition is applied to the values read from the tensor and clamped to the range from 0.0 to 1.0.
     /// </summary>
+    /// <param name="batch">batch</param>
+    /// <param name="fromChannel">from channel</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="lut">lut table</param>
+    /// <returns></returns>
     public UnityEngine.RenderTexture ToRenderTexture(int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
     {
         return ToRenderTexture(RenderTextureFormat.Default, batch, fromChannel, scale, bias, lut);
@@ -1272,67 +1768,111 @@ public class Tensor : IDisposable
     /// Allow to use negative axis to access tensorShape backward.
     /// `axis` should be from -rank to rank (exclusive).
     /// </summary>
+    /// <param name="axis">axis</param>
+    /// <returns>remapped axis</returns>
     public int Axis(int axis)
     {
         return shape.Axis(axis);
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,H,W,C] return this element offset in memory.
     /// </summary>
+    /// <param name="b">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="ch">channels</param>
+    /// <returns>flat index (offset in memory)</returns>
     public int Index(int b, int h, int w, int ch)
     {
         return shape.Index(b, h, w, ch);
     }
+
     /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] return this element offset in memory.
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>flat index (offset in memory)</returns>
     public int Index(int s, int r, int n, int t, int d, int h, int w, int c)
     {
         return shape.Index(s, r, n, t, d, h, w, c);
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,H,W,C] return this element offset in memory, clamping indices to tensor dimensions.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>flat index (offset in memory)</returns>
     public int IndexWithClamp(int n, int h, int w, int c)
     {
         return shape.IndexWithClamp(n, h, w, c);
     }
+
     /// <summary>
     /// Given an element dimensions indices[0,0,N,0,0,H,W,C] with broadcast support, return this element offset in memory.
     /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>flat index (offset in memory)</returns>
     public int IndexWithBroadcast(int n, int h, int w, int c)
     {
         return shape.IndexWithBroadcast(n, h, w, c);
     }
+
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,0,0,C] return this element offset in memory.
     /// </summary>
+    /// <param name="y">y</param>
+    /// <param name="x">x</param>
+    /// <returns>flat index (offset in memory)</returns>
     public int Index(int y, int x)
     {
         return shape.Index(y, x);
     }
+
     /// <summary>
     /// Access element at offset `index` in this Tensor.
     /// This will create a blocking read, if this Tensor is a result of a computation on a different device (GPU).
     /// </summary>
+    /// <param name="index">flat index</param>
     public float this[int index]
     {
         get { PrepareCacheForAccess(); return m_Cache[index]; }
         set { PrepareCacheForAccess(); m_Cache[index] = value; m_CacheIsDirty = true; }
     }
+
     /// <summary>
     /// Access element at index [0,0,N,0,0,0,0,C] in this Tensor.
     /// This will create a blocking read, if this Tensor is a result of a computation on a different device (GPU).
     /// </summary>
+    /// <param name="b">batch</param>
+    /// <param name="ch">channels</param>
     public float this[int b, int ch]
     {
         get { PrepareCacheForAccess(); return m_Cache[Index(b, ch)]; }
         set { PrepareCacheForAccess(); m_Cache[Index(b, ch)] = value; m_CacheIsDirty = true; }
     }
+
     /// <summary>
     /// Access element at index [0,0,N,0,0,H,W,C] in this Tensor.
     /// This will create a blocking read, if this Tensor is a result of a computation on a different device (GPU).
     /// </summary>
+    /// <param name="b">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="ch">channels</param>
     public float this[int b, int h, int w, int ch]
     {
         get { PrepareCacheForAccess(); return m_Cache[Index(b, h, w, ch)]; }
@@ -1343,6 +1883,14 @@ public class Tensor : IDisposable
     /// Access element at index [S,R,N,T,D,H,W,C] in this Tensor.
     /// This will create a blocking read, if this Tensor is a result of a computation on a different device (GPU).
     /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
     public float this[int s, int r, int n, int t, int d, int h, int w, int c]
     {
         get { PrepareCacheForAccess(); return m_Cache[Index(s, r, n, t , d, h, w, c)]; }
@@ -1354,6 +1902,7 @@ public class Tensor : IDisposable
     /// This will create a blocking read, if this Tensor is a result of a computation on a different device (GPU).
     /// IMPORTANT: Modifying contents of the returned array will have undefined behavior.
     /// </summary>
+    /// <returns>cached linear memory representation of this tensor data</returns>
     public float[] ToReadOnlyArray()
     {
         // @TODO: implement via ITensorData.SharedAccess(), public float[] ToReadOnlyArray(ref int arrayOffset)
@@ -1362,7 +1911,14 @@ public class Tensor : IDisposable
     }
     #endregion
 
+    /// <summary>
+    /// Device specific internal representation of Tensor data
+    /// </summary>
     public ITensorData tensorOnDevice { get { return m_TensorOnDevice; } }
+
+    /// <summary>
+    /// Upload data to device and return its instance
+    /// </summary>
     public ITensorData data
     {
         get
@@ -1373,6 +1929,10 @@ public class Tensor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Tensor metadata summary
+    /// </summary>
+    /// <returns>Tensor metadata summary</returns>
     public override string ToString()
     {
         return $"(`{name}` {shape}, alloc: {m_TensorAllocator?.GetType()}, onDevice:{m_TensorOnDevice})";
@@ -1380,6 +1940,11 @@ public class Tensor : IDisposable
 
     #region Obsolete
     private bool m_Disposing = false;    // to protect from infinite-loop. in case UnpinAndDisposeTensor() is called from Dispose()
+
+    /// <summary>
+    /// Unload tensor data from device and dispose this Tensor
+    /// </summary>
+    /// <returns>device specific Tensor data</returns>
     [ObsoleteAttribute("Use Dispose instead.", false)]
     public ITensorData UnpinAndDisposeTensor()
     {
@@ -1393,8 +1958,15 @@ public class Tensor : IDisposable
         return unpinned;
     }
 
+    /// <summary>
+    /// Read-only array of Tensor data
+    /// </summary>
     [ObsoleteAttribute("Use ToReadOnlyArray instead.", false)]
     public float[] readonlyArray { get { PrepareCacheForAccess(); return m_Cache; } }
+
+    /// <summary>
+    /// Offset into read-only array of Tensor data
+    /// </summary>
     [ObsoleteAttribute("Use ToReadOnlyArray instead.", false)]
     public int readonlyArrayOffset { get { return 0; } }
     #endregion

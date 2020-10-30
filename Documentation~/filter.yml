@@ -5,11 +5,16 @@ apiRules:
       type: Type
 
   - exclude:
-      # Exclude types from Unity.Barracuda.Editor.Tests.* namespace
-      uidRegex: ^Unity\.Barracuda\.Editor\.Tests\..*$
+      # Exclude types from Unity.Barracuda.Editor.* namespace
+      uidRegex: ^Unity\.Barracuda\.Editor\..*$
       type: Type
 
   - exclude:
       # Exclude types from Unity.Barracuda.TensorCachingAllocator type
       uidRegex: ^Unity\.Barracuda\.TensorCachingAllocator$
+      type: Type
+
+  - exclude:
+      # Exclude types from Unity.Barracuda.ONNX.ONNXNodeWrapper type
+      uidRegex: ^Unity\.Barracuda\.ONNX\.ONNXNodeWrapper.*$
       type: Type

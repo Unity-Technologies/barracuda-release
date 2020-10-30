@@ -88,7 +88,7 @@ Tensor output = m_Worker.PeekOutput(outputName);
 If you want to hold on to a tensor for a longer amount of time, call `worker.CopyOutput()` instead, but remember to `Dispose()` it after you are done.
 
 Also, you must manually dispose all input tensors that you allocate.
-For more detailed information see [Managing memory](MemoryManagment.md) and [Managing Barracuda outputs](ModelOutput.md).
+For more detailed information see [Managing memory](MemoryManagement.md) and [Managing Barracuda outputs](ModelOutput.md).
 
 ## Putting it all together
 

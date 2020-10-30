@@ -379,6 +379,9 @@ internal class TensorCachingByShapeAllocator : ITensorAllocator
     }
 }
 
+/// <summary>
+/// Caching `Tensor` allocator
+/// </summary>
 public class TensorCachingAllocator : ITensorAllocator
 {
     struct Entry
@@ -395,25 +398,31 @@ public class TensorCachingAllocator : ITensorAllocator
     private Action<ITensorData> disposeAllocatedBufferDelegate;
     private Action<ITensorData> adoptFreeBufferDelegate;
 
+    /// <summary>
+    /// Create `TensorCachingAllocator`
+    /// </summary>
     public TensorCachingAllocator()
     {
         disposeAllocatedBufferDelegate = DisposeAllocatedBuffer;
         adoptFreeBufferDelegate = AdoptFreeBuffer;
     }
 
+    /// <summary>
+    /// Finalizer
+    /// </summary>
     ~TensorCachingAllocator()
     {
         Dispose();
     }
 
-    static protected int GetAllocationMaxCount(Tensor tensor)
+    static internal int GetAllocationMaxCount(Tensor tensor)
     {
         return (tensor.tensorOnDevice != null) ?
             tensor.tensorOnDevice.maxCapacity:
             tensor.length;
     }
 
-    protected void AddRef(ITensorData buffer)
+    internal void AddRef(ITensorData buffer)
     {
         if (buffer == null)
             return;
@@ -423,7 +432,7 @@ public class TensorCachingAllocator : ITensorAllocator
         m_SharedBuffers[buffer] = sharedBufferCount + 1;
     }
 
-    protected void DecRef(ITensorData buffer, Action<ITensorData> onLastRef = null)
+    internal void DecRef(ITensorData buffer, Action<ITensorData> onLastRef = null)
     {
         if (buffer == null)
             return;
@@ -439,7 +448,7 @@ public class TensorCachingAllocator : ITensorAllocator
             onLastRef(buffer);
     }
 
-    protected void AdoptFreeBuffer(ITensorData buffer)
+    internal void AdoptFreeBuffer(ITensorData buffer)
     {
         // insert into the sorted array
         var size = buffer.maxCapacity;
@@ -468,7 +477,7 @@ public class TensorCachingAllocator : ITensorAllocator
             m_AllocatedBuffers.Add(newEntry);
     }
 
-    protected void DisposeAllocatedBuffer(ITensorData buffer)
+    internal void DisposeAllocatedBuffer(ITensorData buffer)
     {
         for (int i = m_AllocatedBuffers.Count - 1; i >= 0; i--)
             if (m_AllocatedBuffers[i].buffer == buffer)
@@ -476,6 +485,7 @@ public class TensorCachingAllocator : ITensorAllocator
         buffer.Dispose();
     }
 
+    /// <inheritdoc/>
     public virtual Tensor Alloc(TensorShape shape)
     {
         Profiler.BeginSample("Barracuda.SizeAllocator.Alloc");
@@ -513,6 +523,7 @@ public class TensorCachingAllocator : ITensorAllocator
         return newTensor;
     }
 
+    /// <inheritdoc/>
     public virtual Tensor Alloc(TensorShape shape, ITensorData buffer)
     {
         Profiler.BeginSample("Barracuda.SizeAllocator.Alloc");
@@ -527,6 +538,7 @@ public class TensorCachingAllocator : ITensorAllocator
         return tensor;
     }
 
+    /// <inheritdoc/>
     public virtual void Release(Tensor tensor, bool calledFromTensorDispose)
     {
         Profiler.BeginSample("Barracuda.SizeAllocator.Release");
@@ -555,6 +567,7 @@ public class TensorCachingAllocator : ITensorAllocator
         Profiler.EndSample();
     }
 
+    /// <inheritdoc/>
     public virtual void MoveToDevice(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {
         if (newBuffer == oldBuffer)
@@ -572,6 +585,12 @@ public class TensorCachingAllocator : ITensorAllocator
             DecRef(oldBuffer, adoptFreeBufferDelegate);
     }
 
+    /// <summary>
+    /// Replace old buffer with new buffer
+    /// </summary>
+    /// <param name="tensor">owning `Tensor`</param>
+    /// <param name="newBuffer">new buffer</param>
+    /// <param name="oldBuffer">old buffer</param>
     public virtual void Cast(Tensor tensor, ITensorData newBuffer, ITensorData oldBuffer)
     {
         if (newBuffer == oldBuffer)
@@ -585,6 +604,7 @@ public class TensorCachingAllocator : ITensorAllocator
         DecRef(oldBuffer);
     }
 
+    /// <inheritdoc/>
     public virtual void Reset(bool keepCachedMemory)
     {
         Profiler.BeginSample("Barracuda.SizeAllocator.Reset");
@@ -604,6 +624,7 @@ public class TensorCachingAllocator : ITensorAllocator
         Profiler.EndSample();
     }
 
+    /// <inheritdoc/>
     public virtual void WaiveOwnership(Tensor tensor)
     {
         Assert.AreEqual(tensor.allocator, this);
@@ -656,6 +677,9 @@ public class TensorCachingAllocator : ITensorAllocator
         Profiler.EndSample();
     }
 
+    /// <summary>
+    /// Dispose all alocated buffers
+    /// </summary>
     public virtual void Dispose()
     {
         foreach(var tensor in m_BusyTensors.Keys.ToList())
@@ -668,6 +692,9 @@ public class TensorCachingAllocator : ITensorAllocator
         m_SharedBuffers.Clear();
     }
 
+    /// <summary>
+    /// Busy bytes
+    /// </summary>
     public long busyBytes
     { get {
         long bytes = 0;
@@ -675,6 +702,10 @@ public class TensorCachingAllocator : ITensorAllocator
             bytes += GetAllocationMaxCount(tensor)  * sizeof(float);
         return bytes;
     } }
+
+    /// <summary>
+    /// Free bytes
+    /// </summary>
     public long freeBytes
     { get {
         long bytes = 0;
@@ -683,11 +714,19 @@ public class TensorCachingAllocator : ITensorAllocator
                 bytes += entry.size * sizeof(float);
         return bytes;
     } }
+
+    /// <summary>
+    /// Total bytes
+    /// </summary>
     public long totalBytes
     { get {
         return busyBytes + freeBytes;
     } }
 
+    /// <summary>
+    /// Summary
+    /// </summary>
+    /// <returns>summary</returns>
     public override string ToString()
     {
         return "Total allocated: " + totalBytes + " busy: " + busyBytes;

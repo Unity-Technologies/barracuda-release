@@ -5,12 +5,13 @@ using System;
 using System.Linq;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using UnityEngine.Assertions;
 
 [assembly: InternalsVisibleToAttribute("Barracuda.EditorTests")]
 
 namespace Unity.Barracuda.ONNX
 {
-    public class ONNXNodeWrapper
+    internal class ONNXNodeWrapper
     {
         // Layer identification (name and op)
         public static string GetName(NodeProto node)
@@ -68,6 +69,7 @@ namespace Unity.Barracuda.ONNX
         public int Input1Rank { get { return m_ONNXModelTensors.variables[Input1].rank; } }
         public VariableTensor.Layout Input0Layout { get { return m_ONNXModelTensors.variables[Input0].layout; } }
         public Tensor Input0Constant(string onnxLayout, string name = "X") { return GetRequiredInputAsConstant(Input0, onnxLayout, name); }
+        public int[] Input0ConstantONNXShape(string name) { return GetRequiredInputConstantONNXShape(Input0, name); }
         public Tensor Input1Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input1, onnxLayout, name); }
         public Tensor Input2Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input2, onnxLayout, name); }
         public Tensor Input3Constant(string onnxLayout, string name)       { return GetRequiredInputAsConstant(Input3, onnxLayout, name); }
@@ -99,7 +101,7 @@ namespace Unity.Barracuda.ONNX
         public int Axis { get { return GetRequiredInt("axis"); } }
         public int BlockSize { get { return GetRequiredInt("blocksize"); } }
         public int Group { get { return GetRequiredInt("group"); } }
-        public long[] Shape { get { return GetRequiredLongArray("shape"); } }
+        public int[] Shape { get { return GetRequiredIntArray("shape"); } }
         public int[] Starts { get { return GetRequiredIntArray("starts"); } }
         public int[] Ends { get { return GetRequiredIntArray("ends"); } }
         public int[] Axes { get { return GetRequiredIntArray("axes"); } }
@@ -206,6 +208,19 @@ namespace Unity.Barracuda.ONNX
 
             return onnxTensor.ToBarracuda(onnxLayout);
         }
+        internal int[] GetRequiredInputConstantONNXShape(string input, string onnxName)
+        {
+            if (input == "")
+                throw new OnnxLayerImportException("Input value is marked as required, but it is missing in the model.");
+
+            ONNXTensor onnxTensor;
+            if (!m_ONNXModelTensors.constants.TryGetValue(input, out onnxTensor))
+                throw new OnnxLayerImportException(
+                    $"Currently only constant tensors are supported for `{onnxName}` input in node of type {OperatorType}. Instead {Name}.{onnxName} is pointing to non constant node {input}.");
+
+            return onnxTensor.shape;
+        }
+
         internal bool IsInputConst(int inputIndex)
         {
             var input = GetRequiredInput(inputIndex);
@@ -255,7 +270,12 @@ namespace Unity.Barracuda.ONNX
         public float[] GetRequiredFloatArray(string name)
         {
             var attribute = FindAttribute(name,AttributeProto.Types.AttributeType.Floats);
-            return attribute.Floats.ToArray();//.Select(x => (float)x).ToArray();
+            return attribute.Floats.ToArray();
+        }
+        public ONNXTensor GetOptionalTensor(string name, ONNXTensor defaultValue)
+        {
+            try { return GetRequiredTensor(name); }
+            catch (OnnxLayerImportException) { return defaultValue; }
         }
         public ONNXTensor GetRequiredTensor(string name)
         {
@@ -269,7 +289,8 @@ namespace Unity.Barracuda.ONNX
         }
         public int GetRequiredInt(string name)
         {
-            return (int)FindAttribute(name, AttributeProto.Types.AttributeType.Int).I;
+            long v = FindAttribute(name, AttributeProto.Types.AttributeType.Int).I;
+            return v < int.MinValue ? int.MinValue : v > int.MaxValue ? int.MaxValue : (int)v;
         }
         public int[] GetOptionalIntArray(string name, int[] defaultValue)
         {
@@ -279,17 +300,7 @@ namespace Unity.Barracuda.ONNX
         public int[] GetRequiredIntArray(string name)
         {
             var attribute = FindAttribute(name,AttributeProto.Types.AttributeType.Ints);
-            return attribute.Ints.Select(x => (int)x).ToArray();
-        }
-        public long[] GetOptionalLongArray(string name, long[] defaultValue)
-        {
-            try { return GetRequiredLongArray(name); }
-            catch (OnnxLayerImportException) { return defaultValue; }
-        }
-        public long[] GetRequiredLongArray(string name)
-        {
-            var attribute = FindAttribute(name,AttributeProto.Types.AttributeType.Ints);
-            return attribute.Ints.ToArray();
+            return attribute.Ints.Select(v => v < int.MinValue ? int.MinValue : v > int.MaxValue ? int.MaxValue : (int)v).ToArray();
         }
         public string GetOptionalString(string name, string defaultValue)
         {
@@ -344,7 +355,7 @@ namespace Unity.Barracuda.ONNX
                 // See: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Pad
                 // `pads` should be a 1D tensor of shape [2 * input_rank].
 
-                Debug.Assert(starts.Length == ends.Length);
+                Assert.IsTrue(starts.Length == ends.Length);
 
                 if ((starts.Length < 2) ||
                     (starts[0] != 0)    || (starts[1] != 0) ||     // N
@@ -366,7 +377,7 @@ namespace Unity.Barracuda.ONNX
             // where x  is x1_begin, y is x2_begin ...
             //       x' is x1_end, y' is x2_end ...
 
-            Debug.Assert(starts.Length == ends.Length);
+            Assert.IsTrue(starts.Length == ends.Length);
             switch (starts.Length)
             {
                 case 0: return new [] { 0, 0, 0, 0 };
@@ -379,7 +390,7 @@ namespace Unity.Barracuda.ONNX
                                       ends[2],   ends[1],   ends[0] };  // 3D DHW => WHD
                 default:
                     throw new OnnxLayerImportException(
-                        $"Attribute pads of unsupported length {pads.Length} in {Name} ot fype {OperatorType}.");
+                        $"Attribute pads of unsupported length {pads.Length} in {Name} ot type {OperatorType}.");
             }
         }
 
@@ -388,7 +399,7 @@ namespace Unity.Barracuda.ONNX
             float[] scales;
             if (InputCount > 2) // Resize-11
             {
-                Debug.Assert(OperatorType == "Resize");
+                Assert.IsTrue(OperatorType == "Resize");
                 scales = Input2Constant(onnxLayout:"C", name:"scales").AsFloats();
             }
             else if (InputCount > 1) // Resize-10, Upsample-9
@@ -397,7 +408,7 @@ namespace Unity.Barracuda.ONNX
             }
             else
             {
-                Debug.Assert(OperatorType == "Upsample");
+                Assert.IsTrue(OperatorType == "Upsample");
                 scales = GetOptionalFloatArray("scales", new float[0]); // Upsample-7
                 if (scales?.Length == 0) // Upsample-1
                 {
@@ -407,7 +418,7 @@ namespace Unity.Barracuda.ONNX
                                      GetRequiredFloat("width_scale") };
                 }
             }
-            Debug.Assert(scales != null);
+            Assert.IsTrue(scales != null);
 
             if ((scales.Length < 2) ||
                 (scales[0] != 1)    || (scales[1] != 1))
@@ -426,32 +437,32 @@ namespace Unity.Barracuda.ONNX
                     return new [] { scales[2], scales[1], scales[0] };  // 3D DHW => WHD
                 default:
                     throw new OnnxLayerImportException(
-                        $"Attribute pads of unsupported length {scales.Length} in {Name} ot fype {OperatorType}.");
+                        $"Attribute pads of unsupported length {scales.Length} in {Name} ot type {OperatorType}.");
             }
         }
 
         private int[] ConvertSizesToBarracuda()
         {
             int[] sizes = null;
-            Debug.Assert(OperatorType == "Resize");
-            Debug.Assert(InputCount == 4);
+            Assert.IsTrue(OperatorType == "Resize");
+            Assert.IsTrue(InputCount == 4);
 
             if (IsInput3Const)
             {
                 sizes = Input3Constant(onnxLayout: "C", name: "sizes").AsInts();
-                Debug.Assert(sizes != null);
-                Debug.Assert(sizes.Length == 4);
+                Assert.IsTrue(sizes != null);
+                Assert.IsTrue(sizes.Length == 4);
 
                 if ((sizes[0] != 1) || (sizes[1] != 1))
                     Warn("Only spatial (H and W) resizing is currently supported." +
-                        " Non spatial sizes (N and C) will be ignored and default to 1.");
+                        " Non spatial sizes (N and C) will be ignored and default to identity.");
 
                 // Skip non-spatial dimensions N, C, return WH (NCHW layout)
                 sizes = sizes.Skip(2).Reverse().ToArray();
             }
             else
                 throw new OnnxLayerImportException(
-                    $"Only constant size values are currently supported in {Name} ot fype {OperatorType}.");
+                    $"Only constant size values are currently supported in {Name} ot type {OperatorType}.");
 
             return sizes;
         }
