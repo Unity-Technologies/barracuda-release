@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Profiling;
 
 namespace Unity.Barracuda
 {
@@ -8,22 +9,69 @@ namespace Unity.Barracuda
     /// </summary>
     public sealed class ComputeShaderSingleton
     {
+
+
+        private ComputeShader _referenceKernels;
+        private ComputeShader _textureKernels;
+        private ComputeShader[] _kernels;
+
         /// <summary>
         /// Reference compute kernels
         /// </summary>
-        public readonly ComputeShader referenceKernels;
+        public ComputeShader referenceKernels
+        {
+            get
+            {
+                return  _referenceKernels ?? (_referenceKernels = LoadReferenceKernels());
+            }
+        }
 
         /// <summary>
         /// Optimized kernels
         /// </summary>
-        public readonly ComputeShader[] kernels;
+        public ComputeShader[] kernels
+        {
+            get
+            {
+                return  _kernels ?? (_kernels = LoadKernels());
+            }
+        }
+
+        /// <summary>
+        /// Texture kernels
+        /// </summary>
+        public ComputeShader texureKernels
+        {
+            get
+            {
+                return  _textureKernels ?? (_textureKernels = LoadTextureKernels());
+            }
+        }
 
         private static readonly ComputeShaderSingleton instance = new ComputeShaderSingleton ();
 
         private ComputeShaderSingleton ()
         {
-            referenceKernels = LoadIf(ComputeInfo.supportsCompute, "BarracudaReferenceImpl");
+        }
 
+        private ComputeShader LoadReferenceKernels()
+        {
+            Profiler.BeginSample("Barracuda.LoadReferenceKernels");
+            var res = LoadIf(ComputeInfo.supportsCompute, "BarracudaReferenceImpl");
+            Profiler.EndSample();
+            return res;
+        }
+
+        private ComputeShader LoadTextureKernels()
+        {
+            Profiler.BeginSample("Barracuda.LoadTextureKernels");
+            var res = LoadIf(ComputeInfo.supportsCompute, "TextureUtils");
+            Profiler.EndSample();
+            return res;
+        }
+        private ComputeShader[] LoadKernels()
+        {
+            Profiler.BeginSample("Barracuda.LoadOptimizedKernels");
             List<ComputeShader> kernelsList = new List<ComputeShader>();
 
             LoadIf(ComputeInfo.supportsCompute, "Generic", kernelsList);
@@ -35,7 +83,10 @@ namespace Unity.Barracuda
             LoadIf(ComputeInfo.supportsCompute, "DenseFP16", kernelsList);
             LoadIf(ComputeInfo.supportsCompute, "Conv", kernelsList);
 
-            kernels = kernelsList.ToArray();
+            var res = kernelsList.ToArray();
+            Profiler.EndSample();
+
+            return res;
         }
 
         /// <summary>

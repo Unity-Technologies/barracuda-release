@@ -151,6 +151,13 @@ namespace Unity.Barracuda.ONNX
             m_ImporterWarnings.Add(new Model.ImporterWarning(Name, message));
             Debug.LogWarning(message);
         }
+
+        public bool HasAttribute(string name)
+        {
+            AttributeProto attr;
+            return TryFindAttribute(name, out attr);
+        }
+
         public void UnsupportedAttribute(string name)
         {
             AttributeProto attr;

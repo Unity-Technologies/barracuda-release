@@ -115,21 +115,52 @@ internal class ModelAnalyzer
 
                 var Y = shapesByName[l.inputs[1]].Value;
 
-                // MatMul on 2D input: N,1,1,C
-                // MatMul on ND inputs: N,H,W,C with N*C = batches
-                var isStackOfMatrices = (X.dimensions != 2) || (Y.dimensions != 2);
-                if (isStackOfMatrices)
-                {
-                    // X is multidim so N,H,W,c with H,W matmul dims
-                    var batches = X.batch * X.channels;
-                    Assert.AreEqual(X.batch * X.channels, Y.batch * Y.channels);
+                // ONNX rank 2 : N,C => N,1,1,C
+                //      rank 3 : one must be N C W, (batches = N) => N, 1, W, C
+                //      rank 4 : one must be N C H W, (batches = N * C) => N H W C
+                // X and Y can be different ranks
+                var onnxXshape = new List<int> { X.batch, X.channels, X.height, X.width };
+                if (X.height == 1) onnxXshape = new List<int> { X.batch, X.channels, X.width, 1 };
+                var onnxYshape = new List<int> { Y.batch, Y.channels, Y.height, Y.width };
+                if (Y.height == 1) onnxYshape = new List<int> { Y.batch, Y.channels, Y.width, 1 };
 
-                    O = new TensorShape(X.batch, X.height, Y.width, X.channels);
-                }
-                else
+                int rankX = 0;
+                for (int i = 3; i >= 0; i--)
                 {
-                    O = new TensorShape(X.flatHeight, Y.flatWidth);
+                    if (onnxXshape[i] != 1)
+                    {
+                        rankX = i + 1;
+                        break;
+                    }
                 }
+                int rankY = 0;
+                for (int i = 3; i >= 0; i--)
+                {
+                    if (onnxYshape[i] != 1)
+                    {
+                        rankY = i + 1;
+                        break;
+                    }
+                }
+
+                int rankO = Math.Max(rankX, rankY);
+
+                // pad 1 on front of shape to both be rankO shape
+                for (int i = 0; i < (rankX - rankY); i++)
+                    onnxYshape.Insert(0, 1);
+                onnxYshape.RemoveRange(4, onnxYshape.Count - 4);
+
+                for (int i = 0; i < (rankY - rankX); i++)
+                    onnxXshape.Insert(0, 1);
+                onnxXshape.RemoveRange(4, onnxXshape.Count - 4);
+
+ 
+                if (rankO == 2)
+                    O = new TensorShape(onnxXshape[0], 1, 1, onnxYshape[1]);
+                else if (rankO == 3)
+                    O = new TensorShape(Math.Max(onnxXshape[0], onnxYshape[0]), 1, onnxYshape[2], onnxXshape[1]);
+                else
+                    O = new TensorShape(Math.Max(onnxXshape[0], onnxYshape[0]), onnxXshape[2], onnxYshape[3], Math.Max(onnxXshape[1], onnxYshape[1]));
             }
             else if (
                 l.type == Layer.Type.Conv2D ||
@@ -265,7 +296,11 @@ internal class ModelAnalyzer
                 Assert.AreEqual(l.pool.Length, 1);
                 int features = X.flatWidth;
                 int depth = l.pool[0];
-                O = new TensorShape(X.batch, 1, features, depth);
+
+                if (X.flatWidth == 1) // 1D input
+                    O = new TensorShape(X.batch, depth);
+                else
+                    O = new TensorShape(X.batch, 1, depth, features);
             }
             else if (
                 l.type == Layer.Type.Add ||
@@ -308,7 +343,9 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.ReduceMin ||
                 l.type == Layer.Type.ReduceProd ||
                 l.type == Layer.Type.ReduceSum ||
-                l.type == Layer.Type.ReduceSumSquare)
+                l.type == Layer.Type.ReduceSumSquare ||
+                l.type == Layer.Type.ArgMax ||
+                l.type == Layer.Type.ArgMin)
             {
                 O = X.Reduce(l.axis);
             }

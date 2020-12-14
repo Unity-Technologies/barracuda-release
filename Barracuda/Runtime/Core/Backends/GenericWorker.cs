@@ -29,7 +29,9 @@ public class GenericWorker : IWorker
     private IVars m_Vars;
     private IModelCompiler m_ModelCompiler;
     private Tensor m_DummyInput;
-    private bool m_RequestResetAllocator;
+
+    private bool m_AllocatorIsStale = false;
+    private bool m_AllocatorIsOccupied = false;
     private bool m_Verbose;
     private float m_Progress = 0f;
 
@@ -58,7 +60,7 @@ public class GenericWorker : IWorker
         m_DummyInput = new Tensor();
         m_Verbose = verbose;
 
-        m_RequestResetAllocator = true;
+        m_AllocatorIsStale = true;
     }
 
     /// <summary>
@@ -69,11 +71,25 @@ public class GenericWorker : IWorker
         Dispose();
     }
 
-    internal void ResetAllocatorIfRequested()
+    internal void OccupyAllocator()
     {
-        if (m_RequestResetAllocator)
+        m_AllocatorIsOccupied = true;
+    }
+
+    internal void ResetAllocatorIfStale()
+    {
+        if (m_AllocatorIsStale)
+        {
             m_Ops.ResetAllocator();
-        m_RequestResetAllocator = false;
+            m_AllocatorIsStale = false;
+            m_AllocatorIsOccupied = false;
+        }
+    }
+
+    internal void ResetAllocatorIfStaleAndNotOccupied()
+    {
+        if (!m_AllocatorIsOccupied)
+            ResetAllocatorIfStale();
     }
 
     /// <summary>
@@ -103,7 +119,9 @@ public class GenericWorker : IWorker
     /// <inheritdoc/>
     public virtual void SetInput(string name, Tensor x)
     {
-        ResetAllocatorIfRequested();
+        ResetAllocatorIfStale();
+        OccupyAllocator();
+
         m_Ops.Prepare(x);
         m_Vars.SetInput(name, x);
 
@@ -188,7 +206,9 @@ public class GenericWorker : IWorker
     /// <inheritdoc/>
     public virtual IEnumerator StartManualSchedule()
     {
-        ResetAllocatorIfRequested();
+        ResetAllocatorIfStaleAndNotOccupied();
+        m_AllocatorIsStale = true;
+
         m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes);
 
         if (m_ModelCompiler != null)
@@ -539,47 +559,55 @@ public class GenericWorker : IWorker
                      l.type == Layer.Type.ReduceMean ||
                      l.type == Layer.Type.ReduceMin  ||
                      l.type == Layer.Type.ReduceProd ||
-                     l.type == Layer.Type.ReduceSum)
+                     l.type == Layer.Type.ReduceSum ||
+                     l.type == Layer.Type.ArgMax ||
+                     l.type == Layer.Type.ArgMin)
             {
                 Profiler.BeginSample ("Barracuda.Reduce");
 
                 TensorShape xShape = X.shape;
                 int axis = xShape.Axis(l.axis); // Adjust for negative axis values
 
-                if (xShape[axis] == 1) // Nothing to reduce
-                    break;
-
-                // All Reduce operations assume that the reduction happens in C, so transpose accordingly
-                axis = TensorExtensions.Convert8DAxisToNHWC(axis);
-                int[] permutation = { 0, 1, 2, 3 }; // Transpose permutations are still in NHWC (rank 4)
-                permutation[3] = axis;
-                permutation[axis] = 3;
-
-                if (axis != 3) // In NHWC this is C
-                    X = m_Ops.Transpose(X, permutation);
-
-                int defaultAxis = TensorExtensions.NHWCTo8DAxis(3);
-                switch (l.type)
+                if (xShape[axis] != 1) // Nothing to reduce
                 {
-                    case Layer.Type.ReduceMax:
-                        X = m_Ops.ReduceMax(X, defaultAxis);
-                        break;
-                    case Layer.Type.ReduceMean:
-                        X = m_Ops.ReduceMean(X, defaultAxis);
-                        break;
-                    case Layer.Type.ReduceMin:
-                        X = m_Ops.ReduceMin(X, defaultAxis);
-                        break;
-                    case Layer.Type.ReduceProd:
-                        X = m_Ops.ReduceProd(X, defaultAxis);
-                        break;
-                    case Layer.Type.ReduceSum:
-                        X = m_Ops.ReduceSum(X, defaultAxis);
-                        break;
-                }
+                    // All Reduce operations assume that the reduction happens in C, so transpose accordingly
+                    axis = TensorExtensions.Convert8DAxisToNHWC(axis);
+                    int[] permutation = { 0, 1, 2, 3 }; // Transpose permutations are still in NHWC (rank 4)
+                    permutation[3] = axis;
+                    permutation[axis] = 3;
 
-                if (axis != 3)
-                    X = m_Ops.Transpose(X, permutation);
+                    if (axis != 3) // In NHWC this is C
+                        X = m_Ops.Transpose(X, permutation);
+
+                    int defaultAxis = TensorExtensions.NHWCTo8DAxis(3);
+                    switch (l.type)
+                    {
+                        case Layer.Type.ReduceMax:
+                            X = m_Ops.ReduceMax(X, defaultAxis);
+                            break;
+                        case Layer.Type.ReduceMean:
+                            X = m_Ops.ReduceMean(X, defaultAxis);
+                            break;
+                        case Layer.Type.ReduceMin:
+                            X = m_Ops.ReduceMin(X, defaultAxis);
+                            break;
+                        case Layer.Type.ReduceProd:
+                            X = m_Ops.ReduceProd(X, defaultAxis);
+                            break;
+                        case Layer.Type.ReduceSum:
+                            X = m_Ops.ReduceSum(X, defaultAxis);
+                            break;
+                        case Layer.Type.ArgMax:
+                            X = m_Ops.ArgMax(X, defaultAxis);
+                            break;
+                        case Layer.Type.ArgMin:
+                            X = m_Ops.ArgMin(X, defaultAxis);
+                            break;
+                    }
+
+                    if (axis != 3)
+                        X = m_Ops.Transpose(X, permutation);
+                }
             }
             else if (
                 l.type == Layer.Type.ReduceL1 ||
@@ -770,7 +798,10 @@ public class GenericWorker : IWorker
             }
             else if (l.type == Layer.Type.Tile)
             {
-                throw new NotImplementedException();
+                Profiler.BeginSample ("Barracuda.Tile");
+
+                Assert.AreEqual(l.pool.Length, 4);
+                X = m_Ops.Tile(X, l.pool);
             }
             // Activations
             else if (l.type == Layer.Type.Activation)
@@ -938,7 +969,7 @@ public class GenericWorker : IWorker
         }
 
         // request ResetAllocator before next Execute() starts
-        m_RequestResetAllocator = true;
+        m_AllocatorIsOccupied = false;
 
         if (m_Verbose)
             D.Log(m_Vars.GetAllocator());

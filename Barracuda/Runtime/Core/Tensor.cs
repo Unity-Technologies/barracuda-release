@@ -1,5 +1,6 @@
 using UnityEngine.Assertions;
 using System;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 namespace Unity.Barracuda {
@@ -900,6 +901,25 @@ public struct TensorIterator
     }
 
     /// <summary>
+    /// Index with replaced `axis` value
+    /// </summary>
+    /// <param name="axis">axis to replace</param>
+    /// <param name="newDimensionValue">new value for specific axis</param>
+    /// <returns>index</returns>
+    public int IndexWithReplacedAxis(int axis, int newDimensionValue)
+    {
+        int nd0 = axis == 0 ? newDimensionValue : d0;
+        int nd1 = axis == 1 ? newDimensionValue : d1;
+        int nd2 = axis == 2 ? newDimensionValue : d2;
+        int nd3 = axis == 3 ? newDimensionValue : d3;
+        int nd4 = axis == 4 ? newDimensionValue : d4;
+        int nd5 = axis == 5 ? newDimensionValue : d5;
+        int nd6 = axis == 6 ? newDimensionValue : d6;
+        int nd7 = axis == 7 ? newDimensionValue : d7;
+        return shape.Index(nd0, nd1, nd2, nd3, nd4, nd5, nd6, nd7);
+    }
+
+    /// <summary>
     /// Access specific axis value
     /// </summary>
     /// <param name="axis">axis</param>
@@ -1144,6 +1164,83 @@ public class Tensor : IDisposable
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
+    /// <summary>
+    /// Create a Tensor from a `shape`, an array of data `srcData` and an optional name debug `name`.
+    /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
+    /// S and R must be 1.
+    /// `srcData` must be of size `s[0]*s[1]*s[2]*s[3]*s[4]*s[5]*s[6]*s[7]`.
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(int[] shape, float[,] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+
+    /// <summary>
+    /// Create a Tensor of shape [1,1,N,1,1,1,1,C], an array of data `srcData` and an optional debug `name`.
+    /// `srcData` must be of size `n*c`.
+    /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(int n, int c, float[,] srcData, string name = "") : this(new TensorShape(n, c), srcData, name) {}
+
+    /// <summary>
+    /// Create a Tensor with specified `shape`, an array of data `srcData` and an optional debug `name`.
+    /// `srcData` must be of size `shape.length`.
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(TensorShape shape, float[,] srcData, string name = "") : this(shape, (Array)srcData, name) {}
+
+    internal Tensor(TensorShape shape, Array srcData, string name = "")
+    {
+        this.name = name;
+        this.shape = shape;
+        var arrayTensorData = new ArrayTensorData(shape);
+
+        Buffer.BlockCopy(srcData, 0, arrayTensorData.array, 0,
+            Math.Min(shape.length, srcData.Length)*Marshal.SizeOf<float>());
+
+        m_TensorOnDevice = arrayTensorData;
+        m_TensorAllocator = null;
+        m_Cache = null;
+        m_CacheIsDirty = false;
+    }
+
+    /// <summary>
+    /// Create a Tensor from a `shape`, an array of data `srcData` and an optional name debug `name`.
+    /// `shape` must be of size 8, the order is [S,R,N,T,D,H,W,C].
+    /// S and R must be 1.
+    /// `srcData` must be of size `s[0]*s[1]*s[2]*s[3]*s[4]*s[5]*s[6]*s[7]`.
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(int[] shape, float[,,,] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+
+    /// <summary>
+    /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an array of data `srcData` and an optional debug `name`.
+    /// `srcData` must be of size `n*h*w*c`.
+    /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(int n, int h, int w, int c, float[,,,] srcData, string name = "") : this(new TensorShape(n, h, w, c), srcData, name) {}
+
+    /// <summary>
+    /// Create a Tensor with specified `shape`, an array of data `srcData` and an optional debug `name`.
+    /// `srcData` must be of size `shape.length`.
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(TensorShape shape, float[,,,] srcData, string name = "") : this(shape, (Array)srcData, name) {}
 
     /// <summary>
     /// Create a Tensor from a `shape`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
@@ -1697,7 +1794,7 @@ public class Tensor : IDisposable
     /// <param name="lut">lut table</param>
     public void ToRenderTexture(UnityEngine.RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut = null)
     {
-        var gpuBackend = new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels);
+        var gpuBackend = new ReferenceComputeOps(null);
         gpuBackend.TensorToRenderTexture(this, target, batch, fromChannel, scale, bias, lut);
     }
 

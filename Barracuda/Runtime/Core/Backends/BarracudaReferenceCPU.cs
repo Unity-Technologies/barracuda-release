@@ -415,50 +415,146 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
-        if(X.dimensions <= 2 && Y.dimensions <= 2)
+        // TODO: custom kernel
+        // ONNX rank 2 : N,C => N,1,1,C
+        //      rank 3 : one must be N C W, (batches = N) => N, 1, W, C
+        //      rank 4 : one must be N C H W, (batches = N * C) => N H W C
+        // X and Y can be different ranks
+        // TODO: keep track of shape rank, for now figure things out
+        var onnxXshape = new List<int> { X.batch, X.channels, X.height, X.width };
+        if (X.height == 1) onnxXshape = new List<int> { X.batch, X.channels, X.width, 1 };
+        var onnxYshape = new List<int> { Y.batch, Y.channels, Y.height, Y.width };
+        if (Y.height == 1) onnxYshape = new List<int> { Y.batch, Y.channels, Y.width, 1 };
+
+        int rankX = 0;
+        for (int i = 3; i >= 0; i--)
         {
-            return MatMul2D(X, false, Y, false);
+            if (onnxXshape[i] != 1)
+            {
+                rankX = i + 1;
+                break;
+            }
+        }
+        int rankY = 0;
+        for (int i = 3; i >= 0; i--)
+        {
+            if (onnxYshape[i] != 1)
+            {
+                rankY = i + 1;
+                break;
+            }
         }
 
-        Assert.AreEqual(X.dimensions, Y.dimensions);
-        Assert.AreEqual(X.batch*X.channels, Y.batch*Y.channels);
+        int rankO = Math.Max(rankX, rankY);
 
-        var O = NewTensor(X.batch, X.height, Y.width, X.channels);
-        var Z = NewTensor(X.height, Y.width);
+        if (rankO <= 2)
+            return MatMul2D(X, false, Y, false);
 
-        var starts = new[] { 0, 0, 0, 0 };
-        var endsX = new[] { 1, X.height, X.width, 0 };
-        var endsY = new[] { 1, Y.height, Y.width, 0 };
+        // pad 1 on front of shape to both be rankO shape
+        for (int i = 0; i < (rankX - rankY); i++)
+            onnxYshape.Insert(0, 1);
+        onnxYshape.RemoveRange(4, onnxYshape.Count - 4);
+
+        for (int i = 0; i < (rankY - rankX); i++)
+            onnxXshape.Insert(0, 1);
+        onnxXshape.RemoveRange(4, onnxXshape.Count - 4);
+
+        int matN = 1;
+        int matC = 1;
+        int matH = 1;
+        int matW = 1;
+        Tensor O;
+        if (rankO == 3)
+        {
+            matC = Math.Max(onnxXshape[0], onnxYshape[0]);
+            matH = onnxXshape[1];
+            matW = onnxYshape[2];
+            O = NewTensor(new TensorShape(matC, 1, matW, matH));
+        }
+        else
+        {
+            matN = Math.Max(onnxXshape[0], onnxYshape[0]);
+            matC = Math.Max(onnxXshape[1], onnxYshape[1]);
+            matH = onnxXshape[2];
+            matW = onnxYshape[3];
+            O = NewTensor(new TensorShape(matN, matH, matW, matC));
+        }
+
+        var Xt = Transpose(X, new[] { 0, 3, 1, 2 });
+        var Yt = Transpose(Y, new[] { 0, 3, 1, 2 });
+        if (rankX == 2)
+            Xt = Reshape(Xt, new TensorShape(1, 1, Xt.batch, Xt.height));
+        else if (rankX == 3)
+            Xt = Reshape(Xt, new TensorShape(1, Xt.batch, Xt.height, Xt.channels));
+        if (rankY == 2)
+            Yt = Reshape(Yt, new TensorShape(1, 1, Yt.batch, Yt.height));
+        else if (rankY == 3)
+            Yt = Reshape(Yt, new TensorShape(1, Yt.batch, Yt.height, Yt.channels));
+
+        var startsX = new[] { 0, 0, 0, 0 };
+        var startsY = new[] { 0, 0, 0, 0 };
+
+        var endsX = new[] { 1, 1, Xt.width, Xt.channels };
+        var endsY = new[] { 1, 1, Yt.width, Yt.channels };
         var strides = new[] { 1, 1, 1, 1 };
 
-        for (int b = 0; b < X.batch; b++)
+        for (int b = 0; b < matN; b++)
         {
-            starts[0] = b;
-            starts[3] = 0;
-            endsX[0] = b + 1;
-            endsY[0] = b + 1;
-            endsX[3] = 1;
-            endsY[3] = 1;
-            Tensor Xs = StridedSlice(X, starts, endsX, strides); Xs = Reshape(Xs, new TensorShape(Xs.height, Xs.width));
-            Tensor Ys = StridedSlice(Y, starts, endsY, strides); Ys = Reshape(Ys, new TensorShape(Ys.height, Ys.width));
-            Tensor Oc = MatMul2D(Xs, false, Ys, false);
-            Oc = Reshape(Oc, new TensorShape(1, Oc.batch, Oc.channels, 1));
-            for (int c = 1; c < X.channels; c++)
-            {
-                starts[3] = c;
-                endsX[3] = c + 1;
-                endsY[3] = c + 1;
+            Tensor Ob = NewTensorLike(O);
 
-                Xs = StridedSlice(X, starts, endsX, strides); Xs = Reshape(Xs, new TensorShape(Xs.height, Xs.width));
-                Ys = StridedSlice(Y, starts, endsY, strides); Ys = Reshape(Ys, new TensorShape(Ys.height, Ys.width));
-                Z = MatMul2D(Xs, false, Ys, false); Z = Reshape(Z, new TensorShape(1, Z.batch, Z.channels, 1));
-                Oc = Concat(new[] { Oc, Z }, TensorShape.C);
+            if (rankX == 4)
+            {
+                startsX[0] = b;
+                endsX[0] = b + 1;
+            }
+            if (rankY == 4)
+            {
+                startsY[0] = b;
+                endsY[0] = b + 1;
             }
 
+            for (int c = 0; c < matC; c++)
+            {
+                if (rankX >= 3)
+                {
+                    startsX[1] = c;
+                    endsX[1] = c + 1;
+                }
+                if (rankY >= 3)
+                {
+                    startsY[1] = c;
+                    endsY[1] = c + 1;
+                }
+
+                // __NC -> N__C
+                Tensor Xs = StridedSlice(Xt, startsX, endsX, strides); Xs = Reshape(Xs, new TensorShape(Xt.width, Xt.channels));
+                Tensor Ys = StridedSlice(Yt, startsY, endsY, strides); Ys = Reshape(Ys, new TensorShape(Yt.width, Yt.channels));
+                Tensor Oc = MatMul2D(Xs, false, Ys, false);
+                if (rankO == 2)
+                {
+                    Ob = Oc;
+                }
+                if (rankO == 3)
+                {
+                    Oc = Transpose(Oc, new[] { 1, 2, 3, 0 }); // N__C -> _1,C,N
+                    if (c == 0)
+                        Ob = Oc;
+                    else
+                        Ob = Concat(new[] { Ob, Oc }, TensorShape.DataBatch);
+                }
+                else if (rankO == 4)
+                {
+                    Oc = Reshape(Oc, new TensorShape(1, Oc.batch, Oc.channels, 1)); // N__C -> _,N,C,_
+                    if (c == 0)
+                        Ob = Oc;
+                    else
+                        Ob = Concat(new[] { Ob, Oc }, TensorShape.C);
+                }
+            }
             if (b == 0)
-                O = Oc;
+                O = Ob;
             else
-                O = Concat(new[] { O, Oc }, TensorShape.DataBatch);
+                O = Concat(new[] { O, Ob }, TensorShape.DataBatch);
         }
 
         return O;
@@ -1436,18 +1532,27 @@ public class ReferenceCPUOps : IOps
         if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
             throw new NotImplementedException();
 
-        var O = NewTensor(X.flatHeight, 1, X.flatWidth, depth);
+        bool isInput1D = (X.flatWidth == 1);
+
+        Tensor O;
+        if (isInput1D)
+            O = NewTensor(X.flatHeight, depth);
+        else
+            O = NewTensor(X.flatHeight, 1, depth, X.flatWidth);
 
         for (int n = 0; n < X.flatHeight; ++n)
         {
-            for (int j = 0; j < X.flatWidth; ++j)
+            for (int j = 0; j < depth; ++j)
             {
-                int index = (int)X[n, j];
-                for (int i = 0; i < depth; ++i)
+                for (int i = 0; i < X.flatWidth; ++i)
                 {
-                    float v = (i == index) ? onValue: offValue;
-                    O[n, 0, j, i] = v;
-                }
+                    int index = (int)X[n, i];
+                    float v = (j == index) ? onValue: offValue;
+                        if (isInput1D)
+                            O[n, j] = v;
+                        else
+                            O[n, 0, j, i] = v;
+                    }
             }
         }
         return O;
@@ -2287,7 +2392,22 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Tile(Tensor X, int[] repeats)
     {
-        throw new NotImplementedException();
+        Tensor O = NewTensor(X.shape.Scale(repeats));
+        TensorShape Oshape = O.shape;
+
+        for (var it = new TensorIterator(O); it.IsValid(); it.Next())
+        {
+            // sample either from dim or index 0 in case of expansion
+            O[it.index] = X[it.d0 % X.shape[0],
+                            it.d1 % X.shape[1],
+                            it.d2 % X.shape[2],
+                            it.d3 % X.shape[3],
+                            it.d4 % X.shape[4],
+                            it.d5 % X.shape[5],
+                            it.d6 % X.shape[6],
+                            it.d7 % X.shape[7]];
+        }
+        return O;
     }
 
     /// <inheritdoc/>
@@ -2455,6 +2575,54 @@ public class ReferenceCPUOps : IOps
         {
             int iO = itX.IndexInReducedShape(O.shape);
             O[iO] = Mathf.Max(O[iO], X[itX.index]);
+        }
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor ArgMax(Tensor X, int axis)
+    {
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
+
+        var O = NewTensor(X.shape.Reduce(axis));
+
+        for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
+        {
+            O[itO.index] = 0;
+        }
+
+        for (var itX = new TensorIterator(X.shape); itX.IsValid(); itX.Next())
+        {
+            int iO = itX.IndexInReducedShape(O.shape);
+            int xBestValueIndex = itX.IndexWithReplacedAxis(axis, (int) O[iO]);
+            if (X[itX.index] > X[xBestValueIndex])
+                O[iO] = itX[axis];
+        }
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor ArgMin(Tensor X, int axis)
+    {
+        if (!X.shape.IsNHWC())
+            throw new NotImplementedException();
+
+        var O = NewTensor(X.shape.Reduce(axis));
+
+        for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
+        {
+            O[itO.index] = 0;
+        }
+
+        for (var itX = new TensorIterator(X.shape); itX.IsValid(); itX.Next())
+        {
+            int iO = itX.IndexInReducedShape(O.shape);
+            int xBestValueIndex = itX.IndexWithReplacedAxis(axis, (int) O[iO]);
+            if (X[itX.index] <  X[xBestValueIndex])
+                O[iO] = itX[axis];
         }
 
         return O;

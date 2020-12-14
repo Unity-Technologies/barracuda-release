@@ -57,6 +57,8 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 * ReduceMin
 * ReduceProd
 * ReduceSum
+* ArgMax
+* ArgMin
 * Identity
 * Cast
 * Dropout

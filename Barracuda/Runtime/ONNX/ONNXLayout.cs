@@ -46,15 +46,21 @@ namespace Unity.Barracuda.ONNX
             if (onnxRank > maxRank)
                 throw new OnnxLayerImportException($"Only tensors of rank {maxRank} or less are supported for layout {onnxLayout}, but got rank {onnxRank}");
 
-            else if (onnxLayout == "RNC1C2HW") // NDC1C2HW -> __NDHWC1C2, // NC1C2HW -> __N_HWC1C2
+            else if (onnxLayout == "NC0C1HW") // NC0C1HW -> __N_HWC0C1
                 switch (onnxRank)
                 {
-                    case 6:
-                        return new int[] { _, _, 0, 1, 4, 5, 2, 3};
                     case 5:
                         return new int[] { _, _, 0, _, 3, 4, 1, 2};
                     default:
-                        throw new OnnxLayerImportException($"NC1C2HW layout requires weight tensor of rank >5, but got {onnxRank}");
+                        throw new OnnxLayerImportException($"NC0C1HW layout requires weight tensor of rank 5, but got {onnxRank}");
+                }
+            else if (onnxLayout == "NC0C1C2HW") // NC0C1C2HW -> __NHWC0C1C2
+                switch (onnxRank)
+                {
+                    case 6:
+                        return new int[] { _, _, 0, 4, 5, 1, 2, 3};
+                    default:
+                        throw new OnnxLayerImportException($"NC0C1C2HW layout requires weight tensor of rank 6, but got {onnxRank}");
                 }
             else if (onnxLayout == "NCTDHW" || onnxLayout == "NCHW") // NCTDHW -> __NTDHWC, NCHW -> __N__HWC
                 switch (onnxRank)
@@ -247,7 +253,7 @@ namespace Unity.Barracuda.ONNX
             return permutationsNCTDHW;
         }
 
-        public static int[] ConvertPermutationToLayout(int[] sourcePermutations, string sourceLayout, string targetLayout, bool useSemanticToLookupInSourceLayout=true)
+        public static int[] ConvertPermutationToLayout(int[] sourcePermutations, string sourceLayout, string targetLayout)
         {
             //Given a permutation in `sourceLayout` format, this function return the semantically equivalent permutation in `targetLayout`.
             //For example if `sourceLayout` is NCHW, `sourcePermutations` is 0132 (swapping H and W), and targetLayout is `NHWC`
@@ -260,15 +266,11 @@ namespace Unity.Barracuda.ONNX
             //For each target dimension
             for(int idTarget = 0; idTarget<targetPermutation.Length; ++idTarget)
             {
-                int sourceDestinationSemanticIndex = idTarget;
-                if (useSemanticToLookupInSourceLayout)
-                {
-                    //Find target semantic.
-                    char destinationSemantic = targetLayout[idTarget];
-                    //Find semantic index in `sourceLayout`
-                    sourceDestinationSemanticIndex = sourceLayout.IndexOf(destinationSemantic);
-                    Assert.IsTrue(sourceDestinationSemanticIndex != -1);
-                }
+                //Find target semantic.
+                char destinationSemantic = targetLayout[idTarget];
+                //Find semantic index in `sourceLayout`
+                int sourceDestinationSemanticIndex = sourceLayout.IndexOf(destinationSemantic);
+                Assert.IsTrue(sourceDestinationSemanticIndex != -1);
                 //Find permutation in `sourceLayout` space.
                 int sourcePermutationSemanticIndex = sourcePermutations[sourceDestinationSemanticIndex];
                 //Find permutation semantic
@@ -300,26 +302,30 @@ namespace Unity.Barracuda.ONNX
 
         public static int[] ConvertReshapeToBarracuda(int[] onnxShape, int inputRank, out int numDimensionContainingChannelsInformationAfterReshape)
         {
+            //sufflenet and super_resolution_cnn are splitting channels into two dimensions
+            //care need to be taken as C is channelLast in Barracuda and channelFirst in ONNX:
+            //An example from shufflenet:
+            //ONNX    => NCHW 1,112,56,56 -> NC1C2HW 1,4,28,56,56 should map to
+            //Barruda => NHWC 1,56,56,112 -> NHWC1C2 1,56,56,4,28 (and not 1,4,56,56,28)
+            //Another example from sub_pixel_cnn
+            //ONNX    => NCHW 1,9,224,224 -> NC1C2HW 1,3,3,224,224 should map to
+            //Barruda => NHWC 1,224,224,9 -> NHWC1C2 1,3,3,224,224 (and not 1,3,224,224,3)
+            //However we don't support multidimensional features. Thus Barracuda will instead have:
+            //shufflenet    -> NTDHWC with C=45,W=4,H=56,D=56,T=1,N=1
+            //sub_pixel_cnn -> NTDHWC with C=224,W=224,H=3,D=3,T=1,N=1
+            //further more we need to keep this information for Transpose layer that follow in those architectures.
+            //indeed convertion from transpose parameters in channelFirst vs channelLast is dependant of
+            //the number of dimensions channels are represented by.
             var outputRank = onnxShape.Length;
-            if (inputRank == 4 && outputRank > 4)
+            if (inputRank == 4 && outputRank == 5)
             {
-                //sufflenet and super_resolution_cnn are splitting channels into two dimensions
-                //care need to be taken as C is channelLast in Barracuda and channelFirst in ONNX:
-                //An example from shufflenet:
-                //ONNX    => NCHW 1,112,56,56 -> NC1C2HW 1,4,28,56,56 should map to
-                //Barruda => NHWC 1,56,56,112 -> NHWC1C2 1,56,56,4,28 (and not 1,4,56,56,28)
-                //Another example from sub_pixel_cnn
-                //ONNX    => NCHW 1,9,224,224 -> NC1C2HW 1,3,3,224,224 should map to
-                //Barruda => NHWC 1,224,224,9 -> NHWC1C2 1,3,3,224,224 (and not 1,3,224,224,3)
-                //However we don't support multidimensional features. Thus Barracuda will instead have:
-                //shufflenet    -> NTDHWC with C=45,W=4,H=56,D=56,T=1,N=1
-                //sub_pixel_cnn -> NTDHWC with C=224,W=224,H=3,D=3,T=1,N=1
-                //further more we need to keep this information for Transpose layer that follow in those architectures.
-                //indeed convertion from transpose parameters in channelFirst vs channelLast is dependant of
-                //the number of dimensions channels are represented by.
-
                 numDimensionContainingChannelsInformationAfterReshape = 2;
-                return ConvertSymbolicShapeToBarracuda(onnxShape, "RNC1C2HW");
+                return ConvertSymbolicShapeToBarracuda(onnxShape, "NC0C1HW");
+            }
+            if (inputRank == 4 && outputRank == 6)
+            {
+                numDimensionContainingChannelsInformationAfterReshape = 3;
+                return ConvertSymbolicShapeToBarracuda(onnxShape, "NC0C1C2HW");
             }
 
             numDimensionContainingChannelsInformationAfterReshape = 1;
@@ -347,25 +353,25 @@ namespace Unity.Barracuda.ONNX
             {
                 //            axis:   0       1      2      3
                 // ONNX:      NCHW    CHW     NHW    NCW    NCH
-                // Barracuda: NHWC    CW_H    NW_H   NW_C   NH_C
-                if (onnxAxis == 0)
-                    return new[] { 3, 2, 0, 1 };
-                else if (onnxAxis == 1)
-                    return new[] { 0, 2, 3, 1 };
-                else if (onnxAxis == 2)
-                    return new[] { 0, 2, 1, 3 };
-                else
-                    return identity;
-            }
-            if (onnxRank == 3)
-            {
-                //            axis:   0       1      2
-                // ONNX:      NCH     CH      NH     NC
-                // Barracuda: NH_C    C__H    N__H   N__C
+                // Barracuda: NHWC    C_WH    N_WH   N_WC   N_HC
                 if (onnxAxis == 0)
                     return new[] { 3, 0, 2, 1 };
                 else if (onnxAxis == 1)
-                    return new[] { 0, 2, 3, 1 };
+                    return new[] { 0, 3, 2, 1 };
+                else if (onnxAxis == 2)
+                    return identity;
+                else
+                    return new[] { 0, 2, 1, 3 };
+            }
+            else if (onnxRank == 3)
+            {
+                //            axis:   0       1      2
+                // ONNX:      NCH     CH      NH     NC
+                // Barracuda: N_HC    C__H    N__H   N__C
+                if (onnxAxis == 0)
+                    return new[] { 3, 0, 1, 2 };
+                else if (onnxAxis == 1)
+                    return new[] { 0, 1, 3, 2 };
                 else
                     return identity;
             }
@@ -399,25 +405,25 @@ namespace Unity.Barracuda.ONNX
             {
                 //            axis:   0       1      2      3
                 // ONNX:      NCH     1NCH    N1CH   NC1H   NCH1
-                // Barracuda: NH_C    1CHN    NCH1   N1HC   NH1C
+                // Barracuda: N_HC    1CHN    NCH1   N1HC   NH1C
                 if (onnxAxis == 0)
-                    return new[] { 2, 3, 1, 0 };
+                    return new[] { 1, 3, 2, 0 };
                 else if (onnxAxis == 1)
-                    return new[] { 0, 3, 1, 2 };
+                    return new[] { 0, 3, 2, 1 };
                 else if (onnxAxis == 2)
-                    return new[] { 0, 2, 1, 3 };
-                else
                     return identity;
+                else
+                    return new[] { 0, 2, 1, 3 };
             }
             else if (onnxRank == 2)
             {
                 //            axis:   0       1      2
                 // ONNX:      NC      1NC     N1C    NC1
-                // Barracuda: N__C    1C_N    NC_1   N1_C
+                // Barracuda: N__C    1_CN    N_C1   N_1C
                 if (onnxAxis == 0)
-                    return new[] { 1, 3, 2, 0 };
+                    return new[] { 1, 2, 3, 0 };
                 else if (onnxAxis == 1)
-                    return new[] { 0, 3, 1, 2 };
+                    return new[] { 0, 1, 3, 2 };
                 else
                     return identity;
             }

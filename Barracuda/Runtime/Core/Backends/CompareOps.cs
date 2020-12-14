@@ -669,6 +669,24 @@ public class CompareOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.ArgMax(Tensor X, int axis)
+    {
+        var Y = m_Ops1.ArgMax(X, axis);
+        var Z = m_Ops2.ArgMax(X, axis);
+        CheckSame(Y, Z, Layer.Type.ArgMax);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.ArgMin(Tensor X, int axis)
+    {
+        var Y = m_Ops1.ArgMin(X, axis);
+        var Z = m_Ops2.ArgMin(X, axis);
+        CheckSame(Y, Z, Layer.Type.ArgMin);
+        return Y;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.ReduceMax(Tensor X, int axis)
     {
         var Y = m_Ops1.ReduceMax(X, axis);

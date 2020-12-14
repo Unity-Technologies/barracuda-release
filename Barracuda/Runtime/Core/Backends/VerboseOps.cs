@@ -711,6 +711,24 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.ArgMax(Tensor X, int axis)
+    {
+        var O = m_Ops.ArgMax(X, axis);
+        D.Log(X.shape + " .+ " + O.shape);
+        O.PrintDataPart(32, Prefix + "ArgMax");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.ArgMin(Tensor X, int axis)
+    {
+        var O = m_Ops.ArgMin(X, axis);
+        D.Log(X.shape + " .+ " + O.shape);
+        O.PrintDataPart(32, Prefix + "ArgMin");
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Greater(Tensor a, Tensor b)
     {
         var O = m_Ops.Greater(a, b);

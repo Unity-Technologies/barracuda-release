@@ -331,6 +331,16 @@ public class Layer
         Pad2DEdge = 162,
 
         /// <summary>
+        /// ArgMax layer
+        /// </summary>
+        ArgMax = 163,
+
+        /// <summary>
+        /// ArgMin layer
+        /// </summary>
+        ArgMin = 164,
+
+        /// <summary>
         /// Flatten layer
         /// </summary>
         Flatten = 200,

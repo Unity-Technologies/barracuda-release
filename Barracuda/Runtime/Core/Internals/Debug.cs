@@ -1,6 +1,8 @@
 ﻿#define BARRACUDA_LOG_ENABLED
 
+using System;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace Unity.Barracuda
 {
@@ -40,6 +42,7 @@ namespace Unity.Barracuda
         public static bool logEnabled = true;
 
 #if BARRACUDA_LOG_ENABLED
+
         /// <summary>
         /// Log warning
         /// </summary>
@@ -51,10 +54,18 @@ namespace Unity.Barracuda
 
             if (!warningStackTraceEnabled)
             {
-                var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
-                Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.None);
-                UnityEngine.Debug.LogWarning(message);
-                Application.SetStackTraceLogType(LogType.Warning, oldConfig);
+                try
+                {
+                    var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
+                    Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.None);
+                    UnityEngine.Debug.LogWarning(message);
+                    Application.SetStackTraceLogType(LogType.Warning, oldConfig);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Debug.LogWarning(message);
+                }
+
             }
             else
             {
@@ -74,10 +85,17 @@ namespace Unity.Barracuda
 
             if (!warningStackTraceEnabled)
             {
-                var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
-                Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.None);
-                UnityEngine.Debug.LogWarning(message, context);
-                Application.SetStackTraceLogType(LogType.Warning, oldConfig);
+                try
+                {
+                    var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
+                    Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.None);
+                    UnityEngine.Debug.LogWarning(message, context);
+                    Application.SetStackTraceLogType(LogType.Warning, oldConfig);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Debug.LogWarning(message, context);
+                }
             }
             else
             {
@@ -96,10 +114,17 @@ namespace Unity.Barracuda
 
             if (!errorStackTraceEnabled)
             {
-                var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
-                Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.None);
-                UnityEngine.Debug.LogError(message);
-                Application.SetStackTraceLogType(LogType.Error, oldConfig);
+                try
+                {
+                    var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
+                    Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.None);
+                    UnityEngine.Debug.LogError(message);
+                    Application.SetStackTraceLogType(LogType.Error, oldConfig);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Debug.LogError(message);
+                }
             }
             else
             {
@@ -119,10 +144,17 @@ namespace Unity.Barracuda
 
             if (!errorStackTraceEnabled)
             {
-                var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
-                Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.None);
-                UnityEngine.Debug.LogError(message, context);
-                Application.SetStackTraceLogType(LogType.Error, oldConfig);
+                try
+                {
+                    var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
+                    Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.None);
+                    UnityEngine.Debug.LogError(message, context);
+                    Application.SetStackTraceLogType(LogType.Error, oldConfig);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Debug.LogError(message, context);
+                }
             }
             else
             {
@@ -141,10 +173,17 @@ namespace Unity.Barracuda
 
             if (!logStackTraceEnabled)
             {
-                var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
-                Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
-                UnityEngine.Debug.Log(message);
-                Application.SetStackTraceLogType(LogType.Log, oldConfig);
+                try
+                {
+                    var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
+                    Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+                    UnityEngine.Debug.Log(message);
+                    Application.SetStackTraceLogType(LogType.Log, oldConfig);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Debug.Log(message);
+                }
             }
             else
             {
@@ -164,10 +203,17 @@ namespace Unity.Barracuda
 
             if (!logStackTraceEnabled)
             {
-                var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
-                Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
-                UnityEngine.Debug.Log(message, context);
-                Application.SetStackTraceLogType(LogType.Log, oldConfig);
+                try
+                {
+                    var oldConfig = Application.GetStackTraceLogType(LogType.Warning);
+                    Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+                    UnityEngine.Debug.Log(message, context);
+                    Application.SetStackTraceLogType(LogType.Log, oldConfig);
+                }
+                catch (Exception)
+                {
+                    UnityEngine.Debug.Log(message, context);
+                }
             }
             else
             {

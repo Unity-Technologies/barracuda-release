@@ -179,7 +179,7 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
         }
         catch (UnityException) {}
         return string.Format("(CPU burst: {0} length: {1} offset: {2} uploaded: {3} ready-to-read: {4} ready-for-reuse: {5})",
-            GetHashCode(), m_Array.Length, m_Offset, m_Count, readyToRead, readyForReuse);
+            GetHashCode(), m_Array?.Length, m_Offset, m_Count, readyToRead, readyForReuse);
     }
 }
 

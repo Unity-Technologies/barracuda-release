@@ -1,0 +1,145 @@
+#pragma kernel TextureToTensor_NHWC CHANNELS_FIRST=0
+#pragma kernel TextureToTensor_NCHW CHANNELS_FIRST=1
+#pragma kernel TensorToTextureNoLUT_NHWC SUFFIX=NoLUT CHANNELS_FIRST=0
+#pragma kernel TensorToTextureNoLUT_NCHW SUFFIX=NoLUT CHANNELS_FIRST=1
+#pragma kernel TensorToTexture3DLUT_NHWC SUFFIX=3DLUT APPLY_3D_LUT=1 CHANNELS_FIRST=0
+#pragma kernel TensorToTexture3DLUT_NCHW SUFFIX=3DLUT APPLY_3D_LUT=1 CHANNELS_FIRST=1
+
+#include "Tensor.cginc"
+
+#if CHANNELS_FIRST
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX) KERNEL##SUFFIX##_NCHW
+#else
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX) KERNEL##SUFFIX##_NHWC
+#endif
+#define FUNC_NAME(KERNEL, SUFFIX) FUNC_NAME_CALL(KERNEL, SUFFIX)
+
+TENSOR_DECL(X)
+TENSOR_DECL(W)
+TENSOR_DECL(K)
+TENSOR_DECL(B)
+TENSOR_DECL_RW(O)
+
+uint4 _Pad;
+uint4 _Pool;
+uint4 _Stride;
+uint4 _ChannelWriteMask;
+uint _Axis;
+float _Alpha;
+float _Beta;
+float _Epsilon;
+float _Seed;
+int _IsFirstDispatch;
+
+Texture2D<float4> Xtex2D;
+Texture3D<float4> Xtex3D;
+Texture2DArray<float4> Xtex2DArray;
+SamplerState samplerXtex2D { Filter = MIN_MAG_LINEAR_MIP_POINT; AddressU = Clamp; AddressV = Clamp; };
+SamplerState samplerXtex3D { Filter = MIN_MAG_LINEAR_MIP_POINT; AddressU = Clamp; AddressV = Clamp; AddressW = Clamp; };
+SamplerState samplerXtex2DArray { Filter = MIN_MAG_LINEAR_MIP_POINT; AddressU = Clamp; AddressV = Clamp; };
+
+RWTexture2D<float4> Otex2D;
+RWTexture3D<float4> Otex3D;
+RWTexture2DArray<float4> Otex2DArray;
+
+float4 _Scale;
+float4 _Bias;
+float2 _LutParams;
+bool _FlipY;
+
+// TODO: call TextureToTensor(v, dispatchThreadID) from Tex2DToTensor() { v = Xtex2D.SampleLevel }
+[numthreads(8,8,1)]
+void KERNEL_FUNC(TextureToTensor)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_ARG_RW(O);
+
+    uint b = _Pad.x;
+    uint x = dispatchThreadID.x + _Pad.y;
+    uint y = dispatchThreadID.y + _Pad.z;
+    uint c = dispatchThreadID.z + _Pad.w;
+
+    if (y >= O.height || x >= O.width)
+        return;
+
+    // calculate texture coordinates:
+    //  offset by 0.5 to get texel centers
+    //  divide by texture resolution (_Pool)
+    float3 uvw = (float3)dispatchThreadID + float3(0.5f, 0.5f, 0);
+    uvw.xy /= _Pool.xy;
+    if (_FlipY)
+        uvw.y = 1 - uvw.y;
+
+    float4 v = Xtex2D.SampleLevel(samplerXtex2D, uvw.xy, 0);
+    //texArray.SampleLevel(smpArray, loc, 0);
+
+    bool specialCaseWhenChannelMaskIsEmptyStoresAverage = true;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (_ChannelWriteMask[i] == 1)
+        {
+            O.Set(b, y, x, c, v[i]);
+            c += 1;
+            specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+        }
+    }
+
+    if (specialCaseWhenChannelMaskIsEmptyStoresAverage)
+    {
+        float avg = (v.r + v.g + v.b) / 3.0f;
+        O.Set(b, y, x, c, avg);
+    }
+}
+
+[numthreads(8,8,1)]
+void FUNC_NAME(TensorToTexture,SUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_ARG(X);
+
+    uint b = _Pad.x;
+    uint x = dispatchThreadID.x + _Pad.y;
+    uint y = dispatchThreadID.y + _Pad.z;
+    uint c = dispatchThreadID.z + _Pad.w;
+
+    if (y >= X.height || x >= X.width)
+        return;
+
+    if (_FlipY)
+        y = X.height - 1 - y;
+
+    float4 v = 0;
+
+    int channelRemainder = X.channels - c;
+    if (channelRemainder == 1)
+    {
+        // broadcast to all channels
+        v = _Scale.x * X.Get(b, y, x, c) + _Bias.x;
+    }
+    else if (channelRemainder == 2)
+    {
+        v.r = _Scale.x * X.Get(b, y, x, c+0) + _Bias.x;
+        v.g = _Scale.y * X.Get(b, y, x, c+1) + _Bias.y;
+        v.b = 0;
+        v.a = 1;
+    }
+    else if (channelRemainder == 3)
+    {
+        v.r = _Scale.x * X.Get(b, y, x, c+0) + _Bias.x;
+        v.g = _Scale.y * X.Get(b, y, x, c+1) + _Bias.y;
+        v.b = _Scale.z * X.Get(b, y, x, c+2) + _Bias.z;
+        v.a = 1;
+    }
+    else if (channelRemainder >= 4)
+    {
+        v.r = _Scale.x * X.Get(b, y, x, c+0) + _Bias.x;
+        v.g = _Scale.y * X.Get(b, y, x, c+1) + _Bias.y;
+        v.b = _Scale.z * X.Get(b, y, x, c+2) + _Bias.z;
+        v.a = _Scale.w * X.Get(b, y, x, c+3) + _Bias.w;
+    }
+
+    #if APPLY_3D_LUT
+        float3 uvw = v.xyz * _LutParams.yyy * _LutParams.xxx + _LutParams.xxx * 0.5f;
+        v.xyz = Xtex3D.SampleLevel(samplerXtex3D, uvw, 0).xyz;
+    #endif
+
+    Otex2D[dispatchThreadID.xy] = v;
+}

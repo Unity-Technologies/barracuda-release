@@ -1,6 +1,16 @@
 # Release notes
 
-## [1.2.0] - 2020-08-27
+## [1.2.1] - 2020-12-02
+- ONNX: Added `ArgMax`/`ArgMin` support.
+- Improvement: Added `Tensor` constructors for `float[,]` and `float[,,,]`.
+- Improvement: Now network execution can be restarted with `StartManualSchedule()` without finishing previous execution.
+- Improvement: Now `TextureToTensor` and `TensorToTexture` kernels will initialize faster on Open GL ES 3.1+.  
+- Fix: Fixed import of 'Gemm' from ONNX when transposing inputs.
+- Fix: Fixed a performance regression when uploading tensor from CPU to GPU in channel first mode.
+- Fix: Fixed import of 'reshape-transpose-reshape' pattern from ONNX when multiple channels are present.
+- Fix: Fixed import of 'reshape' from ONNX when spatial dimension are inserted by target shape.
+
+## [1.2.0] - 2020-10-27
 - Improvement: Added axis support other than C to `Reduce` ops.
 - Improvement: Added YOLOv3/TinyYOLOv3 support.
 - Improvement: Added Shufflenet/super resolution CNN support.

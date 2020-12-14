@@ -153,12 +153,29 @@ public class ComputeTensorData : ITensorData
         if (m_OnDeviceChannelsOrder == ComputeInfo.ChannelsOrder.NCHW)
         {
             //Transpose from HWC to CHW, TODO use a compute shader or threaded code.
+            Profiler.BeginSample("Tensor.Upload_ChannelFirstTranpose");
             float[] chwData = new float[count];
-            for (var it = new TensorIterator(shape); it.IsValid(); it.Next())
+            if (shape.IsNHWC())
             {
-                int writeIndex = shape.IndexChannelFirst(it.d0, it.d1,it.d2, it.d3, it.d4, it.d5,it.d6, it.d7);
-                chwData[writeIndex] = data[managedBufferStartIndex+it.index];
+                for (int readIndex=0; readIndex < count; ++readIndex)
+                {
+                    int b = 0, h = 0, w = 0, ch = 0;
+                    shape.GetPositionsFromIndex(readIndex, ref b, ref h, ref w, ref ch);
+                    int writeIndex = shape.IndexChannelFirst(b, h, w, ch);
+                    chwData[writeIndex] = data[managedBufferStartIndex+readIndex];
+                }
             }
+            else
+            {
+                for (int readIndex=0; readIndex < count; ++readIndex)
+                {
+                    int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, ch = 0;
+                    shape.GetPositionsFromIndex(readIndex, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref ch);
+                    int writeIndex = shape.IndexChannelFirst(s, r, n, t, d, h, w, ch);
+                    chwData[writeIndex] = data[managedBufferStartIndex+readIndex];
+                }
+            }
+            Profiler.EndSample();
             m_Buffer.SetData(chwData, 0, m_Offset, count);
         }
         else
@@ -775,7 +792,7 @@ public class TextureAsTensorData : ITensorData
     /// <inheritdoc/>
     public virtual float[] Download(TensorShape shape)
     {
-        var gpuBackend = new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels);
+        var gpuBackend = new ReferenceComputeOps(null);
         // @TODO: cache compute buffer
         using(var computeTensorData = gpuBackend.TextureToTensorData(this, "__internalDownloadTextureToTensorData"))
         {
@@ -871,7 +888,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
     internal ITensorData TextureToTensorData(TextureAsTensorData texData, string name)
     {
-        var fn = new ComputeFunc(m_Kernels, "TextureToTensor");
+        var fn = new ComputeFunc(ComputeShaderSingleton.Instance.texureKernels, "TextureToTensor");
         var tensorData = new ComputeTensorData(texData.shape, name, ComputeInfo.channelsOrder, false);
 
         fn.SetTensor("O", texData.shape, tensorData.buffer);
@@ -929,7 +946,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             target.Create();
         }
 
-        var fn = new ComputeFunc(m_Kernels, "TensorToTexture"+ (lut == null?"NoLUT":"3DLUT"));
+        var fn = new ComputeFunc(ComputeShaderSingleton.Instance.texureKernels, "TensorToTexture"+ (lut == null?"NoLUT":"3DLUT"));
         SetTensor(fn, "X", X);
         fn.SetTexture("O", target);
         fn.shader.SetVector("_Scale", scale);
@@ -985,14 +1002,6 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
-        if(X.dimensions <= 2 && Y.dimensions <= 2)
-        {
-            return MatMul2D(X, false, Y, false);
-        }
-
-        Assert.AreEqual(X.dimensions, Y.dimensions);
-        Assert.AreEqual(X.batch*X.channels, Y.batch*Y.channels);
-
         // N.B: Current implementation is inefficient as it introduces Transposes/Slice and Concat.
         // => consider refactoring dense to support batch
         // X and Y can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
@@ -1002,6 +1011,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         if (Pin(Y).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
             Y = TransposeToNCHW(Y);
 
+        // V-Table magic, ReferenceCPU.MaMul is calls MatMul2D, Concat & Slice all which are overloaded by all respective IOps, so will call the correct backend
         return base.MatMul(X, xTranspose, Y, yTranspose);
     }
 
@@ -1952,6 +1962,18 @@ public class ReferenceComputeOps : ReferenceCPUOps
             O = Transpose(O, permuteTargetAxisAndC);
 
         return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ArgMax(Tensor X, int axis)
+    {
+        return Reduce("ArgMax", X, axis);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ArgMin(Tensor X, int axis)
+    {
+        return Reduce("ArgMin", X, axis);
     }
 
     /// <inheritdoc/>

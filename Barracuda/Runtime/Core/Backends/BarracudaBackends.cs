@@ -613,6 +613,22 @@ public interface IOps
     Tensor ReduceSum(Tensor x, int axis);
 
     /// <summary>
+    /// ArgMax
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="axis">axis</param>
+    /// <returns>output Tensor</returns>
+    Tensor ArgMax(Tensor x, int axis);
+
+    /// <summary>
+    /// ArgMax
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="axis">axis</param>
+    /// <returns>output Tensor</returns>
+    Tensor ArgMin(Tensor x, int axis);
+
+    /// <summary>
     /// Greater
     /// </summary>
     /// <param name="a">left Tensor</param>

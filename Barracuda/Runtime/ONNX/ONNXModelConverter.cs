@@ -170,14 +170,38 @@ namespace Unity.Barracuda.ONNX
                     int variableDimension = Array.IndexOf(symbolicShape, -1);
                     bool containsNoVariableDimensions = variableDimension == -1;
 
+                    // special case handling with inferable reshapes
+                    // TODO: remove this once we have full shape inference
+                    // onnx: NCW -> N1CW
+                    // N: is unknown and H,W are inferable
+                    if (node.Input0Rank == 3 && onnxShape.Length == 4 &&
+                        onnxShape[0] == 0 && onnxShape[1] == 1 && onnxShape[2] == 0 && onnxShape[3] == 0)
+                    {
+                        // onnx: NCW -> N1CW
+                        // barracuda: N_WC -> NCW1
+                        net.Transpose(node.Name, node.Input0, new[] { 0, 3, 2, 1 });
+                        Output(node, features: 1, rank: onnxShape.Length);
+                        return;
+                    }
+
                     if (containsNoVariableDimensions)
                     {
                         if (forceArbitraryBatchSize)
                             symbolicShape[0] = -1; // force arbitrary batch size
+
+                        // Creating any of the spatial dimensions requires to run reshape in NCHW and transpose to NHWC after it to match NCHW behavior.
+                        if (onnxShape.Length > 2 && node.Input0Rank <= 2)
+                        {
+                            int[] onnxPaddedShape = onnxShape;
+                            if (onnxShape.Length == 3) // correct NCH to NCW
+                                onnxPaddedShape = new[] { onnxShape[0], onnxShape[1], 1, onnxShape[2] };
+
+                            reshapeLayer = net.Reshape($"{node.Name}_NCHW", node.Input0, onnxPaddedShape);
+                            reshapeLayer = net.Transpose(node.Name, reshapeLayer, toNHWC);
+                        }
                     }
                     else if (onnxShape.Length <= 4 && node.Input0Rank <= 4
                         && variableDimension != TensorShape.C
-                        && onnxShape[onnxShape.Length - 1] == -1
                         && variableTensors.TryGetValue(node.Input0, out VariableTensor previousOutput)
                         && previousOutput.layout != VariableTensor.Layout.ChannelsLast)
                     {
@@ -197,7 +221,8 @@ namespace Unity.Barracuda.ONNX
                         reshapeLayer = net.Reshape(node.Name, node.Input0, symbolicShape);
 
                     reshapeLayer.axis = numDimensionContainingChannelsInformationAfterReshape;
-                    Output(node, rank:onnxShape.Length);
+                    var features = onnxShape.Length > 1 ? onnxShape[1] : -1;
+                    Output(node, features: features, rank: onnxShape.Length);
                 }
             });
             Add("Expand", (net, node) => {
@@ -289,7 +314,7 @@ namespace Unity.Barracuda.ONNX
                     // `a` would be [2, 1, 1, 10], but `b` would have to be [1, 10, 1, 2]. Note the actual data swap in channels!
                     int axis = node.Axes[0];
                     if (axis < 0)
-                        axis = node.Input0Rank+1 - axis;
+                        axis = node.Input0Rank + 1 - axis;
 
                     var transpose = ONNXLayout.UnSqueezeAxisPermutationForMappingONNXLayoutToBarracuda(inputRank, axis, "NCHW");
                     net.Transpose(node.Name, node.Input0, transpose);
@@ -431,6 +456,18 @@ namespace Unity.Barracuda.ONNX
                         strides:ONNXLayout.PermuteToBarracuda(onnxSteps, onnxLayout:"NCHW",1));
                 }
             });
+            Add("Tile", (net, node) => {
+                // TODO: Implement Tile in ONNXTensor for const
+                var onnxRepeats = node.Input1Constant(onnxLayout: "C", name: "repeats").AsInts();
+                var repeats = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxRepeats, onnxLayout: "NCHW");
+
+                var features = node.Input0Features;
+                features *= repeats[1];
+
+                Output(node.Name, rank: node.Input0Rank, features: features);
+                // only 4D Tile support for now
+                net.Tile(node.Name, node.Input0, new[] { repeats[2], repeats[5], repeats[6], repeats[7] });
+            });
             Add("Gather", (net, node) =>
             {
                 int axis = node.AxisOptional(0);
@@ -510,6 +547,7 @@ namespace Unity.Barracuda.ONNX
                 var depth = (int)node.Input1Constant(onnxLayout:"C", name:"depth")[0];
                 var offon = node.Input2ConstantOptional(defaultOffOn, onnxLayout:"C", name:"values");
                 net.OneHot(node.Name, node.Input0, depth, (int)offon[1], (int)offon[0]);
+                Output(node, rank: node.Input0Rank + 1);
             });
             Add("TopK", (net, node) => {
                 int axis = node.AxisOptional(-1);
@@ -653,9 +691,12 @@ namespace Unity.Barracuda.ONNX
             {
                 const int defaultAxis = 1;
                 int axis = node.AxisOptional(defaultAxis); // Leave in NCHW form and transpose instead
+                if (axis < 0)
+                    axis = node.Input0Rank + axis;
 
                 string input = node.Input0;
                 string output = node.Name;
+
                 if (axis != 1)
                 {
                     Layer transposeLayer = net.Transpose($"Transpose_For_{node.Name}", input, toNCHW);
@@ -740,6 +781,13 @@ namespace Unity.Barracuda.ONNX
                     if (!constantTensors.ContainsKey(constName))
                     {
                         Tensor tensorData = node.Input1Constant(onnxLayout, node.Input1);
+
+                        if (node.Input0Rank == 3)
+                        {
+                            // 1,1,1,C -> 1,1,C,1
+                            tensorData = tensorData.Reshape(new int[] { 1, 1, tensorData.channels, 1 });
+                        }
+
                         Layer layer = net.Const(constName, tensorData);
                         inputs[1] = layer.name;
                         Const(constName, new ONNXTensor(tensorData, tensorData.shape.ToArray()));
@@ -763,6 +811,7 @@ namespace Unity.Barracuda.ONNX
             // Logical ops
             Add("Greater", (net, node) => { net.Greater(node.Name, node.Input0, node.Input1); });
             Add("Less", (net, node)    => { net.Less(node.Name, node.Input0, node.Input1); });
+            Add("LessOrEqual", (net, node) => { net.LessEqual(node.Name, node.Input0, node.Input1); });
             Add("Equal", (net, node)   => { net.Equal(node.Name, node.Input0, node.Input1); });
             Add("Or", (net, node)      => { net.LogicalOr(node.Name, node.Input0, node.Input1); });
             Add("And", (net, node)     => { net.LogicalAnd(node.Name, node.Input0, node.Input1); });
@@ -802,7 +851,7 @@ namespace Unity.Barracuda.ONNX
 
                 int[] kernenShape = node.KernelShape;
                 if (kernenShape.Length == 1)
-                    kernenShape = new[] { 1, kernenShape[0] };
+                    kernenShape = new[] { kernenShape[0], 1 };
 
                 net.MaxPool2D(node.Name, node.Input0, kernenShape, strides, pads);
             });
@@ -960,15 +1009,21 @@ namespace Unity.Barracuda.ONNX
                 var weights = node.Input1Constant(onnxLayout, name:"B");
                 var biases  = node.Input2ConstantOptional(Bias(weights.shape), 0.0f, onnxLayout:"C", name:"C");
                 // Change data layout from "channels first" to "channels last"
-                weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features, node.Input0Layout);
+                weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, weights.flatHeight, node.Input0Layout);
                 net.Dense(node.Name, node.Input0, weights, biases);
                 Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
             });
-            Add("MatMul", (net, node)   => {
-                if (node.InputCount == 2 && !node.IsInput1Const || node.Input0Rank != 2)
+            Add("MatMul", (net, node) => {
+                if (node.InputCount == 2 && !node.IsInput1Const || node.Input0Rank != 2 || node.Input1Rank != 2)
                 {
+                    // if inputs are const, need to transpose them
+                    if (node.IsInput1Const)
+                    {
+                        var Y = constantTensors[node.Input1].ToBarracuda("NCTDHW");
+                        net.Const(node.Input1, Y);
+                    }
                     net.MatMul(node.Name, node.Input0, node.Input1);
-                    Output(node, features: node.Input0Features, rank: node.Input0Rank);
+                    Output(node, features: node.Input0Features, rank: Math.Max(node.Input0Rank, node.Input1Rank));
                 }
                 else
                 {
@@ -1127,6 +1182,14 @@ namespace Unity.Barracuda.ONNX
             Add("ReduceSum", (net, node)  => {
                 Reduce(net, node, Layer.Type.ReduceSum);
             });
+            Add("ArgMax", (net, node)  => {
+                node.UnsupportedAttribute("select_last_index");
+                Reduce(net, node, Layer.Type.ArgMax);
+            });
+            Add("ArgMin", (net, node)  => {
+                node.UnsupportedAttribute("select_last_index");
+                Reduce(net, node, Layer.Type.ArgMin);
+            });
 
 
             // Ignore, noop during inference
@@ -1211,6 +1274,9 @@ namespace Unity.Barracuda.ONNX
         // Transpose channels first to channels last data in MatMul/GEMM weight tensor
         internal static Tensor SwapSpatialDimensionsAndFeaturesInMatMulWeights(Tensor weights, int featureCount, VariableTensor.Layout layout)
         {
+            if (featureCount == 0) // wild card feature: after Reduce, runtime correct weights. TODO: remove when full dims are known
+                return weights;
+
             Assert.IsTrue(featureCount <= weights.flatHeight);
 
             var weightsAssumeChannelsFirstLayout = (layout != VariableTensor.Layout.ChannelsLast);
@@ -1463,11 +1529,14 @@ namespace Unity.Barracuda.ONNX
             var rank = node.Input0Rank;
             object input = node.Input0;
 
-            var axes = node.AxesOptional(new[] { 0 });
+            var axes = node.HasAttribute("axes") ? node.AxesOptional(new[] { 0 }) : new[] { node.AxisOptional(0) };
             foreach (var onnxAxis in axes)
             {
                 //TODO support 8D inputs
                 var axis = ONNXLayout.ConvertAxisToBarracuda(onnxAxis, onnxRank: rank, onnxLayout: "NCHW");
+                if (node.Input0Layout == VariableTensor.Layout.ChannelsLast && node.Input0Rank == 4)
+                    axis = TensorExtensions.NHWCTo8DAxis(onnxAxis);
+
                 var nameR = $"{node.Name}__axis{axis}";
                 input = net.Reduce(reduceType, nameR, input, axis, true);
                 if (axis == TensorShape.C)
@@ -1475,16 +1544,19 @@ namespace Unity.Barracuda.ONNX
                 Output(nameR, features: features, rank: rank);
             }
 
-            if (keepdims != 1 && rank > 1) // keepdims removes dimensions in the context of onnx thus we need to repack/transpose to match behavior.
+            if (keepdims != 1 && rank > 1 && (node.Input0Layout != VariableTensor.Layout.ChannelsLast)) // keepdims removes dimensions in the context of onnx thus we need to repack/transpose to match behavior.
             {
                 var nameT = $"{node.Name}__transpose";
                 var transpose = GetPermutationToMatchReduceWithDroppedDimensionsFromONNX(axes, rank);
                 input = net.Transpose(nameT, input, transpose);
 
-                Output(nameT, features: -1, rank: rank - node.Axes.Length);
+                rank = rank - axes.Length;
+                //TODO: features count is wrong and should potentially be deduced from input + transpose
+                Output(nameT, features: 0, rank: rank);
             }
 
             net.Identity(node.Name, input);
+            Output(node.Name, features: 0, rank: rank);
         }
 
         private ONNXModelTensors m_ModelTensors = new ONNXModelTensors();
@@ -1820,6 +1892,32 @@ namespace Unity.Barracuda.ONNX
             return res;
         }
 
+        static private string ApplyPermutationToLayout(string layout, int[] permutation)
+        {
+            Assert.IsTrue(layout.Length == permutation.Length);
+
+            char[] permutedLayout = new char[layout.Length];
+            for (int i = 0; i < layout.Length; ++i)
+            {
+                permutedLayout[i] = layout[permutation[i]];
+            }
+
+            return new string(permutedLayout);
+        }
+
+        static private int[] FindPermutationFromLayouts(string layout, string permutedLayout)
+        {
+            Assert.IsTrue(layout.Length == permutedLayout.Length);
+
+            int[] permutation = new int[layout.Length];
+            for (int i = 0; i < layout.Length; ++i)
+            {
+                permutation[i] = layout.IndexOf(permutedLayout[i]);
+            }
+
+            return permutation;
+        }
+
         static private Model FixReshapeTransposePatternWhenChannelsAreSplitIntoMultipleDimensions(Model model)
         {
             var transposes = model.layers.Where(l => l.type == Layer.Type.Transpose).ToList();
@@ -1832,18 +1930,22 @@ namespace Unity.Barracuda.ONNX
                 if (previousLayer.type != Layer.Type.Reshape)
                     continue;
 
-                var numChannelsDimension = previousLayer.axis;
-                if (numChannelsDimension <= 1)
+                var numChannelDimensionBeforeTranspose = previousLayer.axis;
+                if (numChannelDimensionBeforeTranspose <= 1)
                     continue;
 
+                int centerPaddingThatWasAddedInPermutation = transposeLayer.axis;
+                Assert.IsTrue(centerPaddingThatWasAddedInPermutation <= 1);
+                Assert.IsTrue(centerPaddingThatWasAddedInPermutation >= 0);
+
                 //NOTE: See also ConvertReshapeToBarracuda() for mode detail on the problem.
-                //In some network like shufflenet and superresolution_cnn and yolov3 a reshape is used
+                //In some network like shufflenet, superresolution_cnn and yolov3 a reshape is used
                 //before a transpose to split the channels resulting in a tensor with
                 //multiple dimension used for channels, this is a problem when importing to
                 //barracuda as the semantic of the dimensions are changed and this change the
                 //way channel first to channel last conversion should happen. The code below
                 //is a limited to support for that.
-                Assert.IsTrue(numChannelsDimension == 2);
+                Assert.IsTrue(numChannelDimensionBeforeTranspose == 2 || numChannelDimensionBeforeTranspose == 3);
 
                 var permutationSRNTDHWC = transposeLayer.pool;
                 if (permutationSRNTDHWC.Length != 8)
@@ -1853,24 +1955,39 @@ namespace Unity.Barracuda.ONNX
                     continue;
                 }
 
-                //Revert channel first to last conversion that was incorrectly done in the context of channels being one dimensional.
-                var permute8DChannelFirst = ONNXLayout.ConvertPermutationToLayout(permutationSRNTDHWC, "SRNTDHWC","SRNCTDHW");
+                //Find layouts before transpose in both channel order
+                string layoutBeforeTranspose_ChannelFirst = (numChannelDimensionBeforeTranspose == 3) ? "SRN123HW" : "SRN1T2HW";
+                string layoutBeforeTranspose_ChannelLast  = (numChannelDimensionBeforeTranspose == 3) ? "SRNHW123" : "SRNTHW12";
 
-                //Find source layout format
-                int centerPaddingThatWasAddedInPermutation = transposeLayer.axis;
-                Assert.IsTrue(centerPaddingThatWasAddedInPermutation <= 1);
-                Assert.IsTrue(centerPaddingThatWasAddedInPermutation >= 0);
-                string sourceLayout = (centerPaddingThatWasAddedInPermutation == 0) ? "SRNT12HW" : "SRN1T2HW";
+                //Find layout after transpose in channel first
+                int[] permutation_ChannelFirst = ONNXLayout.ConvertPermutationToLayout(permutationSRNTDHWC, "SRNTDHWC","SRNCTDHW");
+                string layoutAfterTranspose_ChannelFirst = ApplyPermutationToLayout(layoutBeforeTranspose_ChannelFirst, permutation_ChannelFirst);
 
-                //TODO/HEURISTIC: We only use semantic when channel and other features are not interleaved during permutations.
-                //This is a work around to create the right permutation for the shufflenet(true)/superresolution(false)/yolov3(false),
-                //it probably does not generalise well however. In next version of the importer we might need to introduce transposes
-                //in channel last mode to generalise fully.
-                bool useSemanticToLookupInSourceLayout = !IsPermutationMixingChannelsAndOtherFeatures(sourceLayout, permute8DChannelFirst);
+                //Find layout after transpose in channel last
+                //TODO/HEURISTIC: We differentiate the various case by knowing if channels and features are interleaved during permutations.
+                //This is a work around to create the right permutation for the shufflenet/super-resolution and yolov3, it does not generalise well however.
+                //In next version of the importer we might need to introduce transposes in channel last mode to generalise fully.
+                int[] channelFirstToLastPermutation = null;
+                if (numChannelDimensionBeforeTranspose == 3)
+                {
+                    //super resolution -> final reshape will pick only 1 dimension as channel -> regular channel first to last transposition.
+                    channelFirstToLastPermutation = FindPermutationFromLayouts("SRN1TDHW", "SRNTDHW1");
+                }
+                else if (IsPermutationMixingChannelsAndOtherFeatures(layoutBeforeTranspose_ChannelFirst, permutation_ChannelFirst))
+                {
+                    //yolov3 -> final reshape does not pick any dimension as channel -> no transposition.
+                    channelFirstToLastPermutation = FindPermutationFromLayouts("SRNTUDHW", "SRNTUDHW");
+                }
+                else
+                {
+                    //shufflenet -> final reshape take 2 dimension and merge them so both need to be affected by channel first to last transposition
+                    channelFirstToLastPermutation = FindPermutationFromLayouts("SRN1T2HW", "SRNTHW12");
+                }
+                string layoutAfterTranspose_ChannelLast = ApplyPermutationToLayout(layoutAfterTranspose_ChannelFirst, channelFirstToLastPermutation);
 
-                //Apply channel first to last conversion, considering channels are two dimensional (C1C2).
-                int[] permuteSRNTHWC1C2  = ONNXLayout.ConvertPermutationToLayout(permute8DChannelFirst, sourceLayout, "SRNTHW12", useSemanticToLookupInSourceLayout);
-                transposeLayer.pool = permuteSRNTHWC1C2;
+                //Finally compute and return permutation in channel last
+                int[] permutation_ChannelLast = FindPermutationFromLayouts(layoutBeforeTranspose_ChannelLast, layoutAfterTranspose_ChannelLast);
+                transposeLayer.pool = permutation_ChannelLast;
             }
 
             return model;

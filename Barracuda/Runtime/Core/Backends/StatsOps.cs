@@ -608,6 +608,22 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.ArgMax(Tensor X, int axis)
+    {
+        var O = m_Ops.ArgMax(X, axis);
+        Reduce(X, O);
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.ArgMin(Tensor X, int axis)
+    {
+        var O = m_Ops.ArgMin(X, axis);
+        Reduce(X, O);
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.ReduceMax(Tensor X, int axis)
     {
         var O = m_Ops.ReduceMax(X, axis);

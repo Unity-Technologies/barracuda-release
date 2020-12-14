@@ -767,6 +767,25 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Constructs a tensor by repeating the input tensor the number of times given by repeats
+        /// For example input = [[1, 2], [3, 4]], repeats = [1, 2], Tile(input, repeats) = [[1, 2, 1, 2], [3, 4, 3, 4]]
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="repeats">repeats</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Tile(string name, object input, int[] repeats)
+        {
+            Layer layer = new Layer(name, Layer.Type.Tile);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.pool = repeats;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
         /// Make a shallow copy of the input tensor.
         /// </summary>
         /// <param name="name">Layer name</param>
@@ -1770,6 +1789,7 @@ namespace Unity.Barracuda
         public Layer Multinomial(string name, object input, int numberOfSamplesDrawnPerInputChannel, float seed)
         {
             Layer layer = new Layer(name, Layer.Type.Multinomial);
+            layer.inputs = new[] { ResolveInput(input) };
             layer.pad = new int[1] {(int)seed};
             layer.pool = new int[1] {numberOfSamplesDrawnPerInputChannel};
             m_Model.layers.Add(layer);

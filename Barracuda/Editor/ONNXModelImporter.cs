@@ -24,7 +24,7 @@ namespace Unity.Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(13, new[] { "onnx" })]
+    [ScriptedImporter(17, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
