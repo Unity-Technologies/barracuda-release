@@ -12,7 +12,7 @@ namespace Unity.Barracuda
             bool allConstInputsButOne = (layer.inputs.Length - constInputs) == 1;
 
             return layer.type == Layer.Type.Dense ||
-                   layer.type == Layer.Type.Conv2D ||
+                   layer.type == Layer.Type.Conv2D || //TODO Conv3D
                    layer.type == Layer.Type.DepthwiseConv2D ||
                    layer.type == Layer.Type.ScaleBias ||
                    IsLayerLinearMathOp(layer) && allConstInputsButOne;
@@ -27,7 +27,8 @@ namespace Unity.Barracuda
         public bool AreLayersFusable(Layer l0, Layer l1)
         {
             bool conditions = true;
-            if ((l0.type == Layer.Type.Conv2D) && (l1.type == Layer.Type.Conv2D))
+            if ((l0.type == Layer.Type.DepthwiseConv2D) || (l0.type == Layer.Type.Conv2D) || (l0.type == Layer.Type.ScaleBias) &&
+                (l1.type == Layer.Type.Conv2D) || (l1.type == Layer.Type.DepthwiseConv2D))
                 conditions = conditions && !l1.pad.Any(x => x != 0); // padding breaks bias merging for non-zero bias
             if (IsLayerLinearMathOp(l0) && (l1.type == Layer.Type.Conv2D))
             {
@@ -74,6 +75,7 @@ namespace Unity.Barracuda
                 lmerged.datasets[0].length = biasShape.length;
                 lmerged.datasets[0].offset = 0;
                 lmerged.weights = new float[biasShape.length];
+                lmerged.axis = Math.Max(l0.axis, l1.axis);
 
                 Tensor bias = m_Ops.Add(new [] { bias0, bias1 });
 
@@ -101,6 +103,7 @@ namespace Unity.Barracuda
                 lmerged.datasets[0].length = biasShape.length;
                 lmerged.datasets[0].offset = 0;
                 lmerged.weights = new float[biasShape.length];
+                lmerged.axis = Math.Max(l0.axis, l1.axis);
 
                 Tensor bias = m_Ops.Mul(new[] { scale0, scale1 });
 

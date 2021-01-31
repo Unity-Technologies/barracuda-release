@@ -351,6 +351,9 @@ public class ReferenceCPUOps : IOps
             case Layer.FusedActivation.Tanh:
                 v = MathfEx.Tanh(v);
                 break;
+            case Layer.FusedActivation.Softplus:
+                v = Mathf.Log(Mathf.Exp(v) + 1f);
+                break;
             case Layer.FusedActivation.Sigmoid:
                 v = 1f / (1f + Mathf.Exp(-v));
                 break;
@@ -413,51 +416,40 @@ public class ReferenceCPUOps : IOps
 
     // ---------------------------------------------------------------------------------
     /// <inheritdoc/>
-    public virtual Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    public virtual Tensor MatMul(Tensor X, int rankX, Tensor Y, int rankY)
     {
-        // TODO: custom kernel
-        // ONNX rank 2 : N,C => N,1,1,C
-        //      rank 3 : one must be N C W, (batches = N) => N, 1, W, C
-        //      rank 4 : one must be N C H W, (batches = N * C) => N H W C
-        // X and Y can be different ranks
-        // TODO: keep track of shape rank, for now figure things out
-        var onnxXshape = new List<int> { X.batch, X.channels, X.height, X.width };
-        if (X.height == 1) onnxXshape = new List<int> { X.batch, X.channels, X.width, 1 };
-        var onnxYshape = new List<int> { Y.batch, Y.channels, Y.height, Y.width };
-        if (Y.height == 1) onnxYshape = new List<int> { Y.batch, Y.channels, Y.width, 1 };
+        // Barracuda Tensor layout is not broadcast friendly:
+        // rank4: NHWC
+        // rank3: N_WC
+        // rank2: N__C
+        // rank1: N___
+        // on top of things, ONNX does not transpose layout like it does for conv.
+        // => so to get broadcast correctly we need to convert our Barracuda Tensor to a ONNX-broadcastable layout
+        // rank4: NCHW
+        // rank3: _NCW
+        // rank2: __NC
+        // rank1: ___N
+        // and then perform the broadcast MatMul
+        // the input tensor ranks are computed at import time and stored in the layer (TODO: keep track of it in the Tensor itself)
 
-        int rankX = 0;
-        for (int i = 3; i >= 0; i--)
-        {
-            if (onnxXshape[i] != 1)
-            {
-                rankX = i + 1;
-                break;
-            }
-        }
-        int rankY = 0;
-        for (int i = 3; i >= 0; i--)
-        {
-            if (onnxYshape[i] != 1)
-            {
-                rankY = i + 1;
-                break;
-            }
-        }
+        // support for legacy case where rank needs to be inferred at runtime
+        if (rankX < 0 || rankY < 0)
+            ModelAnalyzer.LegacyGetXYRanks(X.shape, Y.shape, out rankX, out rankY);
+
+        var onnxXshape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToOnnxLayout(X.shape, rankX);
+        var onnxYshape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToOnnxLayout(Y.shape, rankY);
 
         int rankO = Math.Max(rankX, rankY);
 
         if (rankO <= 2)
-            return MatMul2D(X, false, Y, false);
+            return MatMul(X, false, Y, false);
 
         // pad 1 on front of shape to both be rankO shape
-        for (int i = 0; i < (rankX - rankY); i++)
-            onnxYshape.Insert(0, 1);
-        onnxYshape.RemoveRange(4, onnxYshape.Count - 4);
-
-        for (int i = 0; i < (rankY - rankX); i++)
+        for (int i = rankX; i < rankO; i++)
             onnxXshape.Insert(0, 1);
-        onnxXshape.RemoveRange(4, onnxXshape.Count - 4);
+
+        for (int i = rankY; i < rankO; i++)
+            onnxYshape.Insert(0, 1);
 
         int matN = 1;
         int matC = 1;
@@ -482,7 +474,7 @@ public class ReferenceCPUOps : IOps
 
         var Xt = Transpose(X, new[] { 0, 3, 1, 2 });
         var Yt = Transpose(Y, new[] { 0, 3, 1, 2 });
-        if (rankX == 2)
+        if(rankX == 2)
             Xt = Reshape(Xt, new TensorShape(1, 1, Xt.batch, Xt.height));
         else if (rankX == 3)
             Xt = Reshape(Xt, new TensorShape(1, Xt.batch, Xt.height, Xt.channels));
@@ -494,8 +486,8 @@ public class ReferenceCPUOps : IOps
         var startsX = new[] { 0, 0, 0, 0 };
         var startsY = new[] { 0, 0, 0, 0 };
 
-        var endsX = new[] { 1, 1, Xt.width, Xt.channels };
-        var endsY = new[] { 1, 1, Yt.width, Yt.channels };
+        var endsX = new[] { 1, 1, Xt.width, Xt.channels};
+        var endsY = new[] { 1, 1, Yt.width, Yt.channels};
         var strides = new[] { 1, 1, 1, 1 };
 
         for (int b = 0; b < matN; b++)
@@ -529,8 +521,8 @@ public class ReferenceCPUOps : IOps
                 // __NC -> N__C
                 Tensor Xs = StridedSlice(Xt, startsX, endsX, strides); Xs = Reshape(Xs, new TensorShape(Xt.width, Xt.channels));
                 Tensor Ys = StridedSlice(Yt, startsY, endsY, strides); Ys = Reshape(Ys, new TensorShape(Yt.width, Yt.channels));
-                Tensor Oc = MatMul2D(Xs, false, Ys, false);
-                if (rankO == 2)
+                Tensor Oc = MatMul(Xs, false, Ys, false);
+                if(rankO == 2)
                 {
                     Ob = Oc;
                 }
@@ -556,7 +548,6 @@ public class ReferenceCPUOps : IOps
             else
                 O = Concat(new[] { O, Ob }, TensorShape.DataBatch);
         }
-
         return O;
     }
 
@@ -568,7 +559,7 @@ public class ReferenceCPUOps : IOps
     /// <param name="Y">right Tensor</param>
     /// <param name="yTranspose">`Y` transposed data flag</param>
     /// <returns>output Tensor</returns>
-    protected virtual Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    public virtual Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
@@ -621,7 +612,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -663,17 +654,67 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
+    public virtual Tensor Conv3D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
+    {
+        Assert.IsTrue(X.shape.IsNDHWC());
+        Assert.AreEqual(X.channels, K.kernelDepth);
+        Assert.AreEqual(K.kernelCount, B.flatWidth);
+        Assert.AreEqual(B.flatWidth, B.length);
+        Assert.AreEqual(stride.Length, 3);//WHD
+        Assert.AreEqual(pad.Length, 6);
+
+        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+
+        for (var n = 0; n < O.batch; ++n)
+        for (var d = 0; d < O.depth; ++d)
+        for (var y = 0; y < O.height; ++y)
+        for (var x = 0; x < O.width; ++x)
+        for (var k = 0; k < K.kernelCount; ++k)
+        {
+            float v = B[k];
+            for (int dd = 0; dd < K.kernelSpatialDepth; ++dd)
+            {
+                for (int dy = 0; dy < K.kernelHeight; ++dy)
+                {
+                    for (int dx = 0; dx < K.kernelWidth; ++dx)
+                    {
+                        int od = d * stride[2] + dd - pad[2];
+                        int oy = y * stride[1] + dy - pad[1];
+                        int ox = x * stride[0] + dx - pad[0];
+
+                        if (od < 0) continue;
+                        if (od >= X.depth) continue;
+                        if (oy < 0) continue;
+                        if (oy >= X.height) continue;
+                        if (ox < 0) continue;
+                        if (ox >= X.width) continue;
+
+                        for (var c = 0; c < X.channels; ++c)
+                        {
+                            float xv = X[ n, od, oy, ox, c];
+                            float kv = K[ 0, dd, dy, 0, 0, dx, c, k];
+                            v += xv * kv;
+                        }
+                    }
+                }
+            }
+            O[ n, d, y, x, k] = ApplyFusedActivation(v, fusedActivation);
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
     public virtual Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
             throw new NotImplementedException();
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
-        Assert.AreEqual(stride.Length, 2);
+        Assert.AreEqual(stride.Length, 2);//WH
         Assert.AreEqual(pad.Length, 4);
 
         // ONNX: (M x C/group x kH x kW)
@@ -716,7 +757,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -764,14 +805,78 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
+    private static float BilinearInterpolation(float fracSrcPosX, float fracSrcPosY, float p00, float p01, float p10, float p11)
+    {
+        float v =
+            p00 * (1-fracSrcPosX) * (1-fracSrcPosY) +
+            p01 * (1-fracSrcPosX) *    fracSrcPosY  +
+            p10 *    fracSrcPosX  * (1-fracSrcPosY) +
+            p11 *    fracSrcPosX  *    fracSrcPosY;
+        return v;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor Upsample3D(Tensor X, int[] scale, bool trilinear)
+    {
+        Assert.IsTrue(X.shape.IsNDHWC());
+        Assert.AreEqual(scale.Length, 3);
+        float scaleX = (float)scale[0];
+        float scaleY = (float)scale[1];
+        float scaleD = (float)scale[2];
+
+        var O = NewTensor(new TensorShape(1, 1,X.batch, 1, X.depth*scale[2], X.height*scale[1], X.width*scale[0], X.channels));
+
+        for (int b = 0; b < O.batch; ++b)
+            for (int d = 0; d < O.depth; ++d)
+                for (int y = 0; y < O.height; ++y)
+                    for (int x = 0; x < O.width; ++x)
+                        for (int c = 0; c < O.channels; ++c)
+                        {
+                            if (trilinear)
+                            {
+                                float srcPosD = (d + 0.5f) / scaleD - 0.5f;
+                                float srcPosX = (x + 0.5f) / scaleX - 0.5f;
+                                float srcPosY = (y + 0.5f) / scaleY - 0.5f;
+                                float floorSrcPosD = Mathf.Floor(srcPosD);
+                                float floorSrcPosX = Mathf.Floor(srcPosX);
+                                float floorSrcPosY = Mathf.Floor(srcPosY);
+                                float fracSrcPosD = srcPosD - floorSrcPosD;
+                                float fracSrcPosX = srcPosX - floorSrcPosX;
+                                float fracSrcPosY = srcPosY - floorSrcPosY;
+
+                                //from https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/interpolation/trilinear-interpolation
+                                float p000 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 0, (int)floorSrcPosY + 0, (int)floorSrcPosX + 0, c)];
+                                float p100 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 1, (int)floorSrcPosY + 0, (int)floorSrcPosX + 0, c)];
+                                float p010 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 0, (int)floorSrcPosY + 1, (int)floorSrcPosX + 0, c)];
+                                float p110 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 1, (int)floorSrcPosY + 1, (int)floorSrcPosX + 0, c)];
+                                float p001 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 0, (int)floorSrcPosY + 0, (int)floorSrcPosX + 1, c)];
+                                float p101 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 1, (int)floorSrcPosY + 0, (int)floorSrcPosX + 1, c)];
+                                float p011 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 0, (int)floorSrcPosY + 1, (int)floorSrcPosX + 1, c)];
+                                float p111 = X[X.IndexWithClamp(b, (int)floorSrcPosD + 1, (int)floorSrcPosY + 1, (int)floorSrcPosX + 1, c)];
+                                float e = BilinearInterpolation(fracSrcPosX, fracSrcPosY, p000, p100, p010, p110);
+                                float f = BilinearInterpolation(fracSrcPosX, fracSrcPosY, p001, p101, p011, p111);
+                                float v = e * ( 1 - fracSrcPosD) + f * fracSrcPosD;
+                                O[b, d, y, x, c] = v;
+                            }
+                            else
+                            {
+                                int od = d / scale[2];
+                                int oy = y / scale[1];
+                                int ox = x / scale[0];
+                                O[b, d, y, x, c] = X[b, od, oy, ox, c];
+                            }
+                        }
+        return O;
+    }
+
     /// <inheritdoc/>
     public virtual Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
+        Assert.AreEqual(scale.Length, 2);
         float scaleX = (float)scale[0];
         float scaleY = (float)scale[1];
 
-        Assert.IsTrue(X.shape.IsNHWC());
-        Assert.AreEqual(scale.Length, 2);
+        Assert.IsTrue(X.shape.Is4D());
         var O = NewTensor(X.batch, X.height*scale[1], X.width*scale[0], X.channels);
 
         for (int b = 0; b < O.batch; ++b)
@@ -792,12 +897,7 @@ public class ReferenceCPUOps : IOps
                             float p01 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 1, (int)floorSrcPosX + 0, c)];
                             float p10 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 0, (int)floorSrcPosX + 1, c)];
                             float p11 = X[X.IndexWithClamp(b, (int)floorSrcPosY + 1, (int)floorSrcPosX + 1, c)];
-                            float v =
-                                p00 * (1-fracSrcPosX) * (1-fracSrcPosY) +
-                                p01 * (1-fracSrcPosX) *    fracSrcPosY  +
-                                p10 *    fracSrcPosX  * (1-fracSrcPosY) +
-                                p11 *    fracSrcPosX  *    fracSrcPosY;
-                            O[b, y, x, c] = v;
+                            O[b, y, x, c] = BilinearInterpolation(fracSrcPosX, fracSrcPosY, p00, p01, p10, p11);
                         }
                         else
                         {
@@ -813,7 +913,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Resample2D(Tensor X, int[] size, bool bilinear)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(size.Length, 2);
         var O = NewTensor(X.batch, size[1], size[0], X.channels);
 
@@ -858,7 +958,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor DepthToSpace(Tensor X, int[] blocksize, Layer.DepthToSpaceMode mode)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(blocksize.Length, 2);
         int bsX = blocksize[0];
         int bsY = blocksize[1];
@@ -893,7 +993,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor SpaceToDepth(Tensor X, int[] blocksize)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(blocksize.Length, 2);
         int bsX = blocksize[0];
         int bsY = blocksize[1];
@@ -923,7 +1023,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -971,7 +1071,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -1021,7 +1121,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor GlobalMaxPool2D(Tensor X)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         var O = NewTensor(X.batch, 1, 1, X.channels);
 
         for (int b = 0; b < X.batch; ++b)
@@ -1084,7 +1184,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor GlobalAvgVariancePool2D(Tensor X)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         var O = NewTensor(X.batch, 2, 1, X.channels);
 
         for (int b = 0; b < X.batch; ++b)
@@ -1124,44 +1224,61 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
-    private Tensor ApplyPadding(Tensor X, int[] pad, Func<Tensor, int, int, int, int, float> paddingOp)
+    private Tensor ApplyPadding(Tensor X, int[] pad, Func<Tensor, int, int, int, int, int, float> paddingOp)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
-        Assert.AreEqual(pad.Length, 4);
+        Assert.IsTrue(X.shape.IsNDHWC());
+        Assert.IsTrue(pad.Length == 4 || pad.Length == 6);
 
         var O = NewTensor(X.shape.ApplyBorder(pad));
 
+        int prePadW  = pad[0];
+        int prePadH  = pad[1];
+        int prePadD  = pad.Length == 4 ? 0      : pad[2];
+        int postPadW = pad.Length == 4 ? pad[2] : pad[3];
+        int postPadH = pad.Length == 4 ? pad[3] : pad[4];
+        int postPadD = pad.Length == 4 ? 0      : pad[5];
+
         // NOTE: negative "pad" variable will crop X tensor
-        int croppedWidth = X.width - Math.Max(0, -pad[2]);
-        int croppedHeight = X.height - Math.Max(0, -pad[3]);
+        int croppedWidth  = X.width  - Math.Max(0, -postPadW);
+        int croppedHeight = X.height - Math.Max(0, -postPadH);
+        int croppedDepth  = X.depth  - Math.Max(0, -postPadD);
 
         for (int b = 0; b < O.batch; ++b)
-            for (int y = 0; y < O.height; ++y)
-                for (int x = 0; x < O.width; ++x)
-                {
-                    int readX = x - pad[0];
-                    int readY = y - pad[1];
-
-                    if (readX < 0 || readX >= croppedWidth ||
-                        readY < 0 || readY >= croppedHeight)
+            for (int d = 0; d < O.depth; ++d)
+                for (int h = 0; h < O.height; ++h)
+                    for (int w = 0; w < O.width; ++w)
                     {
-                        for (int c = 0; c < O.channels; ++c)
-                            O[b, y, x, c] = paddingOp(X, b, readY, readX, c);
-                    }
-                    else
-                    {
-                        for (int c = 0; c < O.channels; ++c)
-                            O[b, y, x, c] = X[b, readY, readX, c];
-                    }
-                }
+                        int readW = w - prePadW;
+                        int readH = h - prePadH;
+                        int readD = d - prePadD;
 
+                        if (readW < 0 || readW >= croppedWidth ||
+                            readH < 0 || readH >= croppedHeight ||
+                            readD < 0 || readD >= croppedDepth)
+                        {
+                            for (int c = 0; c < O.channels; ++c)
+                                O[b, d, h, w, c] = paddingOp(X, b, readD, readH, readW, c);
+                        }
+                        else
+                        {
+                            for (int c = 0; c < O.channels; ++c)
+                                O[b, d, h, w, c] = X[b, readD, readH, readW, c];
+                        }
+                    }
         return O;
     }
 
     /// <inheritdoc/>
     public virtual Tensor Border2D(Tensor X, int[] pad, float value)
     {
-        Func<Tensor, int, int, int, int, float> padOp = (tensor, b, h, w, c) => value;
+        Func<Tensor, int, int, int, int, int, float> padOp = (tensor, b, d, h, w, c) => value;
+        return ApplyPadding(X, pad, padOp);
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor Border3D(Tensor X, int[] pad, float value)
+    {
+        Func<Tensor, int, int, int, int, int, float> padOp = (tensor, b, d, h, w, c) => value;
         return ApplyPadding(X, pad, padOp);
     }
 
@@ -1176,8 +1293,9 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Pad2DReflect(Tensor X, int[] pad)
     {
-        float GetReflectPadding(Tensor tensorX, int b, int readY, int readX, int c)
+        float GetReflectPadding(Tensor tensorX, int b, int readD, int readY, int readX, int c)
         {
+            //TODO when implementing Pad3DReflect change to function and support depth
             int lastXIndex = tensorX.shape.width - 1;
             int lastYIndex = tensorX.shape.height - 1;
 
@@ -1195,15 +1313,15 @@ public class ReferenceCPUOps : IOps
             return tensorX[b,readY, readX,c];
         }
 
-
         return ApplyPadding(X, pad, GetReflectPadding);
     }
 
     /// <inheritdoc/>
     public virtual Tensor Pad2DSymmetric(Tensor X, int[] pad)
     {
-        float GetSymmetricPadding(Tensor tensorX, int b, int readY, int readX, int c)
+        float GetSymmetricPadding(Tensor tensorX, int b, int readD, int readY, int readX, int c)
         {
+            //TODO when implementing Pad3DSymmetric change to function and support depth
             int lastXIndex = tensorX.shape.width - 1;
             int lastYIndex = tensorX.shape.height - 1;
 
@@ -1227,12 +1345,12 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Pad2DEdge(Tensor X, int[] pad)
     {
-        float GetEdgePadding(Tensor tensorX, int b, int readY, int readX, int c)
+        float GetEdgePadding(Tensor tensorX, int b, int readD, int readY, int readX, int c)
         {
+            //TODO when implementing Pad3DEdge change to function and support depth
             ClampHWToTensorShape(tensorX.shape, ref readY, ref readX);
             return tensorX[b,readY, readX,c];
         }
-
 
         return ApplyPadding(X, pad, GetEdgePadding);
     }
@@ -1240,35 +1358,26 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
         var O = NewTensorLike(X);
 
-        for (int b = 0; b < X.batch; ++b)
-            for (int y = 0; y < X.height; ++y)
-                for (int x = 0; x < X.width; ++x)
-                    for (int c = 0; c < X.channels; ++c)
-                    {
-                        float beta = B[0, 0, 0, c];//.array[c + B.offset];
-                        float gamma = S[0, 0, 0, c];//S.array[c + S.offset];
+        for (var it = new TensorIterator(O); it.IsValid(); it.Next())
+        {
+            float beta = B[0, 0, 0, it.d7];//.array[c + B.offset];
+            float gamma = S[0, 0, 0, it.d7];//S.array[c + S.offset];
 
-                        //var i = X.IndexWithOffset(b, y, x, c);
-                        float v = X[b, y, x, c];//.array[i];
-                        O[b, y, x, c] = v * gamma + beta;
-                    }
+            //var i = X.IndexWithOffset(b, y, x, c);
+            float v = X[it.index];//.array[i];
+            O[it.index] = v * gamma + beta;
+        }
         return O;
     }
 
     /// <inheritdoc/>
     public virtual Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         // https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf
         // However divide the sum by size to follow onnx and pytorch implementation
         // ONNX https://github.com/onnx/onnx/blob/master/docs/Operators.md#LRN
@@ -1278,30 +1387,28 @@ public class ReferenceCPUOps : IOps
         var O = NewTensorLike(X);
         float sizef = size;
 
-        for (int b = 0; b < X.batch; ++b)
-            for (int y = 0; y < X.height; ++y)
-                for (int x = 0; x < X.width; ++x)
-                    for (int c = 0; c < X.channels; ++c)
-                    {
-                        float regionCenter = (sizef - 1.0f) / 2.0f;
-                        int regionStart = Math.Max(0, c - (int)Mathf.Floor(regionCenter));
-                        int regionEnd = Math.Min(X.channels, c + (int)Mathf.Ceil(regionCenter)+1);
-                        float sumOfSquared = 0.0f;
-                        for (int ci = regionStart; ci < regionEnd; ++ci)
-                        {
-                            float regionValue = X[b, y, x, ci];
-                            sumOfSquared += regionValue * regionValue;
-                        }
+        for (var it = new TensorIterator(O); it.IsValid(); it.Next())
+        {
+            int c = it.d7;
+            float regionCenter = (sizef - 1.0f) / 2.0f;
+            int regionStart = Math.Max(0, c - (int)Mathf.Floor(regionCenter));
+            int regionEnd = Math.Min(X.channels, c + (int)Mathf.Ceil(regionCenter)+1);
+            float sumOfSquared = 0.0f;
+            for (int ci = regionStart; ci < regionEnd; ++ci)
+            {
+                float regionValue = X[it.d0, it.d1, it.d2, it.d3, it.d4, it.d5, it.d6 ,ci];
+                sumOfSquared += regionValue * regionValue;
+            }
 
-                        O[b, y, x, c] = X[b, y, x, c] / Mathf.Pow(bias + alpha * sumOfSquared / sizef, beta);
-                    }
+            O[it.index] = X[it.index] / Mathf.Pow(bias + alpha * sumOfSquared / sizef, beta);
+        }
         return O;
     }
 
     /// <inheritdoc/>
     public virtual Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
-        if (!X.shape.IsNHWC())
+        if (!X.shape.Is4D())
             throw new NotImplementedException();
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
@@ -1422,9 +1529,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Dropout(Tensor X, float alpha)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         Assert.IsTrue(alpha >= 0f && alpha <= 1f);
         var O = NewTensorLike(X);
 
@@ -1448,9 +1552,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
     {
-        if (!s.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(s);
 
         using (var seedOverride = new Seed(ref m_RandomNormalSeed, seed))
@@ -1467,9 +1568,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
     {
-        if (!s.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(s);
 
         using (var seedOverride = new Seed(ref m_RandomUniformSeed, seed))
@@ -1486,7 +1584,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Multinomial(Tensor X, int count, int seed)
     {
-        if (!X.shape.IsNHWC())
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
             throw new NotImplementedException();
 
         var O = NewTensor(X.flatHeight, count);
@@ -1548,11 +1646,11 @@ public class ReferenceCPUOps : IOps
                 {
                     int index = (int)X[n, i];
                     float v = (j == index) ? onValue: offValue;
-                        if (isInput1D)
-                            O[n, j] = v;
-                        else
-                            O[n, 0, j, i] = v;
-                    }
+                    if (isInput1D)
+                        O[n, j] = v;
+                    else
+                        O[n, 0, j, i] = v;
+                }
             }
         }
         return O;
@@ -1565,7 +1663,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
     {
-        if (!X.shape.IsNHWC())
+        if (!X.shape.Is4D())
             throw new NotImplementedException();
 
         TensorShape xShape = X.shape;
@@ -1582,12 +1680,12 @@ public class ReferenceCPUOps : IOps
         int[] iteratorAxes8D = new int[4];    // initialized below
 
         // Since we are assuming rank 4 convert axis to appropriate index (from rank 8)
-        axis = TensorExtensions.Convert8DAxisToNHWC(axis);
+        axis = TensorExtensions.Convert8DAxisTo4D(axis);
         int axisIndex = axis;
         for (int i = iteratorAxes.Length - 1; i >= 0; i--)
         {
             iteratorAxes[i] = axisIndex % iteratorAxes.Length;
-            iteratorAxes8D[i] = TensorExtensions.NHWCTo8DAxis(iteratorAxes[i]);
+            iteratorAxes8D[i] = TensorExtensions.Convert4DTo8DAxis(iteratorAxes[i]);
             axisIndex++;
         }
 
@@ -1691,7 +1789,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor TopKValues(Tensor X, Tensor I, int axis)
     {
-        if (!X.shape.IsNHWC())
+        if (!X.shape.Is4D())
             throw new NotImplementedException();
 
         TensorShape xShape = X.shape;
@@ -1705,12 +1803,12 @@ public class ReferenceCPUOps : IOps
         int[] iteratorAxes8D = new int[4];    // initialized below
 
         // Since we are assuming rank 4 convert axis to appropriate index (from rank 8)
-        axis = TensorExtensions.Convert8DAxisToNHWC(axis);
+        axis = TensorExtensions.Convert8DAxisTo4D(axis);
         int axisIndex = axis;
         for (int i = iteratorAxes.Length - 1; i >= 0; i--)
         {
             iteratorAxes[i] = axisIndex % iteratorAxes.Length;
-            iteratorAxes8D[i] = TensorExtensions.NHWCTo8DAxis(iteratorAxes[i]);
+            iteratorAxes8D[i] = TensorExtensions.Convert4DTo8DAxis(iteratorAxes[i]);
             axisIndex++;
         }
 
@@ -1790,13 +1888,16 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Softmax(Tensor X, int axis)
     {
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+            throw new NotImplementedException();
+
         TensorShape xShape = X.shape;
         axis = xShape.Axis(axis); // Adjust for negative axis values
         var O = NewTensor(xShape);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         int height = 1;
-        int axis8D = axis; //xShape.dimensions <= 4 && axis < 4 ? TensorExtensions.NHWCTo8DAxis(axis) : axis;
+        int axis8D = axis;
         for (var i = 0; i < axis8D; i++)
         {
             height *= xShape[i];
@@ -1842,7 +1943,10 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor LogSoftmax(Tensor X)
     {
-        var O = NewTensor(X.shape.Flatten());
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+            throw new NotImplementedException();
+
+        var O = NewTensor(X.shape);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         //e_x = np.exp(X - X.max(axis=1, keepdims=True))
@@ -1886,6 +1990,22 @@ public class ReferenceCPUOps : IOps
         for (int i = 0; i < end; ++i)
         {
             O[i] = MathfEx.Tanh(X[i]);
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor Softplus(Tensor X)
+    {
+        // f(x) = ln(exp(x) + 1)
+        var O = NewTensorLike(X);
+
+        var end = X.length;
+        for (int i = 0; i < end; ++i)
+        {
+            float v = X[i];
+            v = Mathf.Log(Mathf.Exp(v) + 1f);
+            O[i] = v;
         }
         return O;
     }
@@ -2361,9 +2481,9 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor StridedSlice(Tensor X, int[] starts, int[] ends, int[] stride)
     {
-        starts = TensorExtensions.Get8DParametersFromNHWCParametersAndShape(X.shape, starts, 0);
-        ends = TensorExtensions.Get8DParametersFromNHWCParametersAndShape(X.shape, ends, 1);
-        stride = TensorExtensions.Get8DParametersFromNHWCParametersAndShape(X.shape, stride, 1);
+        starts = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, starts, 0);
+        ends = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, ends, 1);
+        stride = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, stride, 1);
 
         var O = NewTensor(X.shape.ApplyStridedSlice(starts, ends, stride));
 
@@ -2393,7 +2513,6 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor Tile(Tensor X, int[] repeats)
     {
         Tensor O = NewTensor(X.shape.Scale(repeats));
-        TensorShape Oshape = O.shape;
 
         for (var it = new TensorIterator(O); it.IsValid(); it.Next())
         {
@@ -2434,29 +2553,18 @@ public class ReferenceCPUOps : IOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float, float, float> operation)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
-
         var O = NewTensorLike(tensors);
         var A = tensors[0];
         for (int t = 1; t < tensors.Length; ++t)
         {
             var B = tensors[t];
-            for (int b = 0; b < O.shape.batch; ++b)
+            for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
             {
-                for (int h = 0; h < O.shape.height; ++h)
-                {
-                    for (int w = 0; w < O.shape.width; ++w)
-                    {
-                        for (int c = 0; c < O.shape.channels; ++c)
-                        {
-                            var valueA = A[A.IndexWithBroadcast(b, h, w, c)];
-                            var valueB = B[B.IndexWithBroadcast(b, h, w, c)];
-                            O[O.Index(b, h, w, c)] = operation(valueA, valueB);
-                        }
-                    }
-                }
+                var valueA = A[A.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+                var valueB = B[B.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+                O[itO.index] = operation(valueA, valueB);
             }
+
             A = O;
         }
         return O;
@@ -2541,9 +2649,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceMin(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2562,9 +2667,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceMax(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2583,9 +2685,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ArgMax(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2607,9 +2706,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ArgMin(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2631,9 +2727,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceSum(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2651,9 +2744,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceMean(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2675,9 +2765,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceProd(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensor(X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
@@ -2695,24 +2782,12 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     private Tensor ApplyLogicalOperator(Tensor tensorA, Tensor tensorB, Func<float, float, float> logicOp)
     {
-        if (!tensorA.shape.IsNHWC() || !tensorB.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensorLike(new Tensor[] { tensorA, tensorB });
-        for (int b = 0; b < O.shape.batch; ++b)
+        for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
-            for (int h = 0; h < O.shape.height; ++h)
-            {
-                for (int w = 0; w < O.shape.width; ++w)
-                {
-                    for (int c = 0; c < O.shape.channels; ++c)
-                    {
-                            var A = tensorA[tensorA.IndexWithBroadcast(b, h, w, c)];
-                            var B = tensorB[tensorB.IndexWithBroadcast(b, h, w, c)];
-                            O[O.Index(b,h,w,c)] = logicOp(A,B);
-                    }
-                }
-            }
+            var A = tensorA[tensorA.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+            var B = tensorB[tensorB.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+            O[itO.index] = logicOp(A,B);
         }
 
         return O;
@@ -2787,20 +2862,13 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        if (!C.shape.IsNHWC() || !A.shape.IsNHWC() || !B.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensorLike(C);
-        var Oshape = O.shape;
-        for (int b = 0; b < Oshape.batch; ++b)
-            for (int h = 0; h < Oshape.height; ++h)
-                for (int w = 0; w < Oshape.width; ++w)
-                    for (int c = 0; c < Oshape.channels; ++c)
-                    {
-                            var x = A[A.IndexWithBroadcast(b, h, w, c)];
-                            var y = B[B.IndexWithBroadcast(b, h, w, c)];
-                            O[O.Index(b, h, w, c)] = Convert.ToBoolean(C[C.Index(b, h, w, c)]) ? x : y;
-                    }
+        for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
+        {
+            var x = A[A.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+            var y = B[B.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+            O[itO.index] = Convert.ToBoolean(C[itO.index]) ? x : y;
+        }
 
         return O;
     }
@@ -2913,6 +2981,9 @@ public class ReferenceCPUOps : IOps
         // PyTorch: https://pytorch.org/docs/stable/_modules/torchvision/ops/boxes.html#nms
         var boxes = tensors[0];
         var scores = tensors[1];
+
+        Assert.IsTrue(boxes.shape.Is4D());//should be rank 3
+        Assert.IsTrue(scores.shape.Is4D());//should be rank 3
 
         int boxCount = Mathf.Min(boxes.channels, scores.width); // Box spatial dimension (C) / Score spatial dimension (W)
         var boxIndices = new List<int>(boxCount);
@@ -3052,6 +3123,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Transpose(Tensor X)
     {
+        // TODO: reshape when possible
         Assert.IsTrue(X.dimensions <= 2);
         X = Flatten(X);
 

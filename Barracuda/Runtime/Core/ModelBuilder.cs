@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using Unity.Barracuda.Compiler.Passes;
 using UnityEngine.Assertions;
 
 namespace Unity.Barracuda
@@ -9,12 +11,12 @@ namespace Unity.Barracuda
     /// </summary>
     public class ModelBuilder
     {
-        private readonly Model m_Model;
+        readonly Model m_Model;
 
         /// <summary>
         /// Model under construction
         /// </summary>
-        public Model model { get { return m_Model; } }
+        public Model model => m_Model;
 
         /// <summary>
         /// Create a model builder helper to construct the underlying Model.
@@ -32,10 +34,11 @@ namespace Unity.Barracuda
         /// </summary>
         /// <param name="name">input name</param>
         /// <param name="shape">input shape</param>
+        /// <param name="rank">input rank</param>
         /// <returns>Input instance</returns>
-        public Model.Input Input(string name, Int32[] shape)
+        public Model.Input Input(string name, Int32[] shape, int rank)
         {
-            m_Model.inputs.Add(new Model.Input {name = name, shape = shape});
+            m_Model.inputs.Add(new Model.Input {name = name, shape = shape, rank = rank});
 
             return m_Model.inputs.Last();
         }
@@ -136,10 +139,13 @@ namespace Unity.Barracuda
         /// <param name="name">Layer name</param>
         /// <param name="tensor">data Tensor</param>
         /// <param name="insertionIndex">insertion index in Layer list</param>
+        /// <param name="rank">constant rank</param>
         /// <returns>created Layer instance</returns>
-        public Layer Const(string name, Tensor tensor, int insertionIndex = -1)
+        public Layer Const(string name, Tensor tensor, int insertionIndex = -1, int rank = -1)
         {
             Layer layer = new Layer(name, Layer.Type.Load);
+            if (rank >= 0)
+                layer.axis = rank;
             layer.datasets = new Layer.DataSet[1];
             layer.datasets[0].name            = name;
             layer.datasets[0].shape           = tensor.shape;
@@ -383,7 +389,7 @@ namespace Unity.Barracuda
         /// Bias should be a tensor with (batch == 1) and (height * width * channels == kernelCount)
         ///
         /// Output batch is same as input.
-        /// Output channel is kernel.shape[3].
+        /// Output channel is kernel.kernelCount.
         /// output.shape[H,W] = (input.shape[H,W] + pad[1,0] + pad[3,2] - kernel.shape[1,0]) / stride[1,0] + 1.
         /// </summary>
         /// <param name="name">Layer name</param>
@@ -396,6 +402,29 @@ namespace Unity.Barracuda
         public Layer Conv2D(string name, object input, Int32[] stride, Int32[] pad, Tensor kernel, Tensor bias)
         {
             return Conv(name, Layer.Type.Conv2D, input, stride, pad, new int[0], kernel, bias);
+        }
+
+        /// <summary>
+        /// Apply a spatial 3D convolution on H, W and D.
+        /// Stride should be of size 3 and format is [W, H, D].
+        /// Pad should be of size 6 and format is [pre W, pre H, pre D, post W, post H, post D].
+        /// Kernel should be a tensor of shape [kernelSpatialHeight, kernelSpatialWidth, kernelSpatialDepth, kernelDepth, kernelCount]
+        /// Bias should be a tensor with (batch == 1) and (height * width * channels == kernelCount)
+        ///
+        /// Output batch is same as input.
+        /// Output channel is kernel.kernelCount.
+        /// output.shape[D,H,W] = (input.shape[D,H,W] + pad[2,1,0] + pad[5,4,3] - kernel.shape[2,1,0]) / stride[2,1,0] + 1.
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="stride">stride</param>
+        /// <param name="pad">padding</param>
+        /// <param name="kernel">kernel weight data Tensor</param>
+        /// <param name="bias">bias data Tensor</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Conv3D(string name, object input, Int32[] stride, Int32[] pad, Tensor kernel, Tensor bias)
+        {
+            return Conv(name, Layer.Type.Conv3D, input, stride, pad, new int[0], kernel, bias);
         }
 
         /// <summary>
@@ -523,8 +552,8 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
-        /// Upsample the input tensor by scaling H and W by upsample[0] and upsample[1] respectively.
-        /// `bilinear` allow to choose betwen nearest neighbor or bilinear upsampling.
+        /// Upsample the input tensor by scaling W and H by upsample[0] and upsample[1] respectively.
+        /// `bilinear` allow to choose between nearest neighbor or bilinear upsampling.
         /// </summary>
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
@@ -563,6 +592,47 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Upsample the input tensor by scaling W,H and D by upsample[0], upsample[1] and upsample[2] respectively.
+        /// `trilinear` allow to choose between nearest neighbor or trilinear upsampling.
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="upsample">scaling factors array [W,H,D]</param>
+        /// <param name="trilinear">trilinear flag</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Upsample3D(string name, object input, Int32[] upsample, bool trilinear)
+        {
+            Layer layer = new Layer(name, Layer.Type.Upsample3D);
+            layer.pool = upsample;
+            layer.axis = trilinear ? 1: -1;
+            layer.inputs = new [] {ResolveInput(input)};
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Upsample the input tensor by scaling W,H and D by scale[0], scale[1] and scale[2] respectively.
+        /// `trilinear` allow to choose between nearest neighbor or trilinear upsampling.
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="source">input node</param>
+        /// <param name="scale">scale Tensor</param>
+        /// <param name="trilinear">trilinear flag</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Upsample3D(string name, object source, object scale, bool trilinear)
+        {
+            Layer layer = new Layer(name, Layer.Type.Upsample3D);
+            layer.axis = trilinear ? 1: -1;
+            layer.inputs = new[] { ResolveInput(source), ResolveInput(scale) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
         /// Resample2D scales the input tensor to the given resolution (W=size[0], H=size[1]).
         /// `bilinear` allows to choose between nearest neighbour or bilinear sampling.
         /// </summary>
@@ -577,6 +647,26 @@ namespace Unity.Barracuda
             layer.pool = size;
             layer.axis = bilinear ? 1 : -1;
             layer.inputs = new[] { ResolveInput(input) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Resample2D scales the input tensor to the given resolution (W=size[0], H=size[1]).
+        /// `bilinear` allows to choose between nearest neighbour or bilinear sampling.
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="size">size tensor</param>
+        /// <param name="bilinear">use bilinear</param>
+        /// <returns>created Layer instance</returns>
+        internal Layer Resample2D(string name, object input, object size, bool bilinear)
+        {
+            Layer layer = new Layer(name, Layer.Type.Resample2D);
+            layer.axis = bilinear ? 1 : -1;
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(size) };
 
             m_Model.layers.Add(layer);
 
@@ -638,12 +728,33 @@ namespace Unity.Barracuda
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
         /// <param name="shape">shape</param>
+        /// <param name="rank">rank</param>
         /// <returns>created Layer instance</returns>
-        public Layer Reshape(string name, object input, int[] shape)
+        public Layer Reshape(string name, object input, int[] shape, int rank = -1)
         {
             Layer layer = new Layer(name, Layer.Type.Reshape);
             layer.pool = shape;
+            if (rank >= 0)
+                layer.pad = new[] { rank };
             layer.inputs = new [] {ResolveInput(input)};
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Creates a constant tensor populated with `value` as the same shape of `input`.
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="value">value</param>
+        /// <returns>created Layer instance</returns>
+        public Layer ConstantOfShape(string name, object input, float value)
+        {
+            Layer layer = new Layer(name, Layer.Type.ConstantOfShape);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.alpha = value;
 
             m_Model.layers.Add(layer);
 
@@ -699,6 +810,15 @@ namespace Unity.Barracuda
 
             return layer;
         }
+        internal Layer Expand(string name, object input, object shape)
+        {
+            Layer layer = new Layer(name, Layer.Type.Expand);
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(shape) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
 
         /// <summary>
         /// From a Tensor of shape [S,R,N,T,D,H,W,C] return a tensor of shape [S,R,N,1,1,1,1,T*D*H*W*C]
@@ -730,7 +850,7 @@ namespace Unity.Barracuda
         public Layer Concat(string name, object[] inputs, int axis = -1, bool axisIs8D=false)
         {
             Layer layer = new Layer(name, Layer.Type.Concat);
-            layer.axis = axisIs8D?axis:TensorExtensions.NHWCTo8DAxis(axis);
+            layer.axis = axisIs8D?axis:TensorExtensions.Convert4DTo8DAxis(axis);
             layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
 
             m_Model.layers.Add(layer);
@@ -766,19 +886,43 @@ namespace Unity.Barracuda
             return layer;
         }
 
+        internal Layer StridedSlice(string name, object input, int[] starts, int[] ends, int[] strides, int[] axes)
+        {
+            Layer layer = new Layer(name, Layer.Type.StridedSlice);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.pad = starts;
+            layer.pool = ends;
+            layer.stride = strides;
+            layer.axes = axes;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
         /// <summary>
         /// Constructs a tensor by repeating the input tensor the number of times given by repeats
         /// For example input = [[1, 2], [3, 4]], repeats = [1, 2], Tile(input, repeats) = [[1, 2, 1, 2], [3, 4, 3, 4]]
         /// </summary>
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
-        /// <param name="repeats">repeats</param>
+        /// <param name="repeats">tile repeats</param>
         /// <returns>created Layer instance</returns>
         public Layer Tile(string name, object input, int[] repeats)
         {
             Layer layer = new Layer(name, Layer.Type.Tile);
             layer.inputs = new[] { ResolveInput(input) };
             layer.pool = repeats;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+        internal Layer Tile(string name, object input, object repeats)
+        {
+            Layer layer = new Layer(name, Layer.Type.Tile);
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(repeats) };
+            //layer.pool = repeats;
 
             m_Model.layers.Add(layer);
 
@@ -906,6 +1050,28 @@ namespace Unity.Barracuda
             return layer;
         }
 
+        internal Layer Squeeze(string name, object input, int[] axes)
+        {
+            Layer layer = new Layer(name, Layer.Type.Squeeze);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.pool = axes;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        internal Layer Unsqueeze(string name, object input, int[] axes)
+        {
+            Layer layer = new Layer(name, Layer.Type.Unsqueeze);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.pool = axes;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
         private Layer Activation(Layer.Activation activation, string name, object input)
         {
             Layer layer = new Layer(name, activation);
@@ -921,10 +1087,14 @@ namespace Unity.Barracuda
         /// </summary>
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
+        /// <param name="rank">input rank</param>
         /// <returns>created Layer instance</returns>
-        public Layer Identity(string name, object input)
+        public Layer Identity(string name, object input, int rank = -1)
         {
-            return Activation(Layer.Activation.None, name, input);
+            Layer identity = Activation(Layer.Activation.None, name, input);
+            if (rank > 0)
+                identity.pad = new[] { rank };
+            return identity;
         }
 
 
@@ -940,8 +1110,8 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
-        /// Return the softmax (normalized exponential) values of the flatten HWC dimensions of the input.
-        /// Thus output will be of shape [input.Batch, input.Height * input.Width * input.Channels]
+        /// Return the Softmax (normalized exponential) values of the input along provided axis.
+        /// Thus output will be of shape of the input.
         /// If axisIs8D==true axis rank is from [S,R,N,T,D,H,W,C] overwise from [N,H,W,C]
         /// `axis` must be superior to -4
         /// `axis` must be inferior to 8 when axisIs8D==true or inferior to 4 if axisIs8D==false
@@ -954,13 +1124,13 @@ namespace Unity.Barracuda
         public Layer Softmax(string name, object input, int axis=1, bool axisIs8D=false)
         {
             Layer layer = Activation(Layer.Activation.Softmax, name, input);
-            layer.axis = axisIs8D ? axis : TensorExtensions.NHWCTo8DAxis(axis);
+            layer.axis = axisIs8D ? axis : TensorExtensions.Convert4DTo8DAxis(axis);
             return layer;
         }
 
         /// <summary>
-        /// Return the logsoftmax (normalized exponential) values of the flatten HWC dimensions of the input.
-        /// Thus output will be of shape [input.Batch, input.Height * input.Width * input.Channels]
+        /// Return the logSoftmax (log of normalized exponential) values of the input along flatWidth of the input tensor.
+        /// Thus output will be of shape of the input.
         /// </summary>
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
@@ -990,6 +1160,17 @@ namespace Unity.Barracuda
         public Layer Tanh(string name, object input)
         {
             return Activation(Layer.Activation.Tanh, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Softplus` activation function: f(x) = ln(e^{x} + 1)
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Softplus(string name, object input)
+        {
+            return Activation(Layer.Activation.Softplus, name, input);
         }
 
         /// <summary>
@@ -1606,6 +1787,21 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Pads D,H and W dimension with a given constant value (default to 0).
+        /// Pad should be of size 6 and format is [pre W, pre H, pre D, post W, post H, post D].
+        /// If pad contain negative values H and W dimensions will be cropped instead.
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="pad">padding</param>
+        /// <param name="constantValue">constant value to use for border</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Border3D(string name, object input, Int32[] pad, float constantValue = 0.0f)
+        {
+            return Pad(Layer.Type.Border3D, name, input, pad, constantValue);
+        }
+
+        /// <summary>
         /// Pads H and W dimension by repeating the edge values of the input.
         /// Pad should be of size 4 and format is [pre W, pre H, post W, post H].
         ///
@@ -1808,12 +2004,14 @@ namespace Unity.Barracuda
         /// <param name="input">input node</param>
         /// <param name="axis">axis</param>
         /// <param name="axisIs8D">is axis 8D</param>
+        /// <param name="keepDims">is shape rank reduced</param>
         /// <returns>created Layer instance</returns>
-        public Layer Reduce(Layer.Type type, string name, object input, int axis = -1, bool axisIs8D=false)
+        public Layer Reduce(Layer.Type type, string name, object input, int axis = -1, bool axisIs8D=false, int keepDims = 1)
         {
             Layer layer = new Layer(name, type);
             layer.inputs = new[] { ResolveInput(input) };
-            layer.axis = axisIs8D?axis:TensorExtensions.NHWCTo8DAxis(axis);
+            layer.axis = axisIs8D?axis:TensorExtensions.Convert4DTo8DAxis(axis);
+            layer.alpha = keepDims;
             m_Model.layers.Add(layer);
 
             return layer;
@@ -1846,7 +2044,7 @@ namespace Unity.Barracuda
 
             Layer layer = new Layer(name, Layer.Type.Gather);
             layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
-            layer.axis = axisIs8D?axis:TensorExtensions.NHWCTo8DAxis(axis);
+            layer.axis = axisIs8D?axis:TensorExtensions.Convert4DTo8DAxis(axis);
             m_Model.layers.Add(layer);
 
             return layer;
@@ -1889,6 +2087,60 @@ namespace Unity.Barracuda
             m_Model.layers.Add(layer);
 
             return layer;
+        }
+
+        /// <summary>
+        /// LSTM (ML-Agents models only) - requires expansion (see ExpandOpsPass)
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="outputs">output nodes</param>
+        /// <param name="W">W data Tensor</param>
+        /// <param name="R">R data Tensor</param>
+        /// <param name="B">B data Tensor</param>
+        /// <param name="hiddenSize">Number of neurons in the hidden layer</param>
+        /// <returns>created Layer instance</returns>
+        public Layer[] LSTM(string name, object input, string[] outputs, Tensor W, Tensor R, Tensor B, int hiddenSize)
+        {
+            Layer layer = new Layer(name, Layer.Type.LSTM);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.outputs = outputs; // outputs 0-2 are real outputs, output 3 is the resolved input base name, output 4 is the resolved output base name
+            layer.pool = new[] { hiddenSize };
+
+            layer.datasets = new Layer.DataSet[3];
+            layer.datasets[0].name            = $"{name}/W";
+            layer.datasets[0].shape           = W.shape;
+            layer.datasets[0].itemSizeInBytes = 4;
+            layer.datasets[0].length          = W.shape.length;
+            layer.datasets[0].offset          = 0;
+
+            layer.datasets[1].name            = $"{name}/R";
+            layer.datasets[1].shape           = R.shape;
+            layer.datasets[1].itemSizeInBytes = 4;
+            layer.datasets[1].length          = R.shape.length;
+            layer.datasets[1].offset          = W.shape.length;
+
+            layer.datasets[2].name            = $"{name}/B";
+            layer.datasets[2].shape           = B.shape;
+            layer.datasets[2].itemSizeInBytes = 4;
+            layer.datasets[2].length          = B.shape.length;
+            layer.datasets[2].offset          = W.shape.length + R.shape.length;
+
+            layer.weights                     = new float[W.shape.length + R.shape.length + B.shape.length];
+
+            W.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            R.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+            B.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[2].offset);
+
+            m_Model.layers.Add(layer);
+
+            Layer layer1 = Identity(outputs[1], layer, rank: 3); // Y_h
+            Layer layer2 = Identity(outputs[2], layer, rank: 3); // Y_c
+
+            // LSTM requires expanding
+            model.flags |= Model.Flags.NeedsCompilation;
+
+            return new [] { layer, layer1, layer2 };
         }
     }
 }

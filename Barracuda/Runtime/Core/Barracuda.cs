@@ -592,7 +592,7 @@ public class WorkerFactory
     /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
     /// <param name="model">the associated model. See ModelLoader.cs</param>
     /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
-    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="verbose"> will log scheduling of layers execution to the console</param>
     /// <param name="compareAgainstType">if different than `type` model will be run on those two backend and result of every layer will be compared, checking for divergence. Great for debugging, but very slow because of the sync needed</param>
     /// <param name="differenceLogLevel">if `compareAgainstType` is used difference will be reported as error is this is true or warning otherwise</param>
@@ -611,7 +611,7 @@ public class WorkerFactory
     /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
     /// <param name="model">the associated model. See ModelLoader.cs</param>
     /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
-    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="workerConfiguration">define configurations such as logging and comparison backend, see WorkerConfiguration API docs</param>
     /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerConfiguration workerConfiguration)
@@ -624,7 +624,7 @@ public class WorkerFactory
     /// </summary>
     /// <param name="model">the associated model. See ModelLoader.cs</param>
     /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
-    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
     /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
     /// <returns>Worker instance</returns>
@@ -668,7 +668,7 @@ public class WorkerFactory
     /// <param name="type">backend type to use. For example `WorkerFactory.Type.Compute` specifies the fast GPU path</param>
     /// <param name="model">the associated model. See ModelLoader.cs</param>
     /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
-    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
     /// <returns>Worker instance</returns>
     public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs = null, string[] trimOutputs = null, bool verbose = false)
@@ -870,7 +870,7 @@ public static class ModelExtensions
     /// </summary>
     /// <param name="model">the associated Model to execute</param>
     /// <param name="additionalOutputs">are the additional outputs to track but not directly specified by the model</param>
-    /// <param name="trimOutputs">are the outputs not discard even if they are specified by the model</param>
+    /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
     /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
     /// <returns>Worker instance</returns>
@@ -907,7 +907,7 @@ public static class NNModelExtensions
     /// </summary>
     /// <param name="asset">the associated NNModel asset</param>
     /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
-    /// <param name="trimOutputs">the outputs not discard even if they are specified by the model</param>
+    /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="device">the device type to run worker on. For example `WorkerFactory.Device.GPU` specifies the fast GPU path</param>
     /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
     /// <returns>Worker instance</returns>

@@ -353,9 +353,49 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                         ComputeKernelLibrary.Conv2D(XpaddedShape, K, O, new int[] { 1, 1 }, pad));
                     bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd"));
 
+                    var KBTensors = PrepareConv2DTrans(model, l);
+
                     instructions.Add(new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape });
-                    instructions.Add(new CompiledInstruction { shape = K, tensors = PrepareConv2DTrans(model, l) });
-                    instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd(model, l) : null });
+                    instructions.Add(new CompiledInstruction { shape = K, tensors = KBTensors });
+
+                    if (isConvWinograd)
+                    {
+                        var layer = new Layer(l.name, l.type, l.activation);
+                        layer.pad = l.pad;
+                        layer.stride = l.stride;
+
+                        layer.pool = l.pool.ToArray();
+                        layer.axis = l.axis;
+                        layer.alpha = l.alpha;
+                        layer.beta = l.beta;
+                        layer.inputs = l.inputs.ToArray();
+
+                        var Kd = KBTensors[0];
+                        var Bd = KBTensors[1];
+
+                        layer.datasets = new Layer.DataSet[2];
+                        layer.datasets[0].name = Kd.name;
+                        layer.datasets[0].shape = Kd.shape;
+                        layer.datasets[0].itemSizeInBytes = 4;
+                        layer.datasets[0].length = Kd.length;
+                        layer.datasets[0].offset = 0;
+
+                        layer.datasets[1].name = Bd.name;
+                        layer.datasets[1].shape = Bd.shape;
+                        layer.datasets[1].itemSizeInBytes = 4;
+                        layer.datasets[1].length = Bd.length;
+                        layer.datasets[1].offset = 0;
+                        layer.datasets[1].offset = Bd.length;
+
+                        layer.weights = new float[Kd.length + Bd.length];
+
+                        Array.Copy(Kd.ToReadOnlyArray(), 0, layer.weights, 0, Kd.length);
+                        Array.Copy(Bd.ToReadOnlyArray(), 0, layer.weights, Kd.length, Bd.length);
+
+                        instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = PrepareConv2dWinograd(model, layer) });
+                    }
+                    else
+                        instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = null });
 
                     // FusedActivation
                     var fusedActivation = (Layer.FusedActivation)l.activation;
@@ -369,8 +409,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                     continue;
             }
-            else if (
-                l.type == Layer.Type.Upsample2D)
+            else if (l.type == Layer.Type.Upsample2D)
             {
                 // axis is treated as upsample point/bilinear flag
                 var bilinear = l.axis > 0;
@@ -497,9 +536,12 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 l.type == Layer.Type.Mean
                 )
             {
-                var kernelName = "Broadcast" + l.type;
-                kernel = BestKernel(
-                    ComputeKernelLibrary.Broadcast(X, O, kernelName));
+                if (X.Is4D() && O.Is4D())
+                {
+                    var kernelName = "Broadcast" + l.type;
+                    kernel = BestKernel(
+                        ComputeKernelLibrary.Broadcast(X, O, kernelName));
+                }
             }
             else if (
                     l.type == Layer.Type.Concat)
@@ -526,7 +568,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             // Activations
             else if (l.type == Layer.Type.Activation)
             {
-                if (!X.IsNHWC())
+                if (!X.Is4D())
                     //8D activation are not supported on compute path atm, will fallback.
                     continue;
 
@@ -644,7 +686,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (m_Compiled.kernel.shader == null)
             return base.Conv2D(X, K, B, stride, pad, fusedActivation);
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -684,7 +726,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (K.kernelDepth != 1 || m_Compiled.kernel.shader == null)
             return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -720,7 +762,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         Assert.IsTrue(m_Compiled.instructions.Length >= 3); // pad, kernel flip, conv, ? fusedActivation
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -800,7 +842,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (m_Compiled.kernel.shader == null)
             return base.Upsample2D(X, scale, bilinear);
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(scale.Length, 2);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
@@ -843,11 +885,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (m_Compiled.kernel.shader == null)
+        if (m_Compiled.kernel.shader == null || !X.shape.Is4D())
             return base.ScaleBias(X, S, B);
-
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
@@ -869,6 +908,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
     private Tensor GlobalPool2D(Tensor X)
     {
+        Assert.IsTrue(X.shape.Is4D());
         var inputDim = new [] {X.height, X.width};
         for (var i = 0; i < m_Compiled.instructions.Length-1; ++i)
         {
@@ -922,7 +962,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     /// <inheritdoc/>
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
-        if (!X.shape.IsNHWC())
+        if (!X.shape.Is4D())
             throw new NotImplementedException();
 
         if (axis != TensorShape.C && axis != -1)
@@ -1054,7 +1094,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
-        if (m_Compiled.kernel.shader == null || !X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+        if (m_Compiled.kernel.shader == null || X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1 || axis > X.shape.FirstNotIdentityFeatureDimensionIndex())
             return base.Softmax(X, axis);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
@@ -1131,7 +1171,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors) || !TensorExtensions.Is8DAxisConvertibleToNHWC(axis))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || !TensorExtensions.Is8DAxisConvertibleTo4D(axis))
             return base.Concat(tensors, axis);
 
         if (m_Compiled.instructions == null)
@@ -1147,7 +1187,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
         axis = O.shape.Axis(axis);
-        var axisNCHW = TensorExtensions.Convert8DAxisToNHWC(axis);
+        var axisNCHW = TensorExtensions.Convert8DAxisTo4D(axis);
 
         Assert.AreEqual(tensors.Length, m_Compiled.instructions.Length);
         for (int i = 0; i < tensors.Length; ++i)

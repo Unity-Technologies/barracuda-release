@@ -69,6 +69,11 @@ public struct TensorShape
     /// <summary>
     /// Sequence length dimension index number
     /// </summary>
+    public const int NumberOfDirections = 1;
+
+    /// <summary>
+    /// Sequence length dimension index number
+    /// </summary>
     public const int SequenceLength = 0;
 
     /// <summary>
@@ -210,6 +215,23 @@ public struct TensorShape
     }
 
     /// <summary>
+    /// Create a TensorShape of shape [1,1,N,1,1,1,W,C].
+    /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    public TensorShape(int n, int w, int c)
+    {
+        sequenceLength = 1;
+        numberOfDirections = 1;
+        batch = n > 0 ? n : 1;
+        extraDimension = 1;
+        depth = 1;
+        height = 1;
+        width = w > 0 ? w : 1;
+        channels = c > 0 ? c : 1;
+    }
+    /// <summary>
     /// Create a TensorShape of shape [1,1,N,1,1,1,1,C].
     /// </summary>
     /// <param name="n">batch</param>
@@ -226,6 +248,21 @@ public struct TensorShape
         channels = c > 0 ? c : 1;
     }
 
+    /// <summary>
+    /// Create a TensorShape of shape [1,1,N,1,1,1,1,1].
+    /// </summary>
+    /// <param name="n">batch</param>
+    public TensorShape(int n)
+    {
+        sequenceLength = 1;
+        numberOfDirections = 1;
+        batch = n > 0 ? n : 1;
+        extraDimension = 1;
+        depth = 1;
+        height = 1;
+        width = 1;
+        channels = 1;
+    }
     /// <summary>
     /// Create a TensorShape of arbitrary `shape`.
     /// `shape` must be of length 4 [N,H,W,C] or 8 [S,R,N,T,D,H,W,C].
@@ -461,6 +498,29 @@ public struct TensorShape
         return Index(n, h, w, c);
     }
 
+    /// <summary>
+    /// Given an element dimensions indices [1,N,1,1,D,H,W,C] return this element offset in memory, clamping indices to tensor dimensions.
+    /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
+    public int IndexWithClamp(int n, int d, int h, int w, int c)
+    {
+        n = Math.Max(n, 0);
+        d = Math.Max(d, 0);
+        h = Math.Max(h, 0);
+        w = Math.Max(w, 0);
+        c = Math.Max(c, 0);
+        n = Math.Min(n, batch - 1);
+        d = Math.Min(d, depth - 1);
+        h = Math.Min(h, height - 1);
+        w = Math.Min(w, width - 1);
+        c = Math.Min(c, channels - 1);
+        return Index(n, d, h, w, c);
+    }
 
     /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] return this element offset in memory, clamping indices to tensor dimensions.
@@ -514,6 +574,26 @@ public struct TensorShape
             r * batch * extraDimension * depth * height * width * channels +
             n * extraDimension * depth * height * width * channels +
             t * depth * height * width * channels +
+            d * height * width * channels +
+            h * width * channels +
+            w * channels +
+            c;
+        return index;
+    }
+
+    /// <summary>
+    /// Given an element dimensions indices [0,0,N,0,D,H,W,C] return this element offset in memory.
+    /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>one dimensional index (offset in the flat memory region)</returns>
+    public int Index(int n, int d, int h, int w, int c)
+    {
+        int index =
+            n * extraDimension * depth * height * width * channels +
             d * height * width * channels +
             h * width * channels +
             w * channels +
@@ -739,7 +819,10 @@ public struct TensorShape
     /// <returns>object summary as a string</returns>
     public override string ToString()
     {
-        return $"({sequenceLength}, {numberOfDirections}, {batch}, {extraDimension}, {depth}, {height}, {width}, {channels})";
+        if (this.Is4D())
+            return $"(n:{batch}, h:{height}, w:{width}, c:{channels})";
+        else
+            return $"(s:{sequenceLength}, r:{numberOfDirections}, n:{batch}, t:{extraDimension}, d:{depth}, h:{height}, w:{width}, c:{channels})";
     }
 }
 /// <summary>
@@ -1886,6 +1969,19 @@ public class Tensor : IDisposable
     }
 
     /// <summary>
+    /// Given an element dimensions indices [0,0,N,0,D,H,W,C] return this element offset in memory.
+    /// </summary>
+    /// <param name="b">batch</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="ch">channels</param>
+    /// <returns></returns>
+    public int Index(int b, int d, int h, int w, int ch)
+    {
+        return shape.Index(b, d, h, w, ch);
+    }
+    /// <summary>
     /// Given an element dimensions indices [S,R,N,T,D,H,W,C] return this element offset in memory.
     /// </summary>
     /// <param name="s">sequence</param>
@@ -1916,6 +2012,19 @@ public class Tensor : IDisposable
     }
 
     /// <summary>
+    /// Given an element dimensions indices [0,0,N,0,D,H,W,C] return this element offset in memory, clamping indices to tensor dimensions.
+    /// </summary>
+    /// <param name="n">batch</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>flat index (offset in memory)</returns>
+    public int IndexWithClamp(int n, int d, int h, int w, int c)
+    {
+        return shape.IndexWithClamp(n, d, h, w, c);
+    }
+    /// <summary>
     /// Given an element dimensions indices[0,0,N,0,0,H,W,C] with broadcast support, return this element offset in memory.
     /// </summary>
     /// <param name="n">batch</param>
@@ -1928,6 +2037,22 @@ public class Tensor : IDisposable
         return shape.IndexWithBroadcast(n, h, w, c);
     }
 
+    /// <summary>
+    /// Given an element dimensions indices [S,R,N,T,D,H,W,C] with broadcast support, return this element offset in memory.
+    /// </summary>
+    /// <param name="s">sequence</param>
+    /// <param name="r">direction</param>
+    /// <param name="n">batch</param>
+    /// <param name="t">time</param>
+    /// <param name="d">depth</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="c">channels</param>
+    /// <returns>flat index (offset in memory)</returns>
+    public int IndexWithBroadcast(int s, int r, int n, int t, int d, int h, int w, int c)
+    {
+        return shape.IndexWithBroadcast(s,r,n,t,d,h,w,c);
+    }
     /// <summary>
     /// Given an element dimensions indices [0,0,N,0,0,0,0,C] return this element offset in memory.
     /// </summary>
@@ -1975,6 +2100,16 @@ public class Tensor : IDisposable
         get { PrepareCacheForAccess(); return m_Cache[Index(b, h, w, ch)]; }
         set { PrepareCacheForAccess(); m_Cache[Index(b, h, w, ch)] = value; m_CacheIsDirty = true; }
     }
+    /// <summary>
+    /// Access element at index [0,0,N,0,D,H,W,C] in this Tensor.
+    /// This will create a blocking read, if this Tensor is a result of a computation on a different device (GPU).
+    /// </summary>
+    public float this[int b, int d, int h, int w, int ch]
+    {
+        get { PrepareCacheForAccess(); return m_Cache[Index(b, d, h, w, ch)]; }
+        set { PrepareCacheForAccess(); m_Cache[Index(b, d, h, w, ch)] = value; m_CacheIsDirty = true; }
+    }
+
 
     /// <summary>
     /// Access element at index [S,R,N,T,D,H,W,C] in this Tensor.

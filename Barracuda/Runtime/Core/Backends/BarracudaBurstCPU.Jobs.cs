@@ -566,6 +566,17 @@ public partial class BurstCPUOps
     }
 
     [BurstCompile]
+    unsafe struct SoftplusJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+        public void Execute(int i)
+        {
+            O[i] = Mathf.Log(Mathf.Exp(X[i]) + 1f);
+        }
+    }
+
+    [BurstCompile]
     unsafe struct SigmoidJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;

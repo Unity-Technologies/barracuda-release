@@ -249,6 +249,37 @@ internal sealed class ComputeKernelLibrary
         return valid;
     }
 
+    private static List<Entry> s_Conv3DEntries = new List<Entry>(4);
+    internal static List<Entry> Conv3D(TensorShape X, TensorShape K, TensorShape O, int[] stride, int[] pad)
+    {
+        var n = O.batch;
+        var d = O.depth;
+        var h = O.height;
+        var w = O.width;
+        var k = K.kernelCount;
+        var c = X.channels;
+
+        var entries = s_Conv3DEntries;
+        entries.Clear();
+
+        entries.Add(new Entry("Conv3D",
+            Int3(k, w, h), BigO(O.batch * X.depth * X.channels)));
+
+        entries.Add(new Entry("Conv3DKernelKxK_LaxC8LaxK32_T8x16_R4x4",
+            Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(d*w*h, 4), n), BigO(X.channels) * 0.8f,
+            valid_: (k>=8) && ComputeInfo.supportsComputeSharedMemory));
+
+        entries.Add(new Entry("Conv3DKernelKxK_StrictC8LaxK32_T8x16_R4x4",
+            Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(d*w*h, 4), n), BigO(X.channels) * 0.7f,
+            valid_: (c % 8 == 0) && (k>=8) && ComputeInfo.supportsComputeSharedMemory));
+
+        entries.Add(new Entry("Conv3DKernelKxK_StrictC8StrictK32_T8x16_R4x4",
+            Int3(ComputeHelper.IDivC(k, 4), ComputeHelper.IDivC(d*w*h, 4), n), BigO(X.channels) * 0.6f,
+            valid_: (c % 8 == 0) && (k % 32 == 0) && ComputeInfo.supportsComputeSharedMemory));
+
+        return entries;
+    }
+
     private static List<Entry> s_Conv2DEntries = new List<Entry>(16);
     internal static List<Entry> Conv2D(TensorShape X, TensorShape K, TensorShape O, int[] stride, int[] pad)
     {
@@ -847,7 +878,7 @@ public class ComputeOps : ReferenceComputeOps
     // ---------------------------------------------------------------------------------
 
     /// <inheritdoc/>
-    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         // MatMul implementation in terms of Dense
         var A = (xTranspose) ? Transpose(X): X;
@@ -910,7 +941,7 @@ public class ComputeOps : ReferenceComputeOps
 
     Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad, Layer.FusedActivation fusedActivation, ComputeKernel fn)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -952,9 +983,44 @@ public class ComputeOps : ReferenceComputeOps
     }
 
     /// <inheritdoc/>
+    public override Tensor Conv3D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
+    {
+        Assert.IsTrue(X.shape.IsNDHWC());
+        Assert.AreEqual(X.channels, K.kernelDepth);
+        Assert.AreEqual(K.kernelCount, B.flatWidth);
+        Assert.AreEqual(B.flatWidth, B.length);
+        Assert.AreEqual(stride.Length, 3);//WHD
+        Assert.AreEqual(pad.Length, 6);
+
+        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var fn = BestKernel(ComputeKernelLibrary.Conv3D(X.shape, K.shape, O.shape, stride, pad));
+
+        if (printKernels)
+            Debug.Log($"{fn.func.kernelName}: {O.shape} = {X.shape} # {K.shape} stride: {stride[0]},{stride[1]},,{stride[2]} pad:{pad[0]},{pad[1]}, ,{stride[2]}" );
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.SetTensorDecl("K", K.shape, Pin(K).offset);
+        fn.SetTensorDecl("B", B.shape, Pin(B).offset);
+        Assert.AreEqual(Pin(K).buffer, Pin(B).buffer);
+        fn.SetTensorBuffer("WBK", Pin(K).buffer);
+
+        fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInts("_Stride", stride);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
+
+        fn.Dispatch();
+
+        if (!IsFusedActivationSupported(fusedActivation))
+            O = Activation(fusedActivation.ToString(), O);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
     public override Tensor Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -997,7 +1063,7 @@ public class ComputeOps : ReferenceComputeOps
         if (K.kernelDepth != 1)
             return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -1033,7 +1099,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -1089,7 +1155,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(scale.Length, 2);
 
         var O = NewTensor(X.batch, X.height*scale[1], X.width*scale[0], X.channels);
@@ -1176,7 +1242,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor GlobalAvgVariancePool2D(Tensor X)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         var inputDim = new [] {X.height, X.width};
         var X2 = X; // save a X^2 and do it in the first dispatch
         bool isFirstDispatch = true;
@@ -1237,6 +1303,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <returns>output `Tensor`</returns>
     protected virtual Tensor GlobalPool2D(string smallKernelName, string globalKernelName, Tensor X)
     {
+        Assert.IsTrue(X.shape.Is4D());
         var inputDim = new [] {X.height, X.width};
         // downsample with pyramid approach
         while (X.height * X.width >= 8*8*2)
@@ -1260,8 +1327,8 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
+        if (!X.shape.Is4D())
+            return base.ScaleBias(X, S, B);
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
@@ -1286,11 +1353,11 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Normalization(Tensor X, Tensor S, Tensor B, int pool, int axis, float epsilon, Layer.FusedActivation fusedActivation)
     {
-        if (!X.shape.IsNHWC())
+        if (!X.shape.Is4D())
             throw new NotImplementedException();
 
         if (axis != TensorShape.C && axis != -1)
-            throw new NotImplementedException();
+            return base.Normalization(X, S, B, pool, axis, epsilon, fusedActivation);
 
         if (pool <= 0)
             pool = X.batch;
@@ -1328,6 +1395,9 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     protected override Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
     {
+        if (!X.shape.Is4D())
+            return base.Activation(kernelName, X, alpha, beta);
+
         var O = NewTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, kernelName));
 
@@ -1347,7 +1417,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
-        if (!X.shape.IsNHWC() || !S.shape.IsNHWC())
+        if (!X.shape.Is4D() || !S.shape.Is4D())
             return base.PRelu(X, S);
 
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
@@ -1369,7 +1439,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1 || axis > X.shape.FirstNotIdentityFeatureDimensionIndex())
             return base.Softmax(X, axis);
 
         var O = NewTensor(X.shape);
@@ -1385,7 +1455,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
-        if (!X.shape.IsNHWC())
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
             return base.LogSoftmax(X);
 
         var O = NewTensor(X.shape);
@@ -1401,50 +1471,10 @@ public class ComputeOps : ReferenceComputeOps
     // @TODO: implement Dropout in terms of RandomUniform by preparing random values on CPU upfront and multiplying result on GPU later on
     // public override Tensor Dropout(Tensor X, float alpha)
 
-    private UnityEngine.Random.State[] m_RandomNormalSeed;
-
-    /// <inheritdoc/>
-    public override Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
-    {
-        if (!s.IsNHWC())
-            throw new NotImplementedException();
-
-        var O = NewTensor(s);
-
-        using (var seedOverride = new Seed(ref m_RandomNormalSeed, seed))
-        {
-            var end = O.length;
-            for (int i = 0; i < end; ++i)
-                O[i] = Gaussian(mean, scale);
-        }
-
-        return O;
-    }
-
-    private UnityEngine.Random.State[] m_RandomUniformSeed;
-
-    /// <inheritdoc/>
-    public override Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
-    {
-        if (!s.IsNHWC())
-            throw new NotImplementedException();
-
-        var O = NewTensor(s);
-
-        using (var seedOverride = new Seed(ref m_RandomUniformSeed, seed))
-        {
-            var end = O.length;
-            for (int i = 0; i < end; ++i)
-                O[i] = mean + scale * UnityEngine.Random.value;
-        }
-
-        return O;
-    }
-
     /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors) || !TensorExtensions.Is8DAxisConvertibleToNHWC(axis))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || !TensorExtensions.Is8DAxisConvertibleTo4D(axis))
             return base.Concat(tensors, axis);
 
         var O = NewTensor(TensorExtensions.Concat(tensors, axis));
@@ -1452,7 +1482,7 @@ public class ComputeOps : ReferenceComputeOps
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
         axis = O.shape.Axis(axis);
-        var axisNHWC = TensorExtensions.Convert8DAxisToNHWC(axis);
+        var axisNHWC = TensorExtensions.Convert8DAxisTo4D(axis);
 
         foreach (var X in tensors)
         {
@@ -1502,6 +1532,9 @@ public class ComputeOps : ReferenceComputeOps
     {
         Assert.IsTrue(tensors.Length > 0);
 
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.ElementwiseWithBroadcast(kernelName, tensors);
+
         Tensor outputTensor1 = NewTensor(TensorExtensions.MaxShape(tensors));
         Tensor outputTensor2 = null;
         if (tensors.Length > 2)
@@ -1539,7 +1572,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     protected override Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 4);
 
         var O = NewTensor(X.shape.ApplyBorder(pad));
@@ -1583,6 +1616,9 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
+        if (!C.shape.Is4D() || !A.shape.Is4D() || !B.shape.Is4D())
+            return base.Where(C, A, B);
+
         Tensor O = NewTensor(C.shape);
         var fn = BestKernel(ComputeKernelLibrary.Broadcast(C.shape, O.shape, "BroadcastWhere"));
 
@@ -1604,7 +1640,7 @@ public class ComputeOps : ReferenceComputeOps
     {
         //8D reshape only supported on reference backend. No optimized 8D version as
         //the goal is rather to have a `channelFirst` model were reshape is a noop.
-        if (!X.shape.IsNHWC() || !newShape.IsNHWC())
+        if (!X.shape.Is4D() || !newShape.Is4D())
             return base.CopyAndReshape_NCHW(X, newShape);
 
         Assert.AreEqual(X.length, newShape.length);
@@ -1624,7 +1660,7 @@ public class ComputeOps : ReferenceComputeOps
     protected override Tensor CopyAndReshape(Tensor X, TensorShape newShape)
     {
         //8D reshape only supported on reference backend atm.
-        if (!X.shape.IsNHWC() || !newShape.IsNHWC())
+        if (!X.shape.Is4D() || !newShape.Is4D())
             return base.CopyAndReshape(X, newShape);
 
         var copyShape = X.shape;

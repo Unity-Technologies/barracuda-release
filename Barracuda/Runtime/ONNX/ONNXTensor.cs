@@ -15,8 +15,9 @@ namespace Unity.Barracuda.ONNX
     // Combines information about ONNX tensor and data read from TensorProto
     internal struct ONNXTensor
     {
-        public int[] shape { get { return m_Shape; } }
-        public int rank { get { return shape.Length; } }
+        public int[] shape => m_Shape;
+        public int rank => shape.Length;
+        public Tensor data => m_Data;
 
         Tensor m_Data;
         int[] m_Shape;

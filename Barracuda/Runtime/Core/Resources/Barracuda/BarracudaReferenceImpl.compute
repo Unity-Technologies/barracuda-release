@@ -2,6 +2,8 @@
 #pragma kernel Dense_NCHW CHANNELS_FIRST=1
 #pragma kernel Conv2D_NHWC CHANNELS_FIRST=0
 #pragma kernel Conv2D_NCHW CHANNELS_FIRST=1
+#pragma kernel Conv3D_NHWC CHANNELS_FIRST=0
+#pragma kernel Conv3D_NCHW CHANNELS_FIRST=1
 #pragma kernel Conv2DWinograd_2x2_3x3_NHWC CHANNELS_FIRST=0
 #pragma kernel Conv2DWinograd_2x2_3x3_NCHW CHANNELS_FIRST=1
 #pragma kernel DepthwiseConv2D_NHWC CHANNELS_FIRST=0
@@ -10,8 +12,12 @@
 #pragma kernel Conv2DTrans_NCHW CHANNELS_FIRST=1
 #pragma kernel Upsample2D_NHWC CHANNELS_FIRST=0
 #pragma kernel Upsample2D_NCHW CHANNELS_FIRST=1
+#pragma kernel Upsample3D_NHWC CHANNELS_FIRST=0
+#pragma kernel Upsample3D_NCHW CHANNELS_FIRST=1
 #pragma kernel UpsampleBilinear2D_NHWC CHANNELS_FIRST=0
 #pragma kernel UpsampleBilinear2D_NCHW CHANNELS_FIRST=1
+#pragma kernel UpsampleTrilinear3D_NHWC CHANNELS_FIRST=0
+#pragma kernel UpsampleTrilinear3D_NCHW CHANNELS_FIRST=1
 #pragma kernel Resample2D_NHWC CHANNELS_FIRST=0
 #pragma kernel Resample2D_NCHW CHANNELS_FIRST=1
 #pragma kernel ResampleBilinear2D_NHWC CHANNELS_FIRST=0
@@ -60,6 +66,8 @@
 #pragma kernel LogSoftmax_NCHW CHANNELS_FIRST=1
 #pragma kernel Tanh_NHWC CHANNELS_FIRST=0
 #pragma kernel Tanh_NCHW CHANNELS_FIRST=1
+#pragma kernel Softplus_NHWC CHANNELS_FIRST=0
+#pragma kernel Softplus_NCHW CHANNELS_FIRST=1
 #pragma kernel Sigmoid_NHWC CHANNELS_FIRST=0
 #pragma kernel Sigmoid_NCHW CHANNELS_FIRST=1
 #pragma kernel Relu6_NHWC CHANNELS_FIRST=0
@@ -163,6 +171,8 @@
 #pragma kernel ReduceProd_NCHW CHANNELS_FIRST=1
 #pragma kernel Border2D_NHWC CHANNELS_FIRST=0
 #pragma kernel Border2D_NCHW CHANNELS_FIRST=1
+#pragma kernel Border3D_NHWC CHANNELS_FIRST=0
+#pragma kernel Border3D_NCHW CHANNELS_FIRST=1
 #pragma kernel Pad2DEdge_NHWC CHANNELS_FIRST=0
 #pragma kernel Pad2DEdge_NCHW CHANNELS_FIRST=1
 #pragma kernel Pad2DReflect_NHWC CHANNELS_FIRST=0
@@ -230,587 +240,247 @@ void KERNEL_FUNC(Dense)(uint3 dispatchThreadID : SV_DispatchThreadID)
     O.SetWithActivation(y, x, acc);
 }
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Relu)(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = 0.5f * (v + abs(v));
-
-        O.Set(n, y, x, c, v);
-    }
-}
-
 [numthreads(4, 4, 4)]
 void KERNEL_FUNC(PRelu)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
 	//DISPATCH ARGS(O.channels, O.width, O.height);
-	TENSOR_ARGS3(X, W, O);
+	TENSOR_TWOINPUTS_8D(X, W, O);
 
-	uint c = dispatchThreadID.x;
-	uint x = dispatchThreadID.y;
-	uint y = dispatchThreadID.z;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-	if (c >= O.channels) return;
-	if (x >= O.width) return;
-	if (y >= O.height) return;
-
-	for (uint n = 0; n < X.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
 	{
-		float v = X.Get(n, y, x, c);
-		float slope = W.BroadcastGet(n, y, x, c);
+		float v = X.Get8D(s,r,n,t,d,h,w,c);
+		float slope = W.BroadcastGet8D(s,r,n,t,d,h,w,c);
 
 		v = max(0.0f,v) + slope * min(0.0f,v);
-		O.Set(n, y, x, c, v);
+		O.Set8D(s,r,n,t,d,h,w,c,v);
 	}
 }
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Selu)(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
-	//DISPATCH ARGS(O.channels, O.width, O.height);
-	TENSOR_ARGS2(X, O);
-
-	uint c = dispatchThreadID.x;
-	uint x = dispatchThreadID.y;
-	uint y = dispatchThreadID.z;
-
-	if (c >= O.channels) return;
-	if (x >= O.width) return;
-	if (y >= O.height) return;
-
-	for (uint n = 0; n < X.batch; ++n)
-	{
-		float v = X.Get(n, y, x, c);
-		v = _Beta * (max(v, 0.0f) + min(_Alpha * (exp(v) - 1.0f), 0.0f));
-
-		O.Set(n, y, x, c, v);
-	}
+//DISPATCH ARGS(O.channels, O.width, O.height);
+#define ACTIVATION(name, op_name) \
+[numthreads(4, 4, 4)] \
+void KERNEL_FUNC(name)(uint3 dispatchThreadID : SV_DispatchThreadID)\
+{\
+    TENSOR_ARGS2_8D(X, O);\
+\
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;\
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;\
+\
+    for (uint s = 0; s < O.sequenceLength;     ++s)\
+    for (uint r = 0; r < O.numberOfDirections; ++r)\
+    for (uint n = 0; n < O.batch;              ++n)\
+    for (uint t = 0; t < O.extraDimension;     ++t)\
+    for (uint d = 0; d < O.depth;              ++d)\
+    {\
+        float v = X.Get8D(s,r,n,t,d,h,w,c);\
+        v = op_name (v);\
+        O.Set8D(s,r,n,t,d,h,w,c,v);\
+    }\
 }
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Abs)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ReluOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = abs(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = 0.5f * (v + abs(v));
+    return v;
 }
+ACTIVATION(Relu, ReluOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Neg)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float SeluOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = -v;
-        O.Set(n, y, x, c, v);
-    }
+    v = _Beta * (max(v, 0.0f) + min(_Alpha * (exp(v) - 1.0f), 0.0f));
+    return v;
 }
+ACTIVATION(Selu, SeluOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Ceil)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AbsOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = ceil(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = abs(v);
+    return v;
 }
+ACTIVATION(Abs, AbsOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Floor)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float NegOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = floor(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = -v;
+    return v;
 }
+ACTIVATION(Neg, NegOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Reciprocal)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float CeilOp(float v)
 {
-	//DISPATCH ARGS(O.channels, O.width, O.height);
-	TENSOR_ARGS2(X, O);
-
-	uint c = dispatchThreadID.x;
-	uint x = dispatchThreadID.y;
-	uint y = dispatchThreadID.z;
-
-	if (c >= O.channels) return;
-	if (x >= O.width) return;
-	if (y >= O.height) return;
-
-	for (uint n = 0; n < X.batch; ++n)
-	{
-		float v = X.Get(n, y, x, c);
-		v = 1.0f / v;
-		O.Set(n, y, x, c, v);
-	}
+    v = ceil(v);
+    return v;
 }
+ACTIVATION(Ceil, CeilOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Swish)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float FloorOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = v / (1 + exp(-v));
-        O.Set(n, y, x, c, v);
-    }
+    v = floor(v);
+    return v;
 }
+ACTIVATION(Floor, FloorOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Tanh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ReciprocalOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = tanh(clamp(v,-16.0f,16.0f));//clamp to avoid NaNs for large values.
-
-        O.Set(n, y, x, c, v);
-    }
+    v = 1.0f / v;
+    return v;
 }
+ACTIVATION(Reciprocal, ReciprocalOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Sigmoid)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float SwishOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = 1 / (1 + exp(-v));
-        O.Set(n, y, x, c, v);
-    }
+    v = v / (1 + exp(-v));
+    return v;
 }
+ACTIVATION(Swish, SwishOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Relu6)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float TanhOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = min(max(0, v), 6);
-        O.Set(n, y, x, c, v);
-    }
+    v = tanh(clamp(v,-16.0f,16.0f));//clamp to avoid NaNs for large values.
+    return v;
 }
+ACTIVATION(Tanh, TanhOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Elu)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float SoftplusOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
+    v = log(exp(v) + 1);
+    return v;
+}
+ACTIVATION(Softplus, SoftplusOp);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+float SigmoidOp(float v)
+{
+    v = 1 / (1 + exp(-v));
+    return v;
+}
+ACTIVATION(Sigmoid, SigmoidOp);
 
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        if (v <= 0)
+float Relu6Op(float v)
+{
+    v = min(max(0, v), 6);
+    return v;
+}
+ACTIVATION(Relu6, Relu6Op);
+
+float EluOp(float v)
+{
+    if (v <= 0)
             v = _Alpha * (exp(v) - 1);
-        O.Set(n, y, x, c, v);
-    }
+    return v;
 }
+ACTIVATION(Elu, EluOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(LeakyRelu)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float LeakyReluOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = max(v, _Alpha * v);
-        O.Set(n, y, x, c, v);
-    }
+    v = max(v, _Alpha * v);
+    return v;
 }
+ACTIVATION(LeakyRelu, LeakyReluOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Exp)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ExpOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = exp(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = exp(v);
+    return v;
 }
+ACTIVATION(Exp, ExpOp);
 
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Log)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float LogOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = log(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = log(v);
+    return v;
 }
+ACTIVATION(Log, LogOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Sqrt)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float SqrtOp(float v)
 {
-	//DISPATCH ARGS(O.channels, O.width, O.height);
-	TENSOR_ARGS2(X, O);
-
-	uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-	if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-	for (uint n = 0; n < X.batch; ++n)
-	{
-		float v = X.Get(n, y, x, c);
-		v = sqrt(v);
-		O.Set(n, y, x, c, v);
-	}
+    v = sqrt(v);
+    return v;
 }
+ACTIVATION(Sqrt, SqrtOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Acos)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AcosOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = acos(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = acos(v);
+    return v;
 }
+ACTIVATION(Acos, AcosOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Acosh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AcoshOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = log(v + sqrt(v * v - 1.0f));
-        O.Set(n, y, x, c, v);
-    }
+    v = log(v + sqrt(v * v - 1.0f));
+    return v;
 }
+ACTIVATION(Acosh, AcoshOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Asin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AsinOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = asin(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = asin(v);
+    return v;
 }
+ACTIVATION(Asin, AsinOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Asinh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AsinhOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = log(v + sqrt(v*v + 1.0f));
-        O.Set(n, y, x, c, v);
-    }
+    v = log(v + sqrt(v*v + 1.0f));
+    return v;
 }
+ACTIVATION(Asinh, AsinhOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Atan)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AtanOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = atan(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = atan(v);
+    return v;
 }
+ACTIVATION(Atan, AtanOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Atanh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float AtanhOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = 0.5f * log((1.0f + v) / (1.0f - v));
-        O.Set(n, y, x, c, v);
-    }
+    v = 0.5f * log((1.0f + v) / (1.0f - v));
+    return v;
 }
+ACTIVATION(Atanh, AtanhOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Cos)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float CosOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = cos(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = cos(v);
+    return v;
 }
+ACTIVATION(Cos, CosOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Cosh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float CoshOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = 0.5f * (exp(v) + exp(-v));
-        O.Set(n, y, x, c, v);
-    }
+    v = 0.5f * (exp(v) + exp(-v));
+    return v;
 }
+ACTIVATION(Cosh, CoshOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Sin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float SinOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = sin(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = sin(v);
+    return v;
 }
+ACTIVATION(Sin, SinOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Sinh)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float SinhOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = 0.5f * (exp(v) - exp(-v));
-        O.Set(n, y, x, c, v);
-    }
+    v = 0.5f * (exp(v) - exp(-v));
+    return v;
 }
+ACTIVATION(Sinh, SinhOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Tan)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float TanOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = tan(v);
-        O.Set(n, y, x, c, v);
-    }
+    v = tan(v);
+    return v;
 }
+ACTIVATION(Tan, TanOp);
 
 float signed_pow(float f, float e)
 {
@@ -821,56 +491,39 @@ float signed_pow(float f, float e)
         1;            // exponent is even => pow(abs(f), e)
     return v * s;
 }
-
-[numthreads(4,4,4)]
-void KERNEL_FUNC(Pow)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float PowOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = X.Get(n, y, x, c);
-        v = signed_pow(v, _Alpha);
-        O.Set(n, y, x, c, v);
-    }
+    v = signed_pow(v, _Alpha);
+    return v;
 }
+ACTIVATION(Pow, PowOp);
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(Clip)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ClipOp(float v)
 {
-	//DISPATCH ARGS(O.channels, O.width, O.height);
-	TENSOR_ARGS2(X, O);
-
-	uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-	if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
-
-	for (uint n = 0; n < X.batch; ++n)
-	{
-		float v = X.Get(n, y, x, c);
-		v = clamp(v, _Alpha, _Beta);
-		O.Set(n, y, x, c, v);
-	}
+    v = clamp(v, _Alpha, _Beta);
+    return v;
 }
+ACTIVATION(Clip, ClipOp);
 
 [numthreads(4,4,4)]
 void KERNEL_FUNC(BroadcastAdd)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v =
-            X.BroadcastGet(n, y, x, c) +
-            B.BroadcastGet(n, y, x, c);
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c) +
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -878,17 +531,21 @@ void KERNEL_FUNC(BroadcastAdd)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastSub)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v =
-            X.BroadcastGet(n, y, x, c) -
-            B.BroadcastGet(n, y, x, c);
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c) -
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -896,17 +553,21 @@ void KERNEL_FUNC(BroadcastSub)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastMul)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v =
-            X.BroadcastGet(n, y, x, c) *
-            B.BroadcastGet(n, y, x, c);
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c) *
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -914,17 +575,21 @@ void KERNEL_FUNC(BroadcastMul)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastDiv)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v =
-            X.BroadcastGet(n, y, x, c) /
-            B.BroadcastGet(n, y, x, c);
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c) /
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -932,17 +597,21 @@ void KERNEL_FUNC(BroadcastDiv)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastPow)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v = signed_pow(
-            X.BroadcastGet(n, y, x, c),
-            B.BroadcastGet(n, y, x, c));
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c),
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c));
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -950,17 +619,21 @@ void KERNEL_FUNC(BroadcastPow)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v = min(
-            X.BroadcastGet(n, y, x, c),
-            B.BroadcastGet(n, y, x, c));
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c),
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c));
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -968,17 +641,21 @@ void KERNEL_FUNC(BroadcastMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v = max(
-            X.BroadcastGet(n, y, x, c),
-            B.BroadcastGet(n, y, x, c));
-        O.Set(n, y, x, c, v);
+            X.BroadcastGet8D(s,r,n,t,d,h,w,c),
+            B.BroadcastGet8D(s,r,n,t,d,h,w,c));
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -986,18 +663,22 @@ void KERNEL_FUNC(BroadcastMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastMean)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = X.BroadcastGet(n, y, x, c);
-        a *= _IsFirstDispatch ? _Alpha : 1.0f;
-        float b = B.BroadcastGet(n, y, x, c) * _Alpha;
+        float a = X.BroadcastGet8D(s,r,n,t,d,h,w,c);
+         a *= _IsFirstDispatch ? _Alpha : 1.0f;
+        float b = B.BroadcastGet8D(s,r,n,t,d,h,w,c) * _Alpha;
         float v = a + b;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1005,24 +686,21 @@ void KERNEL_FUNC(BroadcastMean)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastGreater)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = X.BroadcastGet(n, y, x, c);
-        float b = B.BroadcastGet(n, y, x, c);
+        float a = X.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        float b = B.BroadcastGet8D(s,r,n,t,d,h,w,c);
         float v = (a > b) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1030,24 +708,21 @@ void KERNEL_FUNC(BroadcastGreater)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastGreaterEqual)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = X.BroadcastGet(n, y, x, c);
-        float b = B.BroadcastGet(n, y, x, c);
+        float a = X.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        float b = B.BroadcastGet8D(s,r,n,t,d,h,w,c);
         float v = (a >= b) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1055,24 +730,21 @@ void KERNEL_FUNC(BroadcastGreaterEqual)(uint3 dispatchThreadID : SV_DispatchThre
 void KERNEL_FUNC(BroadcastLess)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = X.BroadcastGet(n, y, x, c);
-        float b = B.BroadcastGet(n, y, x, c);
+        float a = X.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        float b = B.BroadcastGet8D(s,r,n,t,d,h,w,c);
         float v = (a < b) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1080,24 +752,21 @@ void KERNEL_FUNC(BroadcastLess)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastLessEqual)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = X.BroadcastGet(n, y, x, c);
-        float b = B.BroadcastGet(n, y, x, c);
+        float a = X.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        float b = B.BroadcastGet8D(s,r,n,t,d,h,w,c);
         float v = (a <= b) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1105,24 +774,21 @@ void KERNEL_FUNC(BroadcastLessEqual)(uint3 dispatchThreadID : SV_DispatchThreadI
 void KERNEL_FUNC(BroadcastEqual)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = X.BroadcastGet(n, y, x, c);
-        float b = B.BroadcastGet(n, y, x, c);
+        float a = X.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        float b = B.BroadcastGet8D(s,r,n,t,d,h,w,c);
         float v = (a == b) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1130,24 +796,21 @@ void KERNEL_FUNC(BroadcastEqual)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(BroadcastLogicalOr)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = (X.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f: 1.0f;
-        float b = (B.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f: 1.0f;
+        float a = (X.BroadcastGet8D(s,r,n,t,d,h,w,c) == 0.0f) ? 0.0f: 1.0f;
+        float b = (B.BroadcastGet8D(s,r,n,t,d,h,w,c) == 0.0f) ? 0.0f: 1.0f;
         float v = ((a + b) >= 1.0f) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1155,24 +818,21 @@ void KERNEL_FUNC(BroadcastLogicalOr)(uint3 dispatchThreadID : SV_DispatchThreadI
 void KERNEL_FUNC(BroadcastLogicalAnd)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = (X.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
-        float b = (B.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
+        float a = (X.BroadcastGet8D(s,r,n,t,d,h,w,c) == 0.0f) ? 0.0f: 1.0f;
+        float b = (B.BroadcastGet8D(s,r,n,t,d,h,w,c) == 0.0f) ? 0.0f: 1.0f;
         float v = ((a + b) > 1.5f) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1180,74 +840,51 @@ void KERNEL_FUNC(BroadcastLogicalAnd)(uint3 dispatchThreadID : SV_DispatchThread
 void KERNEL_FUNC(BroadcastLogicalXor)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_TWOINPUTS(X, B, O);
+    TENSOR_TWOINPUTS_8D(X, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float a = (X.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
-        float b = (B.BroadcastGet(n, y, x, c) == 0.0f) ? 0.0f : 1.0f;
+        float a = (X.BroadcastGet8D(s,r,n,t,d,h,w,c) == 0.0f) ? 0.0f: 1.0f;
+        float b = (B.BroadcastGet8D(s,r,n,t,d,h,w,c) == 0.0f) ? 0.0f: 1.0f;
         float v = ((a + b) == 1.0f) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
-[numthreads(4, 4, 4)]
-void KERNEL_FUNC(LogicalNot)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float LogicalNotOp(float v)
 {
-    //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
-
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = (X.Get(n, y, x, c) == 0.0f) ? 1.0f : 0.0f;
-        O.Set(n, y, x, c, v);
-    }
+    v = (v == 0.0f) ? 1.0f: 0.0f;
+    return v;
 }
+ACTIVATION(LogicalNot, LogicalNotOp);
 
 [numthreads(4, 4, 4)]
 void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_THREEINPUTS(X, W, K, O);
+    TENSOR_THREEINPUTS_8D(X, W, K, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-    if (c >= O.channels)
-        return;
-    if (x >= O.width)
-        return;
-    if (y >= O.height)
-        return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        bool cond = (X.BroadcastGet(n, y, x, c) != 0.0f);
-        float a = W.BroadcastGet(n, y, x, c);
-        float b = K.BroadcastGet(n, y, x, c);
+        bool cond = (X.BroadcastGet8D(s,r,n,t,d,h,w,c) != 0.0f);
+        float a = W.BroadcastGet8D(s,r,n,t,d,h,w,c);
+        float b = K.BroadcastGet8D(s,r,n,t,d,h,w,c);
         float v = cond ? a : b;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1255,25 +892,29 @@ void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(ArgMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
+    TENSOR_ARGS3_8D(X, B, O);
 
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
+    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;
+    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < X.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         int maxIdx = 0;
-        float maxV = X.Get(n, y, x, 0);;
+        float maxV = X.Get8D(s,r,n,t,d,h,w,0);
         for (uint c = 1; c < X.channels; ++c)
         {
-            float v = X.Get(n, y, x, c);
+            float v = X.Get8D(s,r,n,t,d,h,w,c);
             if (v > maxV)
             {
                 maxV = v;
                 maxIdx = c;
             }
         }
-        O.Set(n, y, x, 0, maxIdx);
+        O.Set8D(s,r,n,t,d,h,w,0,maxIdx);
     }
 }
 
@@ -1281,140 +922,104 @@ void KERNEL_FUNC(ArgMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(ArgMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
+    TENSOR_ARGS3_8D(X, B, O);
 
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
+    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;
+    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < X.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         int minIdx = 0;
-        float minV = X.Get(n, y, x, 0);;
+        float minV = X.Get8D(s,r,n,t,d,h,w,0);
         for (uint c = 1; c < X.channels; ++c)
         {
-            float v = X.Get(n, y, x, c);
+            float v = X.Get8D(s,r,n,t,d,h,w,c);
             if (v < minV)
             {
                 minV = v;
                 minIdx = c;
             }
         }
-        O.Set(n, y, x, 0, minIdx);
+        O.Set8D(s,r,n,t,d,h,w,0,minIdx);
     }
 }
 
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ReduceMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+#define REDUCE(name, op_name, defaultValue, shouldNormalize) \
+[numthreads(4,4,1)] \
+void KERNEL_FUNC(name)(uint3 dispatchThreadID : SV_DispatchThreadID)\
+{\
+    TENSOR_ARGS3_8D(X, B, O);\
+\
+    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;\
+    if (w >= O.width) return;       if (h >= O.height) return;\
+\
+    for (uint s = 0; s < O.sequenceLength;     ++s)\
+    for (uint r = 0; r < O.numberOfDirections; ++r)\
+    for (uint n = 0; n < O.batch;              ++n)\
+    for (uint t = 0; t < O.extraDimension;     ++t)\
+    for (uint d = 0; d < O.depth;              ++d)\
+    {\
+        float v = defaultValue;\
+        for (uint c = 0; c < X.channels; ++c)\
+            v = op_name (v, X.Get8D(s,r,n,t,d,h,w,c) );\
+\
+        if (shouldNormalize)\
+            v /= X.channels;\
+        O.Set8D(s,r,n,t,d,h,w,0,v);\
+    }\
+}
+
+float ReduceMinOp(float v, float x)
 {
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
-
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float minV = FLT_MAX;
-        for (uint c = 0; c < X.channels; ++c)
-        {
-            float v = X.Get(n, y, x, c);
-            minV = min(v, minV);
-        }
-        O.Set(n, y, x, 0, minV);
-    }
+    v = min(v, x);
+    return v;
 }
+REDUCE(ReduceMin, ReduceMinOp, FLT_MAX, 0);
 
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ReduceMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ReduceMaxOp(float v, float x)
 {
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
-
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float maxV = -FLT_MAX;
-        for (uint c = 0; c < X.channels; ++c)
-        {
-            float v = X.Get(n, y, x, c);
-            maxV = max(v, maxV);
-        }
-        O.Set(n, y, x, 0, maxV);
-    }
+    v = max(v, x);
+    return v;
 }
+REDUCE(ReduceMax, ReduceMaxOp, -FLT_MAX, 0);
 
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ReduceSum)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ReduceSumOp(float v, float x)
 {
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
-
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = 0;
-        for (uint c = 0; c < X.channels; ++c)
-            v += X.Get(n, y, x, c);
-        O.Set(n, y, x, 0, v);
-    }
+    v += x;
+    return v;
 }
+REDUCE(ReduceSum, ReduceSumOp, 0, 0);
+REDUCE(ReduceMean, ReduceSumOp, 0, 1);
 
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ReduceMean)(uint3 dispatchThreadID : SV_DispatchThreadID)
+float ReduceProdOp(float v, float x)
 {
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
-
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = 0;
-        for (uint c = 0; c < X.channels; ++c)
-            v += X.Get(n, y, x, c);
-
-        v /= X.channels;
-        O.Set(n, y, x, 0, v);
-    }
+    v *= x;
+    return v;
 }
-
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ReduceProd)(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3(X, B, O);
-
-    uint x = dispatchThreadID.x;    uint y = dispatchThreadID.y;
-    if (x >= O.width) return;       if (y >= O.height) return;
-
-    for (uint n = 0; n < X.batch; ++n)
-    {
-        float v = 1;
-        for (uint c = 0; c < X.channels; ++c)
-            v *= X.Get(n, y, x, c);
-        O.Set(n, y, x, 0, v);
-    }
-}
+REDUCE(ReduceProd, ReduceProdOp, 1, 0);
 
 [numthreads(4, 4, 4)]
 void KERNEL_FUNC(Tile)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     // NOTE: dispatched over X (not O)
     //DISPATCH ARGS(X.channels, X.width, X.height);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float v = X.Get(n % X.batch, y % X.height, x % X.width, c % X.channels);
-        O.Set(n, y, x, c, v);
+        float v = X.Get8D(s % X.sequenceLength, r % X.numberOfDirections, n % X.batch, t % X.extraDimension, d % X.depth, h % X.height, w % X.width, c % X.channels);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1586,19 +1191,24 @@ void Reshape8DFromChannelFirstModel_NCHW(uint3 dispatchThreadID : SV_DispatchThr
 void KERNEL_FUNC(Dropout)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
-    uint c = dispatchThreadID.x;    uint x = dispatchThreadID.y;    uint y = dispatchThreadID.z;
-    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float4 seed = float4(n / O.batch, y / O.height, x / O.width, c / O.channels);
-        seed = frac(seed + _Seed);
+        float4 seed1 = float4((float)s / O.sequenceLength, (float)r / O.numberOfDirections, (float)t / O.extraDimension, (float)d / O.depth);
+        float4 seed2 = float4((float)n / O.batch, (float)h / O.height, (float)w / O.width, (float)c / O.channels);
+        float4 seed = frac(seed1 + seed2 + _Seed);
 
-        float v = X.Get(n, y, x, c);
+        float v = X.Get8D(s,r,n,t,d,h,w,c);
         v *= Bernoulli(seed, 1 - _Alpha) / (1 - _Alpha);
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1606,24 +1216,23 @@ void KERNEL_FUNC(Dropout)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(ScaleBias)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS4(X, W, B, O);
+    TENSOR_ARGS4_8D(X, W, B, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
     float scale = W.Get(0, 0, 0, c);
     float bias = B.Get(0, 0, 0, c);
 
-    for (uint n = 0; n < X.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float v = X.Get(n, y, x, c);
+        float v = X.Get8D(s,r,n,t,d,h,w,c);
         v = v * scale + bias;
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -1631,68 +1240,67 @@ void KERNEL_FUNC(ScaleBias)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(Softmax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
     uint x = dispatchThreadID.x;
     uint y = dispatchThreadID.y;
 
-    if (x >= O.GetFlatWidth()) return;
+    if (x >= O.GetFlatWidth8D()) return;
     if (y >= O.GetFlatHeight()) return;
 
     float maxV = -FLT_MAX;
     uint i;
-    for (i = 0; i < X.GetFlatWidth(); ++i)
+    for (i = 0; i < X.GetFlatWidth8D(); ++i)
     {
-        float v = X.Get(y, i);
+        float v = X.Get8D(y, i);
         if (v > maxV)
             maxV = v;
     }
 
     float acc = 0.0f;
-    for (i = 0; i < X.GetFlatWidth(); ++i)
+    for (i = 0; i < X.GetFlatWidth8D(); ++i)
     {
-        float v = X.Get(y, i);
+        float v = X.Get8D(y, i);
         acc += exp(v - maxV);
     }
 
-    float v = X.Get(y, x);
+    float v = X.Get8D(y, x);
     v = exp(v - maxV) / acc;
-    O.Set(y, x, v);
+    O.Set8D(y, x, v);
 }
 
 [numthreads(16, 4, 1)]
 void KERNEL_FUNC(LogSoftmax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
 	//DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
-	TENSOR_ARGS2(X, O);
+	TENSOR_ARGS2_8D(X, O);
 
 	uint x = dispatchThreadID.x;
 	uint y = dispatchThreadID.y;
 
-	if (x >= O.GetFlatWidth()) return;
+	if (x >= O.GetFlatWidth8D()) return;
 	if (y >= O.GetFlatHeight()) return;
 
 	float maxV = -FLT_MAX;
 	uint i;
-	for (i = 0; i < X.GetFlatWidth(); ++i)
+	for (i = 0; i < X.GetFlatWidth8D(); ++i)
 	{
-		float v = X.Get(y, i);
+		float v = X.Get8D(y, i);
 		if (v > maxV)
 			maxV = v;
 	}
 
 	float acc = 0.0f;
-	for (i = 0; i < X.GetFlatWidth(); ++i)
+	for (i = 0; i < X.GetFlatWidth8D(); ++i)
 	{
-		float v = X.Get(y, i);
+		float v = X.Get8D(y, i);
 		acc += exp(v - maxV);
 	}
 
-	float v = X.Get(y, x);
+	float v = X.Get8D(y, x);
 	v = log(exp(v - maxV) / acc);
-	O.Set(y, x, v);
+	O.Set8D(y, x, v);
 }
-
 
 [numthreads(4,4,4)]
 void KERNEL_FUNC(Upsample2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
@@ -1724,6 +1332,50 @@ void KERNEL_FUNC(Upsample2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 }
 
 [numthreads(4,4,4)]
+void KERNEL_FUNC(Upsample3D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    // NOTE: dispatched over X (not O)
+    //DISPATCH ARGS(X.channels, X.width, X.height);
+    TENSOR_ARGS2_8D(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= X.channels) return;
+    if (x >= X.width) return;
+    if (y >= X.height) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        for (uint d = 0; d < X.depth; ++d)
+        {
+            float v = X.Get5D(n, d, y, x, c);
+
+            for (uint dd = 0; dd < _Pool.z; ++dd)
+            for (uint dy = 0; dy < _Pool.y; ++dy)
+            for (uint dx = 0; dx < _Pool.x; ++dx)
+            {
+                uint od = d * _Pool.z + dd;
+                uint oy = y * _Pool.y + dy;
+                uint ox = x * _Pool.x + dx;
+                O.Set5D(n, od, oy, ox, c, v);
+            }
+        }
+    }
+}
+
+float BilinearInterpolation(float fracSrcPosX, float fracSrcPosY, float p00, float p01, float p10, float p11)
+{
+    float v =
+        p00 * (1.0f-fracSrcPosX) * (1.0f-fracSrcPosY) +
+        p01 * (1.0f-fracSrcPosX) *       fracSrcPosY  +
+        p10 *    fracSrcPosX     * (1.0f-fracSrcPosY) +
+        p11 *    fracSrcPosX     *       fracSrcPosY;
+    return v;
+}
+
+[numthreads(4,4,4)]
 void KERNEL_FUNC(UpsampleBilinear2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
@@ -1746,14 +1398,49 @@ void KERNEL_FUNC(UpsampleBilinear2D)(uint3 dispatchThreadID : SV_DispatchThreadI
         float p01 = X.ClampGet(n, floor(srcPos) + float2(0, 1), c);
         float p10 = X.ClampGet(n, floor(srcPos) + float2(1, 0), c);
         float p11 = X.ClampGet(n, floor(srcPos) + float2(1, 1), c);
-
-        float v =
-            p00 * (1-frac(srcPos.x)) * (1-frac(srcPos.y)) +
-            p01 * (1-frac(srcPos.x)) *    frac(srcPos.y)  +
-            p10 *    frac(srcPos.x)  * (1-frac(srcPos.y)) +
-            p11 *    frac(srcPos.x)  *    frac(srcPos.y);
+        float v = BilinearInterpolation(frac(srcPos.x), frac(srcPos.y), p00, p01, p10, p11);
 
         O.Set(n, y, x, c, v);
+    }
+}
+
+[numthreads(4,4,4)]
+void KERNEL_FUNC(UpsampleTrilinear3D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2_8D(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    float2 dstPosXY = float2(x, y);
+    float2 srcPosXY = (dstPosXY + 0.5f) / _Pool.xy - 0.5f;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        for (uint d = 0; d < O.depth; ++d)
+        {
+            float srcPosD = (d + 0.5f) / _Pool.z - 0.5f;
+            float3 srcPos = float3(srcPosXY.x, srcPosXY.y, srcPosD);
+
+            float p000 = X.ClampGet5D(n, floor(srcPos) + float3(0, 0, 0), c);
+            float p100 = X.ClampGet5D(n, floor(srcPos) + float3(0, 0, 1), c);
+            float p010 = X.ClampGet5D(n, floor(srcPos) + float3(0, 1, 0), c);
+            float p110 = X.ClampGet5D(n, floor(srcPos) + float3(0, 1, 1), c);
+            float p001 = X.ClampGet5D(n, floor(srcPos) + float3(1, 0, 0), c);
+            float p101 = X.ClampGet5D(n, floor(srcPos) + float3(1, 0, 1), c);
+            float p011 = X.ClampGet5D(n, floor(srcPos) + float3(1, 1, 0), c);
+            float p111 = X.ClampGet5D(n, floor(srcPos) + float3(1, 1, 1), c);
+            float e = BilinearInterpolation(frac(srcPos.x), frac(srcPos.y), p000, p100, p010, p110);
+            float f = BilinearInterpolation(frac(srcPos.x), frac(srcPos.y), p001, p101, p011, p111);
+            float v = e * ( 1 - frac(srcPos.z)) + f * frac(srcPos.z);
+            O.Set5D(n, d, y, x, c, v);
+        }
     }
 }
 
@@ -1959,11 +1646,12 @@ void KERNEL_FUNC(AvgPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
         for (uint dy = 0; dy < _Pool.y; ++dy)
             for (uint dx = 0; dx < _Pool.x; ++dx)
             {
-                uint2 pos = uint2(x, y) * _Stride.xy + uint2(dx, dy);
+                uint oy = y * _Stride.y + dy;
+                uint ox = x * _Stride.x + dx;
 
-                bool mask = all(pos >= leftCorner) && all(pos < rightCorner);
-                acc += (mask)? X.Get(n, pos.y - leftCorner.y, pos.x - leftCorner.x, c): 0;
-                counter += (mask)? 1: 0;
+                bool mask = (oy >= leftCorner.y) && (ox >= leftCorner.x) && (oy < rightCorner.y) && (ox < rightCorner.x);
+                acc += (mask) ? X.Get(n, min(oy - _Pad.y, X.height - 1), min(ox - _Pad.x, X.width - 1), c) : 0;
+                counter += (mask) ? 1 : 0;
             }
 
         acc /= counter;
@@ -2126,20 +1814,19 @@ void KERNEL_FUNC(InstanceNorm)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(LRN)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
     float bias = _Epsilon;
     float sizef = (float)_Axis;
 
-    for (uint n = 0; n < X.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float regionCenter = (sizef - 1.0f) / 2.0f;
         uint regionStart = max(0, c - (uint)floor(regionCenter));
@@ -2147,12 +1834,12 @@ void KERNEL_FUNC(LRN)(uint3 dispatchThreadID : SV_DispatchThreadID)
         float sumOfSquared = 0.0f;
         for (uint ci = regionStart; ci < regionEnd; ++ci)
         {
-            float regionValue = X.Get(n, y, x, ci);
+            float regionValue = X.Get8D(s,r,n,t,d,h,w,ci);
             sumOfSquared += regionValue * regionValue;
         }
 
-        float v = X.Get(n, y, x, c) / signed_pow(bias + _Alpha * sumOfSquared / sizef, _Beta);
-        O.Set(n, y, x, c, v);
+        float v = X.Get8D(s,r,n,t,d,h,w,c) / signed_pow(bias + _Alpha * sumOfSquared / sizef, _Beta);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -2235,6 +1922,44 @@ void KERNEL_FUNC(Conv2DWinograd_2x2_3x3)(uint3 dispatchThreadID : SV_DispatchThr
         O.SetWithActivation(n, index.y + 0, index.x + 1, k, acc[0][1]);
         if (index.y + 1 < O.height && index.x + 1 < O.width)
         O.SetWithActivation(n, index.y + 1, index.x + 1, k, acc[1][1]);
+    }
+}
+
+[numthreads(4,4,4)]
+void KERNEL_FUNC(Conv3D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(K.kernelCount, O.width, O.height);
+    TENSOR_ARGS4_8D(X, K, B, O);
+
+    uint k = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (k >= K.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    for (uint d = 0; d < O.depth; ++d)
+    {
+        float acc = B.FastGet(k);
+        for (uint dd = 0; dd < K.GetKernelSpatialDepth(); ++dd)
+        {
+            for (uint dy = 0; dy < K.GetKernelHeight(); ++dy)
+            {
+                for (uint dx = 0; dx < K.GetKernelWidth(); ++dx)
+                {
+                    uint3 pos3d = uint3(x, y, d) * _Stride.xyz + uint3(dx, dy, dd);
+                    for (uint c = 0; c < X.channels; ++c)
+                    {
+                        float v = X.SafeGet5D(n, pos3d, c, _Pad.xyz);
+                        acc += v * K.GetKernel5D( dd, dy, dx, c, k);
+                    }
+                }
+            }
+        }
+
+        O.Set5DWithActivation( n, d, y, x, k, acc);
     }
 }
 
@@ -2419,6 +2144,47 @@ void KERNEL_FUNC(Border2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+[numthreads(4, 4, 4)]
+void KERNEL_FUNC(Border3D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2_8D(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    // NOTE: negative "pad" variable crop X tensor
+    int croppedWidth = _Pool.x;
+    int croppedHeight = _Pool.y;
+    int croppedDepth = _Pool.z;
+    int readX = x - _Pad.x;
+    int readY = y - _Pad.y;
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        for (uint d = 0; d < O.depth; ++d)
+        {
+            int readD = d - _Pad.z;
+            float v;
+            if (readX < 0 || readX >= croppedWidth ||
+                readY < 0 || readY >= croppedHeight ||
+                readD < 0 || readD >= croppedDepth)
+            {
+                v = _Beta;
+            }
+            else
+            {
+                v = X.Get5D(n, readD, readY, readX, c);
+            }
+            O.Set5D(n, d, y, x, c, v);
+        }
+    }
+}
+
 void ClampHWToTensorShape(uint2 Xshape, inout int height, inout int width)
 {
     width = max(width, 0);
@@ -2545,23 +2311,29 @@ void KERNEL_FUNC(Pad2DSymmetric)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(StridedSlice)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
+    uint4 _Stride8D = _ChannelWriteMask;
+    uint4 _Pad8D = _Pool;
 
-    for (uint b = 0; b < O.batch; ++b)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float v = X.Get(_Pad.x + b * _Stride.x,
-                        _Pad.y + y * _Stride.y,
-                        _Pad.z + x * _Stride.z,
-                        _Pad.w + c * _Stride.w);
-        O.Set(b, y, x, c, v);
+        float v = X.Get8D( _Pad8D.x + s * _Stride8D.x,
+                           _Pad8D.y + r * _Stride8D.y,
+                           _Pad.x   + n * _Stride.x,
+                           _Pad8D.z + t * _Stride8D.z,
+                           _Pad8D.w + d * _Stride8D.w,
+                           _Pad.y   + h * _Stride.y,
+                           _Pad.z   + w * _Stride.z,
+                           _Pad.w   + c * _Stride.w);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -2569,29 +2341,36 @@ void KERNEL_FUNC(StridedSlice)(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(Gather)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS3(X, K, O);
+    TENSOR_ARGS3_8D(X, K, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
-
-    for (uint n = 0; n < O.batch; ++n)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         float v = 0.0;
         if (_Axis == 0)
-            v = X.Get((uint)K.FastGet(n), y, x, c);
+            v = X.Get8D((uint)K.FastGet(s),r,n,t,d,h,w,c);
         else if (_Axis == 1)
-            v = X.Get(n, (uint)K.FastGet(y), x, c);
+            v = X.Get8D(s,(uint)K.FastGet(r),n,t,d,h,w,c);
         else if (_Axis == 2)
-            v = X.Get(n, y, (uint)K.FastGet(x), c);
-        else
-            v = X.Get(n, y, x, (uint)K.FastGet(c));
+            v = X.Get8D(s,r,(uint)K.FastGet(n),t,d,h,w,c);
+        else if (_Axis == 3)
+            v = X.Get8D(s,r,n,(uint)K.FastGet(t),d,h,w,c);
+        else if (_Axis == 4)
+            v = X.Get8D(s,r,n,t,(uint)K.FastGet(d),h,w,c);
+        else if (_Axis == 5)
+            v = X.Get8D(s,r,n,t,d,(uint)K.FastGet(h),w,c);
+        else if (_Axis == 6)
+            v = X.Get8D(s,r,n,t,d,h,(uint)K.FastGet(w),c);
+        else if (_Axis == 7)
+            v = X.Get8D(s,r,n,t,d,h,w,(uint)K.FastGet(c));
 
-        O.Set(n, y, x, c, v);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }
 
@@ -2723,26 +2502,29 @@ void TransposeToNCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
 void KERNEL_FUNC(Expand)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.width, O.height);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
-
-    if (c >= O.channels) return;
-    if (x >= O.width) return;
-    if (y >= O.height) return;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
     // scale is either 1 or 0 in case of expansion
-    uint bS = X.batch / O.batch;
+    uint sS = X.sequenceLength / O.sequenceLength;
+    uint rS = X.numberOfDirections / O.numberOfDirections;
+    uint nS = X.batch / O.batch;
+    uint tS = X.extraDimension / O.extraDimension;
+    uint dS = X.depth / O.depth;
     uint hS = X.height / O.height;
     uint wS = X.width / O.width;
     uint cS = X.channels / O.channels;
 
-    for (uint b = 0; b < O.batch; ++b)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
         // sample either from dim or index 0 in case of expansion
-        float v =  X.Get(b * bS, y * hS, x * wS, c * cS);
-        O.Set(b, y, x, c, v);
+        float v = X.Get8D(s*sS,r*rS,n*nS,t*tS,d*dS,h*hS,w*wS,c*cS);
+        O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }

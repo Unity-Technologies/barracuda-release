@@ -48,12 +48,21 @@ public class CompareOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor W, bool wTranspose)
+    Tensor IOps.MatMul(Tensor X, int rankX, Tensor Y, int rankY)
     {
-        var Y = m_Ops1.MatMul(X, xTranspose, W, wTranspose);
-        var Z = m_Ops2.MatMul(X, xTranspose, W, wTranspose);
-        CheckSame(Y, Z, Layer.Type.MatMul);
+        var A = m_Ops1.MatMul(X, rankX, Y, rankY);
+        var B = m_Ops2.MatMul(X, rankX, Y, rankY);
+        CheckSame(A, B, Layer.Type.MatMul);
         return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    {
+        var A = m_Ops1.MatMul(X, xTranspose, Y, yTranspose);
+        var B = m_Ops2.MatMul(X, xTranspose, Y, yTranspose);
+        CheckSame(A, B, Layer.Type.MatMul);
+        return A;
     }
 
     /// <inheritdoc/>
@@ -71,6 +80,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Conv2D(X, K, B, stride, pad, fusedActivation);
         var Z = m_Ops2.Conv2D(X, K, B, stride, pad, fusedActivation);
         CheckSame(Y, Z, Layer.Type.Conv2D);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Conv3D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
+    {
+        var Y = m_Ops1.Conv3D(X, K, B, stride, pad, fusedActivation);
+        var Z = m_Ops2.Conv3D(X, K, B, stride, pad, fusedActivation);
+        CheckSame(Y, Z, Layer.Type.Conv3D);
         return Y;
     }
 
@@ -98,6 +116,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Upsample2D(X, scale, bilinear);
         var Z = m_Ops2.Upsample2D(X, scale, bilinear);
         CheckSame(Y, Z, Layer.Type.Upsample2D);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Upsample3D(Tensor X, int[] scale, bool trilinear)
+    {
+        var Y = m_Ops1.Upsample3D(X, scale, trilinear);
+        var Z = m_Ops2.Upsample3D(X, scale, trilinear);
+        CheckSame(Y, Z, Layer.Type.Upsample3D);
         return Y;
     }
 
@@ -179,6 +206,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Border2D(x, pad, value);
         var Z = m_Ops2.Border2D(x, pad, value);
         CheckSame(Y, Z, Layer.Type.Border2D);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Border3D(Tensor x, int[] pad, float value)
+    {
+        var Y = m_Ops1.Border3D(x, pad, value);
+        var Z = m_Ops2.Border3D(x, pad, value);
+        CheckSame(Y, Z, Layer.Type.Border3D);
         return Y;
     }
 
@@ -341,6 +377,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Tanh(X);
         var Z = m_Ops2.Tanh(X);
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Tanh);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Softplus(Tensor X)
+    {
+        var Y = m_Ops1.Softplus(X);
+        var Z = m_Ops2.Softplus(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Softplus);
         return Y;
     }
 

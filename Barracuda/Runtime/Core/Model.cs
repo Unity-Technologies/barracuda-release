@@ -1,7 +1,9 @@
 using System;
 using System.Linq; // Select
 using System.Collections.Generic;
+using Unity.Barracuda.Compiler.Passes;
 using UnityEngine.Assertions;
+using UnityEditor;
 
 namespace Unity.Barracuda {
 
@@ -76,9 +78,9 @@ public class Layer
         Border2D = 29,
 
         /// <summary>
-        /// 3D Convolution layer (not yet implemented)
+        /// 3D Convolution layer
         /// </summary>
-        Conv3D = 30,                // TODO: NOT IMPLEMENTED
+        Conv3D = 30,
 
         /// <summary>
         /// Transpose 3D Convolution layer (not yet implemented)
@@ -86,9 +88,9 @@ public class Layer
         Conv3DTrans = 32,           // TODO: NOT IMPLEMENTED
 
         /// <summary>
-        /// 3D Upsampling layer (not yet implemented)
+        /// 3D Upsampling layer
         /// </summary>
-        Upsample3D = 33,            // TODO: NOT IMPLEMENTED
+        Upsample3D = 33,
 
         /// <summary>
         /// 3D Max Pool layer (not yet implemented)
@@ -111,9 +113,9 @@ public class Layer
         GlobalAvgPool3D = 38,       // TODO: NOT IMPLEMENTED
 
         /// <summary>
-        /// 3D Border / Padding layer (not yet implemented)
+        /// 3D Border / Padding layer
         /// </summary>
-        Border3D = 39,              // TODO: NOT IMPLEMENTED
+        Border3D = 39,
 
         /// <summary>
         /// Activation layer, see `Activation` enum for activation types
@@ -341,6 +343,11 @@ public class Layer
         ArgMin = 164,
 
         /// <summary>
+        /// ConstantOfShape layer
+        /// </summary>
+        ConstantOfShape = 199,
+
+        /// <summary>
         /// Flatten layer
         /// </summary>
         Flatten = 200,
@@ -416,6 +423,11 @@ public class Layer
         NonMaxSuppression = 214,
 
         /// <summary>
+        /// LSTM
+        /// </summary>
+        LSTM = 215,                // TODO: NOT IMPLEMENTED - Expanded via ExpandOpsPass
+
+        /// <summary>
         /// Constant load layer (for internal use)
         /// </summary>
         Load = 255
@@ -441,6 +453,11 @@ public class Layer
         /// Tanh
         /// </summary>
         Tanh = Activation.Tanh,
+
+        /// <summary>
+        /// Softplus
+        /// </summary>
+        Softplus = Activation.Softplus,
 
         /// <summary>
         /// Sigmoid
@@ -594,9 +611,9 @@ public class Layer
         LogSoftmax = 10,
 
         /// <summary>
-        /// Softplus (not yet implemented)
+        /// Softplus
         /// </summary>
-        Softplus = 11,              // TODO: NOT IMPLEMENTED
+        Softplus = 11,
 
         /// <summary>
         /// Softsign (not yet implemented)
@@ -798,6 +815,23 @@ public class Layer
     }
 
     /// <summary>
+    /// Layer preservation flags
+    /// </summary>
+    [Flags]
+    public enum Flags
+    {
+        /// <summary>
+        /// No flags defined
+        /// </summary>
+        None     =      0,
+
+        /// <summary>
+        /// Preserve the layer (e.g. don't remove it in a model pass)
+        /// </summary>
+        Preserve = 1 << 1,
+    }
+
+    /// <summary>
     /// Layer name
     /// </summary>
     public string     name;
@@ -806,6 +840,12 @@ public class Layer
     /// Layer type
     /// </summary>
     public Type       type;
+
+    /// <summary>
+    /// Layer flags (not serialized) - used for conversion
+    /// </summary>
+    [NonSerialized]
+    public Flags      flags;
 
     /// <summary>
     /// Layer activation type
@@ -846,6 +886,18 @@ public class Layer
     /// Input (layer) names
     /// </summary>
     public string[]   inputs;
+
+    /// <summary>
+    /// Output (layer) names (not serialized) - used for conversion
+    /// </summary>
+    [NonSerialized]
+    public string[]   outputs;
+
+    /// <summary>
+    /// Axes (not serialized) - used for conversion
+    /// </summary>
+    [NonSerialized]
+    public Int32[]    axes;
 
     /// <summary>
     /// Datasets bound to layer
@@ -923,6 +975,20 @@ public class Layer
         var ds = datasets[index];
         return new Tensor(ds.shape, new SharedArrayTensorData(weights, (int)ds.offset, (int)ds.shape.length), ds.name);
     }
+
+    /// <summary>
+    /// Converts Tensor to DataSet
+    /// </summary>
+    /// <param name="X">input `Tensor`</param>
+    /// <param name="index">dataset index</param>
+    public void ApplyTensorToDataSet(Tensor X, int index)
+    {
+        Assert.IsTrue(index < datasets.Length);
+        var ds = datasets[index];
+        ds.shape = X.shape;
+        Array.Copy(X.ToReadOnlyArray(), 0, weights, ds.offset, ds.shape.length);
+        datasets[index] = ds;
+    }
 }
 
 /// <summary>
@@ -950,6 +1016,11 @@ public class Model
         /// Shape as `int` array
         /// </summary>
         public Int32[] shape; // input shape can contain -1 for unspecified dimensions
+
+        /// <summary>
+        /// Input rank
+        /// </summary>
+        public int rank;
 
         /// <summary>
         /// Creates input structure with specified name
@@ -982,6 +1053,11 @@ public class Model
         /// </summary>
         public string        output;
     }
+
+    /// <summary>
+    /// Model layout
+    /// </summary>
+    public string        layout = String.Empty;
 
     /// <summary>
     /// All model inputs
@@ -1052,6 +1128,22 @@ public class Model
     }
     #endregion
 
+    [Flags]
+    internal enum Flags
+    {
+        /// <summary>
+        /// No flags defined
+        /// </summary>
+        None     =      0,
+
+        /// <summary>
+        /// Requires compilation (i.e. for ops that must be expanded)
+        /// </summary>
+        NeedsCompilation = 1 << 1,
+    }
+
+    internal Flags flags;
+
     /// <summary>
     /// Build shallow copy of the model
     /// </summary>
@@ -1088,6 +1180,24 @@ public class Model
             $"outputs: [{string.Join(", ", outputs)}] " +
             $"\n{layers.Count} layers, {totalUniqueWeights:n0} weights: \n{string.Join("\n", layers.Select(i => $"{i.type} ({i})"))}";
     }
+
+    internal void Compile()
+    {
+        var expandOpsPass = new ExpandOpsPass();
+        var model = this;
+        expandOpsPass.Run(ref model);
+
+        var validatePass = new ValidateNHWCPass();
+        var warnings = new List<Model.ImporterWarning>();
+        validatePass.Run(this, ref warnings);
+
+        foreach (var warning in warnings)
+            Debug.LogWarning(warning);
+
+        // Clear flag
+        flags &= ~Flags.NeedsCompilation;
+    }
+
 }
 
 /// <summary>

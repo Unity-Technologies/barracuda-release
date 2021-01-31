@@ -28,6 +28,9 @@
 #pragma kernel Swish_Flat
 #pragma kernel Swish_FlatStrict
 #pragma kernel Swish_Loop
+#pragma kernel Softplus_Flat
+#pragma kernel Softplus_FlatStrict
+#pragma kernel Softplus_Loop
 #pragma kernel Sigmoid_Flat
 #pragma kernel Sigmoid_FlatStrict
 #pragma kernel Sigmoid_Loop
@@ -151,6 +154,12 @@ PPO_CNN@256
 //#pragma kernel Swish_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
 #pragma kernel Swish_Nyxc_NHWC CHANNELS_FIRST=0
 //#pragma kernel Swish_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Softplus_NHWC CHANNELS_FIRST=0
+#pragma kernel Softplus_NCHW CHANNELS_FIRST=1
+#pragma kernel Softplus_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Softplus_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Softplus_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Softplus_Nyxc_NCHW CHANNELS_FIRST=1
 #pragma kernel Sigmoid_NHWC CHANNELS_FIRST=0
 #pragma kernel Sigmoid_NCHW CHANNELS_FIRST=1
 #pragma kernel Sigmoid_CNyx_NHWC CHANNELS_FIRST=0
@@ -360,6 +369,11 @@ float selu(float v)
 	return _Beta * (max(v, 0.0f) + min(_Alpha * (exp(v) - 1.0f), 0.0f));
 }
 
+float softplus(float v)
+{
+    return log(exp(v) + 1.f);
+}
+
 float sigmoid(float v)
 {
     return rcp(1.f + exp(-v));
@@ -424,6 +438,7 @@ ACTIVATION(Reciprocal, rcp)
 ACTIVATION(Relu, relu)
 ACTIVATION(Relu6, relu6)
 ACTIVATION(Tanh, tanh_safe)
+ACTIVATION(Softplus, softplus)
 ACTIVATION(Sigmoid, sigmoid)
 ACTIVATION(Swish, swish)
 ACTIVATION(Elu, elu)
@@ -528,6 +543,28 @@ void KERNEL_FUNC(Tanh)(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         float v = X.Get(n, y, x, c);
         v = tanh_safe(v);
+        O.Set(n, y, x, c, v);
+    }
+}
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(Softplus)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= O.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < X.batch; ++n)
+    {
+        float v = X.Get(n, y, x, c);
+        v = softplus(v);
         O.Set(n, y, x, c, v);
     }
 }
@@ -1119,6 +1156,50 @@ void KERNEL_FUNC(Tanh_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
     O.Set(n, y, x, c, v);
 }
 
+NUMTHREADS((16, 16, 1), (16, 8, 1), (16, 4, 1))
+void KERNEL_FUNC(Softplus_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint nyx = dispatchThreadID.y;
+
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (c >= X.channels) return;
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = softplus(v);
+    O.Set(n, y, x, c, v);
+}
+
+NUMTHREADS((512, 1, 1), (128, 1, 1), (64, 1, 1))
+void KERNEL_FUNC(Softplus_Nyxc)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.batch * O.height * O.width * O.channels, 1, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint nyxc = dispatchThreadID.x;
+
+    uint c = nyxc % X.channels;
+    uint nyx = nyxc / X.channels;
+    uint x = nyx % X.width;
+    uint ny = nyx / X.width;
+    uint y = ny % X.height;
+    uint n = ny / X.height;
+
+    if (n >= X.batch) return;
+
+    float v = X.Get(n, y, x, c);
+    v = softplus(v);
+    O.Set(n, y, x, c, v);
+}
+
 NUMTHREADS((16,16,1), (16,8,1), (16,4,1))
 void KERNEL_FUNC(Sigmoid_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -1432,18 +1513,18 @@ void KERNEL_FUNC(Acos_CNyx)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.channels, O.batch * O.height * O.width, 1);
     TENSOR_ARGS2(X, O);
-    
+
     uint c = dispatchThreadID.x;
     uint nyx = dispatchThreadID.y;
-    
+
     uint x = nyx % X.width;
     uint ny = nyx / X.width;
     uint y = ny % X.height;
     uint n = ny / X.height;
-    
+
     if (c >= X.channels) return;
     if (n >= X.batch) return;
-    
+
     float v = X.Get(n, y, x, c);
     v = acos(v);
     O.Set(n, y, x, c, v);
@@ -2004,33 +2085,33 @@ NUMTHREADS((64,4,1), (64,2,1), (64,1,1))
 void KERNEL_FUNC(Softmax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
     uint x = dispatchThreadID.x;
     uint y = dispatchThreadID.y;
 
-    if (x >= O.GetFlatWidth()) return;
+    if (x >= O.GetFlatWidth8D()) return;
     if (y >= O.GetFlatHeight()) return;
 
     float maxV = -FLT_MAX;
     uint i;
-    for (i = 0; i < X.GetFlatWidth(); ++i)
+    for (i = 0; i < X.GetFlatWidth8D(); ++i)
     {
-        float v = X.Get(y, i);
+        float v = X.Get8D(y, i);
         if (v > maxV)
             maxV = v;
     }
 
     float acc = 0.0f;
-    for (i = 0; i < X.GetFlatWidth(); ++i)
+    for (i = 0; i < X.GetFlatWidth8D(); ++i)
     {
-        float v = X.Get(y, i);
+        float v = X.Get8D(y, i);
         acc += exp(v - maxV);
     }
 
-    float v = X.Get(y, x);
+    float v = X.Get8D(y, x);
     v = exp(v - maxV) / acc;
-    O.Set(y, x, v);
+    O.Set8D(y, x, v);
 }
 
 // log(exp(x)/S_i(exp(xi)) = log(exp(x)) - log(S_i(exp(xi)))
@@ -2039,33 +2120,33 @@ NUMTHREADS((64, 4, 1), (64, 2, 1), (64, 1, 1))
 void KERNEL_FUNC(LogSoftmax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
 	//DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
-	TENSOR_ARGS2(X, O);
+	TENSOR_ARGS2_8D(X, O);
 
 	uint x = dispatchThreadID.x;
 	uint y = dispatchThreadID.y;
 
-	if (x >= O.GetFlatWidth()) return;
+	if (x >= O.GetFlatWidth8D()) return;
 	if (y >= O.GetFlatHeight()) return;
 
 	float maxV = -FLT_MAX;
 	uint i;
-	for (i = 0; i < X.GetFlatWidth(); ++i)
+	for (i = 0; i < X.GetFlatWidth8D(); ++i)
 	{
-		float v = X.Get(y, i);
+		float v = X.Get8D(y, i);
 		if (v > maxV)
 			maxV = v;
 	}
 
 	float acc = 0.0f;
-	for (i = 0; i < X.GetFlatWidth(); ++i)
+	for (i = 0; i < X.GetFlatWidth8D(); ++i)
 	{
-		float v = X.Get(y, i);
+		float v = X.Get8D(y, i);
 		acc += exp(v - maxV);
 	}
 
-	float v = X.Get(y, x);
+	float v = X.Get8D(y, x);
 	v = (v - maxV) - log(acc);
-	O.Set(y, x, v);
+	O.Set8D(y, x, v);
 }
 
 TENSOR_DECL(W)
@@ -2076,7 +2157,7 @@ NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
 void KERNEL_FUNC(PRelu)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
 	//DISPATCH ARGS(O.channels, O.width, O.height);
-	TENSOR_ARGS3(X, W, O);
+	TENSOR_TWOINPUTS(X, W, O);
 
 	uint c = dispatchThreadID.x;
 	uint x = dispatchThreadID.y;

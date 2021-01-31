@@ -11,6 +11,8 @@ using UnityEditor.Experimental.AssetImporters;
 #endif
 using UnityEngine;
 using System;
+using System.Reflection;
+using ImportMode=Unity.Barracuda.ONNX.ONNXModelConverter.ImportMode;
 
 namespace Unity.Barracuda.Editor
 {
@@ -18,8 +20,15 @@ namespace Unity.Barracuda.Editor
 /// Asset Importer Editor of ONNX models
 /// </summary>
 [CustomEditor(typeof(ONNXModelImporter))]
+[CanEditMultipleObjects]
 public class ONNXModelImporterEditor : ScriptedImporterEditor
 {
+    static PropertyInfo s_InspectorModeInfo;
+    static ONNXModelImporterEditor()
+    {
+        s_InspectorModeInfo = typeof(SerializedObject).GetProperty("inspectorMode", BindingFlags.NonPublic | BindingFlags.Instance);
+    }
+
     /// <summary>
     /// Scripted importer editor UI callback
     /// </summary>
@@ -29,21 +38,34 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
         if (onnxModelImporter == null)
             return;
 
-        SerializedProperty iterator = this.serializedObject.GetIterator();
+        InspectorMode inspectorMode = InspectorMode.Normal;
+        if (s_InspectorModeInfo != null)
+            inspectorMode = (InspectorMode)s_InspectorModeInfo.GetValue(assetSerializedObject);
+
+        SerializedProperty iterator = serializedObject.GetIterator();
+        bool debugView = inspectorMode != InspectorMode.Normal;
         for (bool enterChildren = true; iterator.NextVisible(enterChildren); enterChildren = false)
         {
             if (iterator.propertyPath != "m_Script")
                 EditorGUILayout.PropertyField(iterator, true);
         }
 
-        if(onnxModelImporter.optimizeModel)
+        if (debugView)
         {
-            EditorGUILayout.HelpBox("Model Optimizations On, remove and re-import model if incorrect behavior", MessageType.Info);
+            SerializedProperty importModeProperty = serializedObject.FindProperty(nameof(onnxModelImporter.importMode));
+            importModeProperty.intValue = (int)(ImportMode)EditorGUILayout.EnumFlagsField("Import Mode", (ImportMode)importModeProperty.intValue);
+        }
+        else
+        {
+            if (onnxModelImporter.optimizeModel)
+                EditorGUILayout.HelpBox("Model optimizations are on\nRemove and re-import model if you observe incorrect behavior", MessageType.Info);
+
+            if (onnxModelImporter.importMode == ImportMode.Legacy)
+                EditorGUILayout.HelpBox("Legacy importer is in use", MessageType.Warning);
         }
 
         ApplyRevertGUI();
     }
-
 }
 
 /// <summary>
@@ -63,12 +85,21 @@ public class NNModelEditor : UnityEditor.Editor
     private List<string> m_LayersDesc = new List<string>();
     private List<string> m_Constants = new List<string>();
     private List<string> m_ConstantsDesc = new List<string>();
-    private List<string> m_Warnings = new List<string>();
-    private List<string> m_WarningsDesc = new List<string>();
+    // warnings
+    private Dictionary<string, string> m_WarningsNeutral = new Dictionary<string, string>();
+    private Dictionary<string, string> m_WarningsInfo = new Dictionary<string, string>();
+    private Dictionary<string, string> m_WarningsWarning = new Dictionary<string, string>();
+    private Dictionary<string, string> m_WarningsError = new Dictionary<string, string>();
+    private Vector2 m_WarningsNeutralScrollPosition = Vector2.zero;
+    private Vector2 m_WarningsInfoScrollPosition = Vector2.zero;
+    private Vector2 m_WarningsWarningScrollPosition = Vector2.zero;
+    private Vector2 m_WarningsErrorScrollPosition = Vector2.zero;
+
+
     private long m_NumEmbeddedWeights;
     private long m_NumConstantWeights;
     private long m_TotalWeightsSizeInBytes;
-    private Vector2 m_WarningsScrollPosition = Vector2.zero;
+
     private Vector2 m_InputsScrollPosition = Vector2.zero;
     private Vector2 m_OutputsScrollPosition = Vector2.zero;
     private Vector2 m_MemoriesScrollPosition = Vector2.zero;
@@ -107,6 +138,41 @@ public class NNModelEditor : UnityEditor.Editor
         return tex;
     }
 
+    private void AddDimension(StringBuilder stringBuilder, string name, int value, bool lastDim=false)
+    {
+        string strValue = (value >= 1) ? value.ToString() : "*";
+        stringBuilder.AppendFormat("{0}:{1}", name, strValue);
+        if (!lastDim)
+            stringBuilder.Append(", ");
+    }
+
+    private string GetUIStringFromShape(int[] shape)
+    {
+        StringBuilder stringBuilder = new StringBuilder("shape: (", 50);
+        if (shape.Length == 8)
+        {
+            bool is8D = (shape[0] > 1 || shape[1] > 1 || shape[3] > 1 || shape[4] > 1);
+            if (is8D) AddDimension(stringBuilder, "s", shape[0]);
+            if (is8D) AddDimension(stringBuilder, "r", shape[1]);
+                      AddDimension(stringBuilder, "n", shape[2]);
+            if (is8D) AddDimension(stringBuilder, "t", shape[3]);
+            if (is8D) AddDimension(stringBuilder, "d", shape[4]);
+                      AddDimension(stringBuilder, "h", shape[5]);
+                      AddDimension(stringBuilder, "w", shape[6]);
+                      AddDimension(stringBuilder, "c", shape[7], true);
+        }
+        else
+        {
+            UnityEngine.Debug.Assert(shape.Length == 4);
+            AddDimension(stringBuilder, "n", shape[0]);
+            AddDimension(stringBuilder, "h", shape[1]);
+            AddDimension(stringBuilder, "w", shape[2]);
+            AddDimension(stringBuilder, "c", shape[3], true);
+        }
+        stringBuilder.Append(")");
+        return stringBuilder.ToString();
+    }
+
     void OnEnable()
     {
         var nnModel = target as NNModel;
@@ -120,37 +186,37 @@ public class NNModelEditor : UnityEditor.Editor
             return;
 
         m_Inputs = m_Model.inputs.Select(i => i.name).ToList();
-        m_InputsDesc = m_Model.inputs.Select(i => $"shape: ({String.Join(",", i.shape)})").ToList();
+        m_InputsDesc = m_Model.inputs.Select(i => GetUIStringFromShape(i.shape)).ToList();
         m_Outputs = m_Model.outputs.ToList();
 
-        bool allKnownShapes = true;
+        bool allKnownInputShapes = true;
         var inputShapes = new Dictionary<string, TensorShape>();
         foreach (var i in m_Model.inputs)
         {
-            allKnownShapes = allKnownShapes && !i.shape.Contains(-1) && !i.shape.Contains(0);
-            if (!allKnownShapes)
+            allKnownInputShapes = allKnownInputShapes && ModelAnalyzer.IsInputShapeAcceptablyKnowForShapeInference(i);
+            if (!allKnownInputShapes)
                 break;
             inputShapes.Add(i.name, new TensorShape(i.shape));
         }
-        if (allKnownShapes)
+        if (allKnownInputShapes)
         {
             m_OutputsDesc = m_Model.outputs.Select(i => {
-                string output = "(-1,-1,-1,-1)";
+                string output = "shape: (n:*, h:*, w:*, c:*)";
                 try
                 {
                     TensorShape shape;
                     if (ModelAnalyzer.TryGetOutputTensorShape(m_Model, inputShapes, i, out shape))
-                        output = shape.ToString();
+                        output = GetUIStringFromShape(shape.ToArray());
                 }
                 catch (Exception e)
                 {
                     Debug.LogError($"Unexpected error while evaluating model output {i}. {e}");
                 }
-                return $"shape: {output}"; }).ToList();
+                return output; }).ToList();
         }
         else
         {
-            m_OutputsDesc = m_Model.outputs.Select(i => "shape: (-1,-1,-1,-1)").ToList();
+            m_OutputsDesc = m_Model.outputs.Select(i => "shape: (n:*, h:*, w:*, c:*)").ToList();
         }
 
         m_Memories = m_Model.memories.Select(i => i.input).ToList();
@@ -173,8 +239,33 @@ public class NNModelEditor : UnityEditor.Editor
             for (var d = 0; d < m_Model.layers[l].datasets.Length; ++d)
                 m_TotalWeightsSizeInBytes += m_Model.layers[l].datasets[d].length;
 
-        m_Warnings = m_Model.Warnings.Select(i => i.LayerName).ToList();
-        m_WarningsDesc = m_Model.Warnings.Select(i => i.Message).ToList();
+        for (int i = 0; i < m_Model.Warnings.Count; i++)
+        {
+            var warning = m_Model.Warnings[i].LayerName;
+            var warningDesc = m_Model.Warnings[i].Message;
+            MessageType messageType = MessageType.Warning;
+            if(warningDesc.StartsWith("MessageType"))
+            {
+                messageType = (MessageType)(warningDesc[12] - '0');
+                warningDesc = warningDesc.Substring(13);
+            }
+
+            switch (messageType)
+            {
+                case MessageType.None:
+                    m_WarningsNeutral[warning] = warningDesc;
+                    break;
+                case MessageType.Info:
+                    m_WarningsInfo[warning] = warningDesc;
+                    break;
+                case MessageType.Warning:
+                    m_WarningsWarning[warning] = warningDesc;
+                    break;
+                case MessageType.Error:
+                    m_WarningsError[warning] = warningDesc;
+                    break;
+            }
+        }
     }
 
     /// <summary>
@@ -190,10 +281,24 @@ public class NNModelEditor : UnityEditor.Editor
         GUILayout.Label($"Version: {m_Model.IrVersion}");
         GUILayout.Label($"Producer Name: {m_Model.ProducerName}");
 
-        if(m_Warnings.Any())
+        if(m_WarningsError.Any())
         {
-            ListUIHelper($"Warnings {m_Warnings.Count.ToString()}", m_Warnings, m_WarningsDesc, ref m_WarningsScrollPosition);
+            ListUIHelper($"Errors {m_WarningsError.Count.ToString()}", m_WarningsError.Keys.ToList(), m_WarningsError.Values.ToList(), ref m_WarningsErrorScrollPosition);
+            EditorGUILayout.HelpBox("Model contains errors. Behavior might be incorrect", MessageType.Error, true);
+        }
+        if(m_WarningsWarning.Any())
+        {
+            ListUIHelper($"Warnings {m_WarningsWarning.Count.ToString()}", m_WarningsWarning.Keys.ToList(), m_WarningsWarning.Values.ToList(), ref m_WarningsWarningScrollPosition);
             EditorGUILayout.HelpBox("Model contains warnings. Behavior might be incorrect", MessageType.Warning, true);
+        }
+        if(m_WarningsInfo.Any())
+        {
+            ListUIHelper($"Information: ", m_WarningsInfo.Keys.ToList(), m_WarningsInfo.Values.ToList(), ref m_WarningsInfoScrollPosition);
+            EditorGUILayout.HelpBox("Model contains import information.", MessageType.Info, true);
+        }
+        if(m_WarningsNeutral.Any())
+        {
+            ListUIHelper($"Comments: ", m_WarningsNeutral.Keys.ToList(), m_WarningsNeutral.Values.ToList(), ref m_WarningsNeutralScrollPosition);
         }
         var constantWeightInfo = m_Constants.Count > 0 ? $" using {m_NumConstantWeights:n0} weights" : "";
         ListUIHelper($"Inputs ({m_Inputs.Count})", m_Inputs, m_InputsDesc, ref m_InputsScrollPosition);

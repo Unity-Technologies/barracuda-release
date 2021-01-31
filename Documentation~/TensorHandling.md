@@ -1,33 +1,55 @@
 # Working with data
 
 ## Tensor
-In Barracuda, you can access Tensor values via the  `batch`, `height`, `width`, `channels` NHWC layout also known as channels-last: 
+In Barracuda, Tensor values can be accessed using channels-last layout.
 
+Four dimensional (or less) tensors should be prefered for performance reasons where possible. They can be accessed using `batch`, `height`, `width`, `channels` dimensions.
+
+However up to 8 dimensional tensors are supported. The full set of supported dimensions is `sequence`, `direction`, `batch`, `extraDimension`, `depth`, `height`, `width`, `channels`.
+
+Here is an exemple of Barracuda memory layout with a 4 dimensional NHWC tensor.
 ![Channels last](images/ChannelsLast.png)
-
-**Note:**  The native ONNX data layout is NCHW, or channels-first. Barracuda automatically converts ONNX models to NHWC layout.
+**Note:**  The native ONNX data layout is channels-first. Barracuda automatically converts ONNX models to channel-last layout.
 
 ### Data access
 
 You can interact with `Tensor` data via multi-dimensional array operators:
 ```Csharp
-var tensor = new Tensor(batchCount, height, width, channelCount);
+var tensor4D = new Tensor(batchCount, height, width, channelCount);
 
-// as N batches of 3 dimensional data: N x {X, Y, C}
-tensor[n, y, x, c] = 1.0f;
-// as N batches of 1 dimensional data: N x {C}
-tensor[n,       c] = 2.0f; 
-// as flat array
-tensor[         i] = 3.0f;
+// As N batches of 3 dimensional data: N x {H, W, C}
+// ie accessing element at index [0,0,N,0,0,H,W,C] in this Tensor.
+tensor4D[n, h, w, c] = 1.0f;
+
+// As N batches of 1 dimensional data: N x {C}.
+// ie accessing element at index [0,0,N,0,0,0,0,C] in this Tensor.
+tensor4D[n,       c] = 2.0f; 
+
+// As a flat array. 
+// accessing element at offset `index` in this Tensor.
+tensor4D[         i] = 3.0f;
+
+// Additionally for tensor with more than 4D dimension one can access data using:
+var tensor8D = new Tensor(new TensorShape(sequence, direction, batchCount, time, depth, height, width, channelCount));
+
+// As SxRxN batches of 5 dimensional data: SxRxN x {T, D, H, W, C}
+// ie accessing  element at index [S,R,N,T,D,H,W,C] in this Tensor.
+tensor8D[s, r , n, t, d, h, w, c] = 1.0f;
+
+// As N batches of 4 dimensional data: N x {D, H, W, C}
+// ie accessing element at index [0,0,N,0,D,H,W,C] in this Tensor.
+tensor8D[n, d, h, w, c] = 1.0f;
 ```
 
 ### Constructor
-Multiple `Tensor` constructors cover a variety of scenarios. By default tensors initialize with `0` upon construction, unless you provide an initialization `Array`:
+Multiple `Tensor` constructors cover a variety of scenarios up to 8 dimensions. By default tensors initialize with `0` upon construction, unless you provide an initialization `Array`:
 ```Csharp
-// batch of 3 dimensional data, 0 initialized: batchCount x {height, width, channelCount}
-tensor = new Tensor(batchCount, height, width, channelCount);    
 // batch of 1 dimensional data, 0 initialized: batchCount x {elementCount}
-tensor = new Tensor(batchCount, elementCount);                   
+tensor = new Tensor(batchCount, elementCount);
+// batch of 3 dimensional data, 0 initialized: batchCount x {height, width, channelCount}
+tensor = new Tensor(batchCount, height, width, channelCount);
+// sequence * direction * batch of 5 dimensional data, 0 initialized: sequence * direction * batchCount x {time, depth, height, width, channelCount}
+tensor = new Tensor(new TensorShape(sequence, direction, batchCount, time, depth, height, width, channelCount));
 ```
 ```Csharp
 var stridedArray = new float[batchCount * elementCount] { ... };
@@ -49,7 +71,7 @@ You can query the shape of the `Tensor` object, but you cannot change the shape 
 
 ```C#
 var shape = tensor.shape;
-Debug.Log(shape + " or " + shape.batch + shape.height + shape.width + shape.channels);
+Debug.Log(shape + " or " + shape.sequenceLength + shape.numberOfDirections + shape.batch + shape.extraDimension + shape.depth +shape.height + shape.width + shape.channels);
 ```
 
 ## Texture constructor

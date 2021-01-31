@@ -108,10 +108,12 @@ namespace Unity.Barracuda.ONNX
         public float[] Bias { get { return GetRequiredFloatArray("bias"); } }
         public int[] KernelShape { get { return GetRequiredIntArray("kernel_shape"); } }
         public int[] Strides { get { return GetOptionalIntArray("strides", new[] {1,1}); } }
+        public int[] Strides3D { get { return GetOptionalIntArray("strides", new[] {1,1,1}); } }
         public int[] OutputPadding { get { return GetOptionalIntArray("output_padding", new[] {0,0}); } }
         internal bool SupportsAutoPad { get { return OperatorType != "Pad"; } }
         internal bool SupportsSpatialOnlyPads { get { return OperatorType != "Pad"; } }
         public int[] Pads { get { return ConvertPadsToBarracuda(); } }
+        public int[] Pads3D { get { return ConvertPadsToBarracuda(new int[] {0,0,0,0,0,0}); } }
         public float[] Scales { get { return ConvertScalesToBarracuda(); } }
         public int[] Sizes { get { return ConvertSizesToBarracuda(); } }
         public float AlphaOptional(float defaultValue) { return GetOptionalFloat("alpha", defaultValue); }
@@ -202,6 +204,18 @@ namespace Unity.Barracuda.ONNX
                 throw new OnnxLayerImportException($"required Input {inputIndex} was not found.");
 
             return m_ONNXNode.Input[inputIndex];
+        }
+        internal bool IsInput1Array(string name)
+        {
+            if (Input1 == "")
+                throw new OnnxLayerImportException("Input value is marked as required, but it is missing in the model.");
+
+            ONNXTensor onnxTensor;
+            if (!m_ONNXModelTensors.constants.TryGetValue(Input1, out onnxTensor))
+                throw new OnnxLayerImportException(
+                    $"Currently only constant tensors are supported for `{name}` input in node of type {OperatorType}. Instead {Name}.{name} is pointing to non constant node {Input1}.");
+
+            return onnxTensor.rank != 0;
         }
         internal Tensor GetRequiredInputAsConstant(string input, string onnxLayout, string onnxName)
         {
@@ -321,9 +335,9 @@ namespace Unity.Barracuda.ONNX
         }
 
         // Complex attribute helpers
-        private int[] ConvertPadsToBarracuda()
+        private int[] ConvertPadsToBarracuda(int[] defaultValues = null)
         {
-            var noPadding = new[] {0,0,0,0};
+            var noPadding = defaultValues??new[] {0,0,0,0};
             if (SupportsAutoPad)
             {
                 // known_paddings = {
@@ -392,13 +406,62 @@ namespace Unity.Barracuda.ONNX
                                           ends[0], 0 };                 // 1D W => W_
                 case 2: return new [] { starts[1], starts[0],
                                           ends[1],   ends[0] };         // 2D HW => WH
-                case 3: Warn("3D pads are not supported yet!");
-                    return new [] { starts[2], starts[1], starts[0],
-                                      ends[2],   ends[1],   ends[0] };  // 3D DHW => WHD
+                case 3: return new [] { starts[2], starts[1], starts[0],
+                                        ends[2],   ends[1],   ends[0] };// 3D DHW => WHD
                 default:
                     throw new OnnxLayerImportException(
                         $"Attribute pads of unsupported length {pads.Length} in {Name} ot type {OperatorType}.");
             }
+        }
+        internal float[] ConvertScales()
+        {
+            float[] scales;
+            if (InputCount > 2) // Resize-11
+            {
+                Assert.IsTrue(OperatorType == "Resize");
+                scales = Input2Constant(onnxLayout: "C", name: "scales").AsFloats();
+            }
+            else if (InputCount > 1) // Resize-10, Upsample-9
+            {
+                scales = Input1Constant(onnxLayout: "C", name: "scales").AsFloats();
+            }
+            else
+            {
+                Assert.IsTrue(OperatorType == "Upsample");
+                scales = GetOptionalFloatArray("scales", new float[0]); // Upsample-7
+                if (scales?.Length == 0) // Upsample-1
+                {
+                    scales = new[] { 1, // N
+                                     1, // C
+                                     GetRequiredFloat("height_scale"),
+                                     GetRequiredFloat("width_scale") };
+                }
+            }
+            Assert.IsTrue(scales != null);
+
+            return scales;
+        }
+        internal int[] ConvertSizes()
+        {
+            int[] sizes = null;
+            Assert.IsTrue(OperatorType == "Resize");
+            Assert.IsTrue(InputCount == 4);
+
+            if (IsInput3Const)
+            {
+                sizes = Input3Constant(onnxLayout: "C", name: "sizes").AsInts();
+                Assert.IsTrue(sizes != null);
+                Assert.IsTrue(sizes.Length == 4);
+
+                if ((sizes[0] != 1) || (sizes[1] != 1))
+                    Warn("Only spatial (H and W) resizing is currently supported." +
+                        " Non spatial sizes (N and C) will be ignored and default to identity.");
+            }
+            else
+                throw new OnnxLayerImportException(
+                    $"Only constant size values are currently supported in {Name} ot type {OperatorType}.");
+
+            return sizes;
         }
 
         private float[] ConvertScalesToBarracuda()
@@ -440,8 +503,7 @@ namespace Unity.Barracuda.ONNX
                 case 0: return new [] { 1f, 1f };
                 case 1: return new [] { scales[0], 1 };                 // 1D W => W_
                 case 2: return new [] { scales[1], scales[0] };         // 2D HW => WH
-                case 3: Warn("3D pads are not supported yet!");
-                    return new [] { scales[2], scales[1], scales[0] };  // 3D DHW => WHD
+                case 3: return new [] { scales[2], scales[1], scales[0] };  // 3D DHW => WHD
                 default:
                     throw new OnnxLayerImportException(
                         $"Attribute pads of unsupported length {scales.Length} in {Name} ot type {OperatorType}.");

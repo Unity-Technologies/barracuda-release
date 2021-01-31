@@ -40,6 +40,7 @@ internal class ModelOptimizer
     {
         return layerType == Layer.Type.Dense ||
                layerType == Layer.Type.Conv2D ||
+               layerType == Layer.Type.Conv3D ||
                layerType == Layer.Type.DepthwiseConv2D ||
                layerType == Layer.Type.Conv2DTrans ||
                layerType == Layer.Type.Normalization;
@@ -192,7 +193,7 @@ internal class ModelOptimizer
     }
 
 
-    static bool IsLayerConstant(Layer layer)
+    public static bool IsLayerConstant(Layer layer)
     {
         return layer.type == Layer.Type.Load;
     }

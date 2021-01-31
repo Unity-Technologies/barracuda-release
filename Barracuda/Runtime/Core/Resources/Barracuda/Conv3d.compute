@@ -1,0 +1,263 @@
+#pragma kernel Conv3D_NHWC                                       CHANNELS_FIRST=0
+#pragma kernel Conv3D_NCHW                                       CHANNELS_FIRST=1
+#pragma kernel Conv3DKernelKxK_LaxC8LaxK32_T8x16_R4x4_NHWC       CHANNELS_FIRST=0                   LAX_KERNEL=1 SUFFIX=KernelKxK_LaxC8LaxK32_T8x16_R
+#pragma kernel Conv3DKernelKxK_LaxC8LaxK32_T8x16_R4x4_NCHW       CHANNELS_FIRST=1                   LAX_KERNEL=1 SUFFIX=KernelKxK_LaxC8LaxK32_T8x16_R
+#pragma kernel Conv3DKernelKxK_StrictC8LaxK32_T8x16_R4x4_NHWC    CHANNELS_FIRST=0 STRICT_CHANNELS=1 LAX_KERNEL=1 SUFFIX=KernelKxK_StrictC8LaxK32_T8x16_R
+#pragma kernel Conv3DKernelKxK_StrictC8LaxK32_T8x16_R4x4_NCHW    CHANNELS_FIRST=1 STRICT_CHANNELS=1 LAX_KERNEL=1 SUFFIX=KernelKxK_StrictC8LaxK32_T8x16_R
+#pragma kernel Conv3DKernelKxK_StrictC8StrictK32_T8x16_R4x4_NHWC CHANNELS_FIRST=0 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC8StrictK32_T8x16_R
+#pragma kernel Conv3DKernelKxK_StrictC8StrictK32_T8x16_R4x4_NCHW CHANNELS_FIRST=1 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC8StrictK32_T8x16_R
+
+#include "Tensor.cginc"
+
+TENSOR_DECL(X)
+TENSOR_DECL(K)
+TENSOR_DECL(B)
+TENSOR_DECL(WBK)
+TENSOR_DECL_RW(O)
+
+uint4 _Pad;
+uint4 _Stride;
+
+float ffma(float a, float b, float c) { return dot(float2(a,c), float2(b,1)); }
+
+#if CHANNELS_FIRST
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX, SIZE) KERNEL##SUFFIX##SIZE##x##SIZE##_NCHW
+    #define CACHE_NAME_CALL(KERNEL, SUFFIX, SIZE, TENSOR) KERNEL##SUFFIX##SIZE##x##SIZE##_Cache_##TENSOR##_NCHW
+#else
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX, SIZE) KERNEL##SUFFIX##SIZE##x##SIZE##_NHWC
+    #define CACHE_NAME_CALL(KERNEL, SUFFIX, SIZE, TENSOR) KERNEL##SUFFIX##SIZE##x##SIZE##_Cache_##TENSOR##_NHWC
+#endif
+#define FUNC_NAME(KERNEL, SUFFIX, SIZE) FUNC_NAME_CALL(KERNEL, SUFFIX, SIZE)
+#define CACHE_NAME(KERNEL, SUFFIX, SIZE, TENSOR) CACHE_NAME_CALL(KERNEL, SUFFIX, SIZE, TENSOR)
+
+#define KERNEL_NAME Conv3D
+
+NUMTHREADS((16,4,4), (8,4,4), (4,4,4))
+void KERNEL_FUNC(Conv3D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(K.kernelCount, O.width, O.height);
+    TENSOR_SHARED2_ARGS4_8D(X, K, B, WBK, O);
+
+    uint k = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (k >= K.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    uint3 leftCorner = _Pad.xyz;
+    uint3 rightCorner = uint3(X.width, X.height, X.depth) + _Pad.xyz;
+
+    for (uint n = 0; n < O.batch; ++n)
+        for (uint d = 0; d < O.depth; ++d)
+        {
+            float acc = B.FastGet(k);
+            for (uint dd = 0; dd < K.GetKernelSpatialDepth(); ++dd)
+            {
+                for (uint dy = 0; dy < K.GetKernelHeight(); ++dy)
+                {
+                    for (uint dx = 0; dx < K.GetKernelWidth(); ++dx)
+                    {
+                        uint3 pos3d = uint3(x, y, d) * _Stride.xyz + uint3(dx, dy, dd);
+
+                        for (uint c = 0; c < X.channels; ++c)
+                        {
+                            float v = 0;
+
+                            // WARNING: Mali-G71 performance drops 4x if this branching includes storing accumulator (comment copied from Conv2D kernel)
+                            if (!any(pos3d < leftCorner) && !any(pos3d >= rightCorner))
+                                v = X.Get5D(n, pos3d.z - leftCorner.z, pos3d.y - leftCorner.y, pos3d.x - leftCorner.x, c);
+                            //acc = fastfma(v,  K.Get(dy, dx, c, k), acc);
+                            acc += v * K.GetKernel5D(dd, dy, dx, c, k);
+                        }
+                    }
+                }
+            }
+
+            O.Set5DWithActivation(n, d, y, x, k, acc);
+        }
+}
+
+#define PIXEL_PER_TG 64  //only supported value
+#define KERNEL_PER_TG 32 //only supported value
+#define BLOCK_SIZE 4     //only supported value
+#define CACHE_DEPTH 8    //only support modulo of 4 values.
+
+//Each thread handle = 4 kernels * 4 pixels (in registers) and all channels
+//A threadgroup (8,16,1) handle = 32 kernels x 64 pixels and all channels (looping on CACHE_DEPTH channel at a time)
+groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS) [(32+64) * CACHE_DEPTH]; //(32+64)*CACHE_DEPTH == 96*CACHE_DEPTH floats (CACHE_DEPTH == 8 --> 768 floats)
+
+[numthreads(8,16,1)]
+void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
+{
+    //This kernel assume the following:
+    //Input:
+    //  C % CACHE_DEPTH==0 <-- only if STRICT_CHANNELS==1
+    //Kernel:
+    //  K%32==0 <-- only if LAX_KERNEL=0
+    //DISPATCH ARGS(K.kernelCount, O.width * O.height * O.depth, O.batch);
+    TENSOR_SHARED2_ARGS4_8D(X, K, B, WBK, O);
+
+    #define LDS_ CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS)
+    #define X_OFFSET 0
+    #define W_OFFSET CACHE_DEPTH*PIXEL_PER_TG
+
+    //Per thread group (scalar registers)
+    uint tg_NumChannels = X.channels;
+    uint tg_DepthX  = X.depth;
+    uint tg_WidthX  = X.width;
+    uint tg_HeightX = X.height;
+    uint tg_DepthO  = O.depth;
+    uint tg_WidthO  = O.width;
+    uint tg_HeightO = O.height;
+
+    uint tg_NumKernels = K.channels;
+    uint tg_NumInputPixels = tg_DepthX*tg_WidthX*tg_HeightX;
+    uint tg_NumOuputPixels = tg_DepthO*tg_WidthO*tg_HeightO;
+
+    uint tg_KernelSpatialStride = tg_NumKernels*tg_NumChannels;
+    uint tg_KernelBaseId = groupID.x * KERNEL_PER_TG;
+    uint tg_OutputPixelBaseId = groupID.y * PIXEL_PER_TG;
+    uint tg_BatchReadOffset = groupID.z * tg_NumChannels * tg_NumInputPixels;
+    uint tg_BatchWriteOffset = groupID.z * tg_NumKernels * tg_NumOuputPixels;
+    uint tg_kernelSpatialOffset = 0;
+
+    //4x4 block, 4 kernels by 4 pixels
+    float dstA[BLOCK_SIZE*BLOCK_SIZE];
+
+    //Load Bias [K] into dstA [Kernels, Pixels]
+    uint tg_kId;
+    uint tg_pId;
+    uint maxBiasIndex = O.channels - 1;
+    [unroll] for (tg_pId = 0; tg_pId < BLOCK_SIZE; ++tg_pId)
+        [unroll] for (tg_kId = 0; tg_kId < BLOCK_SIZE; ++tg_kId)
+            dstA[tg_pId*BLOCK_SIZE+tg_kId] = B.FastGet(min(maxBiasIndex,tg_KernelBaseId + groupThreadID.x * BLOCK_SIZE + tg_kId));
+
+    //Looping over kernel spatially
+    for (uint tg_Dd = 0; tg_Dd < K.GetKernelSpatialDepth(); ++tg_Dd)
+    for (uint tg_Dy = 0; tg_Dy < K.GetKernelHeight(); ++tg_Dy)
+    for (uint tg_Dx = 0; tg_Dx < K.GetKernelWidth(); ++tg_Dx)
+    {
+        //Looping over channels, convolving CACHE_DEPTH of them at a time.
+        for (uint tg_ChannelOffset = 0; tg_ChannelOffset < tg_NumChannels; tg_ChannelOffset += CACHE_DEPTH)
+        {
+            //Load from DDR to LDS: Threadgroup need 32 weight + 64 pixels per CACHE_DEPTH = 96 float, but we have 128 threads.
+            //--> Load 4 channels at a time (3 loads per threads, 1 kernel and 2 pixels) consequence is CHANNEL_DEPTH must be a modulo of 4.
+            //A threadgroup (128 Threads) contains 4 half-warps of 32 threads.
+            // half-warps 0 - threadId [00-31]  --> load Kernels [00-31] channel 0 + Pixels [00,31] channel 0 and 2
+            // half-warps 1 - threadId [32-63]  --> load Kernels [00-31] channel 1 + Pixels [32,64] channel 1 and 3
+            // half-warps 2 - threadId [65-95]  --> load Kernels [00-31] channel 2 + Pixels [00,31] channel 0 and 2
+            // half-warps 3 - threadId [96-127] --> load Kernels [00-31] channel 3 + Pixels [32,64] channel 1 and 3
+            uint warpThreadId = threadIndex % 64;
+            uint warpId = threadIndex / 64;
+            uint halfWarpThreadId = threadIndex % 32;
+            uint halfWarpId = threadIndex / 32;
+            [unroll] for (uint tg_CacheLoadIdx = 0; tg_CacheLoadIdx < CACHE_DEPTH; tg_CacheLoadIdx+=4)//TODO verify unrolling actually happens
+            {
+                //Kernels (1 per thread)
+                //K stored as DHWCK, threadgroup is loading 4*32 kernels at a time to LDS.
+                //DHW from tg_kernelSpatialOffset,
+                //C from tg_ChannelOffset+tg_CacheLoadIdx+halfWarpId([0,3])
+                //K from tg_KernelBaseId+halfWarpThreadId([0,31])
+                uint kernelReadOffset = tg_kernelSpatialOffset + tg_NumKernels*(tg_ChannelOffset+tg_CacheLoadIdx+halfWarpId) + tg_KernelBaseId + halfWarpThreadId;
+                #if !STRICT_CHANNELS || LAX_KERNEL
+                kernelReadOffset = min(kernelReadOffset, K.GetLength5D()-1);
+                #endif
+                LDS_[W_OFFSET+tg_CacheLoadIdx*KERNEL_PER_TG+threadIndex] = K.FastGet(kernelReadOffset);
+
+                //Pixels (two of them per thread)
+                //threadgroup is loading 4*64 kernels at a time to LDS.
+                int outputPixelBaseId = tg_OutputPixelBaseId + warpThreadId;
+                int3 outputPixelCoords;
+                outputPixelCoords.x = outputPixelBaseId % tg_WidthO;//width
+                outputPixelCoords.y = (outputPixelBaseId / tg_WidthO) % tg_HeightO;//height
+                outputPixelCoords.z = outputPixelBaseId / (tg_WidthO * tg_HeightO);//depth
+                int3 inputPixelCoords = outputPixelCoords * _Stride.xyz - _Pad.xyz + int3(tg_Dx, tg_Dy, tg_Dd);
+                bool inputPixelMask = all( (inputPixelCoords >= 0) && (inputPixelCoords < float3(tg_WidthX, tg_HeightX, tg_DepthX)) );
+                int inputPixelId = inputPixelCoords.z * (tg_WidthX*tg_HeightX) + inputPixelCoords.y * tg_WidthX + inputPixelCoords.x;
+                uint inputChannelId1 = tg_ChannelOffset + tg_CacheLoadIdx + warpId;
+                uint inputChannelId2 = inputChannelId1 + 2;
+                bool inputChannelMask1 = inputChannelId1 < tg_NumChannels;
+                bool inputChannelMask2 = inputChannelId2 < tg_NumChannels;
+                #if STRICT_CHANNELS
+                    inputChannelMask1 = true;
+                    inputChannelMask2 = true;
+                #endif
+                #if CHANNELS_FIRST
+                    uint pixelReadOffset1 = tg_NumInputPixels * inputChannelId1 + inputPixelId + tg_BatchReadOffset;
+                    uint pixelReadOffset2 = tg_NumInputPixels * inputChannelId2 + inputPixelId + tg_BatchReadOffset;
+                #else
+                    uint pixelReadOffset1 = tg_NumChannels * inputPixelId + inputChannelId1 + tg_BatchReadOffset;
+                    uint pixelReadOffset2 = tg_NumChannels * inputPixelId + inputChannelId2 + tg_BatchReadOffset;
+                #endif
+                LDS_[X_OFFSET+tg_CacheLoadIdx*PIXEL_PER_TG+threadIndex] = X.MaskedGet(inputPixelMask && inputChannelMask1, pixelReadOffset1);
+                LDS_[X_OFFSET+tg_CacheLoadIdx*PIXEL_PER_TG+128+threadIndex] = X.MaskedGet(inputPixelMask && inputChannelMask2, pixelReadOffset2);
+            }
+
+            GroupMemoryBarrierWithGroupSync();
+
+            //Inner loop
+            //TODO get rid of bank conflicts.
+            uint ptrX = groupThreadID.y*BLOCK_SIZE + X_OFFSET;
+            uint ptrW = groupThreadID.x*BLOCK_SIZE + W_OFFSET;
+            for (uint tg_CacheExecuteIdx = 0; tg_CacheExecuteIdx < CACHE_DEPTH; ++tg_CacheExecuteIdx)
+            {
+                //Load LDS -> registers
+                float colOfX[BLOCK_SIZE];
+                float rowOfW[BLOCK_SIZE];
+                uint tg_q;
+                [unroll] for (tg_q = 0; tg_q < BLOCK_SIZE; ++tg_q)
+                    colOfX[tg_q] = LDS_[ptrX + tg_q];
+                [unroll] for (tg_q = 0; tg_q < BLOCK_SIZE; ++tg_q)
+                    rowOfW[tg_q] = LDS_[ptrW + tg_q];
+
+                ptrX += PIXEL_PER_TG;
+                ptrW += KERNEL_PER_TG;
+
+                //Mads 4 pixels by 4 kernels matmul style --> 16 mads
+                [unroll] for (uint tg_X = 0; tg_X < BLOCK_SIZE; ++tg_X)
+                    [unroll] for (uint tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
+                        dstA[tg_X*BLOCK_SIZE+tg_W] = ffma(colOfX[tg_X], rowOfW[tg_W], dstA[tg_X*BLOCK_SIZE+tg_W]);
+            }
+
+            GroupMemoryBarrierWithGroupSync();
+        }
+
+        tg_kernelSpatialOffset += tg_KernelSpatialStride;
+    }
+
+    //-------------------------------
+    //store registers to DDR
+    //-------------------------------
+    //B does not require an offset as size == 1
+    //C from tg_KernelBaseId, groupThreadID.x and tg_kId
+    //HW from tg_OutputPixelBaseId, groupThreadID.y and tg_pId
+    [unroll] for (tg_kId = 0; tg_kId < BLOCK_SIZE; ++tg_kId)
+        [unroll] for (tg_pId = 0; tg_pId < BLOCK_SIZE; ++tg_pId)
+        {
+            uint writeChannelId = tg_KernelBaseId + groupThreadID.x * BLOCK_SIZE + tg_kId;
+            uint writePixelId = tg_OutputPixelBaseId + groupThreadID.y * BLOCK_SIZE + tg_pId;
+            float writeValue = dstA[tg_pId*BLOCK_SIZE+tg_kId];
+            #if CHANNELS_FIRST
+            uint writeIndex = O.depth * O.width * O.height * writeChannelId + writePixelId + tg_BatchWriteOffset;
+            #else
+            uint writeIndex = tg_NumKernels * writePixelId + writeChannelId + tg_BatchWriteOffset;
+            #endif
+            #if LAX_KERNEL
+                bool canWriteChannel = (writeChannelId < tg_NumKernels);
+            #else
+                bool canWriteChannel = true;
+            #endif
+            if ((writePixelId < tg_NumOuputPixels) && canWriteChannel)
+                O.FastSetWithActivation(writeIndex, writeValue);
+        }
+
+    #undef X_OFFSET
+    #undef W_OFFSET
+    #undef LDS_
+}
+#undef CACHE_DEPTH
+#undef BLOCK_SIZE
+#undef KERNEL_PER_TG
+#undef PIXEL_PER_TG

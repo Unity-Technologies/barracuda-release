@@ -256,7 +256,11 @@ public class GenericWorker : IWorker
             {
                 Assert.AreEqual(inputs.Length, 2);
                 Profiler.BeginSample ("Barracuda.MatMul");
-                X = m_Ops.MatMul(X, false, inputs[1], false);
+
+                if (l.pool == null || l.pool.Length == 0)
+                    X = m_Ops.MatMul(X, -1, inputs[1], -1);
+                else
+                    X = m_Ops.MatMul(X, l.pool[0], inputs[1], l.pool[1]);
             }
             // 2D
             else if (l.type == Layer.Type.Conv2D)
@@ -350,6 +354,17 @@ public class GenericWorker : IWorker
                 Profiler.BeginSample ("Barracuda.GlobalAvgPool2D");
                 X = m_Ops.GlobalAvgPool2D(X);
             }
+            else if (l.type == Layer.Type.Border3D)
+            {
+                Profiler.BeginSample ("Barracuda.Border3D");
+
+                Assert.IsNotNull(l.pad);
+                // NOTE: beta is used to retrieve fillin value
+                // because beta is 0 by default (while alpha is 1 by default)
+                // 0 value is more inline with zero padding
+                float fillValue = l.beta;
+                X = m_Ops.Border3D(X, l.pad, fillValue);
+            }
             else if (l.type == Layer.Type.Border2D)
             {
                 Profiler.BeginSample ("Barracuda.Border2D");
@@ -383,16 +398,36 @@ public class GenericWorker : IWorker
                 X = m_Ops.Pad2DEdge(X, l.pad);
             }
             // 3D
-            else if (l.type == Layer.Type.Conv3D ||
-                l.type == Layer.Type.Conv3DTrans ||
-                l.type == Layer.Type.Upsample3D ||
+            else if (l.type == Layer.Type.Upsample3D)
+            {
+                Profiler.BeginSample ("Barracuda.Upsample3D");
+                // pool size is treated as upsample scale coefficient here
+                var scale = l.pool;
+                // axis is treated as upsample point/bilinear flag
+                var trilinear = l.axis > 0;
+                if (scale.Length == 0 && inputs.Length > 1)
+                {
+                    var scaleTensor = inputs[1];
+                    Assert.AreEqual(scaleTensor.length, 5);
+                    scale = new int[] {(int)scaleTensor[3], (int)scaleTensor[2], (int)scaleTensor[1]};
+                }
+                X = m_Ops.Upsample3D(X, scale, trilinear);
+            }
+            else if (l.type == Layer.Type.Conv3D)
+            {
+                Assert.AreEqual(inputs.Length, 3);
+                Profiler.BeginSample ("Barracuda.Conv3D");
+                var pad = X.AdjustPadToKernel(inputs[1], l.stride, l.pad);
+                X = m_Ops.Conv3D(X, inputs[1], inputs[2], l.stride, pad, GetAndVerifyFusedActivation(l));
+            }
+            else if (l.type == Layer.Type.Conv3DTrans ||
                 l.type == Layer.Type.MaxPool3D ||
                 l.type == Layer.Type.AvgPool3D ||
                 l.type == Layer.Type.GlobalMaxPool3D ||
                 l.type == Layer.Type.GlobalAvgPool3D ||
                 l.type == Layer.Type.Border3D)
             {
-                throw new NotImplementedException("3D operations are not implemented yet!");
+                throw new NotImplementedException($"{l.type} operations are not implemented yet!");
             }
             else if (l.type == Layer.Type.ScaleBias)
             {
@@ -423,7 +458,7 @@ public class GenericWorker : IWorker
                 Assert.IsNotNull(l.pool);
                 Assert.AreEqual(l.pool.Length, 1);
                 int count = l.pool[0];
-                float bias = (l.weights.Length > 0) ? l.weights[0] : 1.0f;
+                float bias = (l.weights.Length > 0) ? l.weights[l.datasets[0].offset + 0] : 1.0f;
                 X = m_Ops.LRN(X, l.alpha, l.beta, bias, count);
             }
             // Stochastic layers
@@ -564,49 +599,29 @@ public class GenericWorker : IWorker
                      l.type == Layer.Type.ArgMin)
             {
                 Profiler.BeginSample ("Barracuda.Reduce");
-
-                TensorShape xShape = X.shape;
-                int axis = xShape.Axis(l.axis); // Adjust for negative axis values
-
-                if (xShape[axis] != 1) // Nothing to reduce
+                switch (l.type)
                 {
-                    // All Reduce operations assume that the reduction happens in C, so transpose accordingly
-                    axis = TensorExtensions.Convert8DAxisToNHWC(axis);
-                    int[] permutation = { 0, 1, 2, 3 }; // Transpose permutations are still in NHWC (rank 4)
-                    permutation[3] = axis;
-                    permutation[axis] = 3;
-
-                    if (axis != 3) // In NHWC this is C
-                        X = m_Ops.Transpose(X, permutation);
-
-                    int defaultAxis = TensorExtensions.NHWCTo8DAxis(3);
-                    switch (l.type)
-                    {
-                        case Layer.Type.ReduceMax:
-                            X = m_Ops.ReduceMax(X, defaultAxis);
-                            break;
-                        case Layer.Type.ReduceMean:
-                            X = m_Ops.ReduceMean(X, defaultAxis);
-                            break;
-                        case Layer.Type.ReduceMin:
-                            X = m_Ops.ReduceMin(X, defaultAxis);
-                            break;
-                        case Layer.Type.ReduceProd:
-                            X = m_Ops.ReduceProd(X, defaultAxis);
-                            break;
-                        case Layer.Type.ReduceSum:
-                            X = m_Ops.ReduceSum(X, defaultAxis);
-                            break;
-                        case Layer.Type.ArgMax:
-                            X = m_Ops.ArgMax(X, defaultAxis);
-                            break;
-                        case Layer.Type.ArgMin:
-                            X = m_Ops.ArgMin(X, defaultAxis);
-                            break;
-                    }
-
-                    if (axis != 3)
-                        X = m_Ops.Transpose(X, permutation);
+                    case Layer.Type.ReduceMax:
+                        X = m_Ops.ReduceMax(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceMean:
+                        X = m_Ops.ReduceMean(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceMin:
+                        X = m_Ops.ReduceMin(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceProd:
+                        X = m_Ops.ReduceProd(X, l.axis);
+                        break;
+                    case Layer.Type.ReduceSum:
+                        X = m_Ops.ReduceSum(X, l.axis);
+                        break;
+                    case Layer.Type.ArgMax:
+                        X = m_Ops.ArgMax(X, l.axis);
+                        break;
+                    case Layer.Type.ArgMin:
+                        X = m_Ops.ArgMin(X, l.axis);
+                        break;
                 }
             }
             else if (
@@ -688,7 +703,7 @@ public class GenericWorker : IWorker
             {
                 Profiler.BeginSample ("Barracuda.Reshape");
 
-                // pool size is treated as the shape, if not empty
+                // pool is treated as the shape, if not empty
                 var size = l.pool;
 
                 Assert.IsNotNull(size);
@@ -780,7 +795,8 @@ public class GenericWorker : IWorker
             else if (l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)
             {
-                throw new NotImplementedException();
+                Profiler.BeginSample ("Barracuda.Squeeze/Unsqueeze");
+                X = m_Ops.Copy(X);
             }
             else if (l.type == Layer.Type.Concat)
             {
@@ -799,8 +815,6 @@ public class GenericWorker : IWorker
             else if (l.type == Layer.Type.Tile)
             {
                 Profiler.BeginSample ("Barracuda.Tile");
-
-                Assert.AreEqual(l.pool.Length, 4);
                 X = m_Ops.Tile(X, l.pool);
             }
             // Activations
@@ -823,6 +837,10 @@ public class GenericWorker : IWorker
                 else if (l.activation == Layer.Activation.Tanh)
                 {
                     X = m_Ops.Tanh(X);
+                }
+                else if (l.activation == Layer.Activation.Softplus)
+                {
+                    X = m_Ops.Softplus(X);
                 }
                 else if (l.activation == Layer.Activation.Sigmoid)
                 {
@@ -854,7 +872,6 @@ public class GenericWorker : IWorker
                     X = m_Ops.PRelu(X, inputs[1]);
                 }
                 else if (
-                    l.activation == Layer.Activation.Softplus ||
                     l.activation == Layer.Activation.Softsign ||
                     l.activation == Layer.Activation.Hardmax ||
                     l.activation == Layer.Activation.HardSigmoid)

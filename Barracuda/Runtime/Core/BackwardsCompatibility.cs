@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.Assertions;
 
@@ -11,6 +12,34 @@ namespace Unity.Barracuda {
 /// </summary>
 public static class DeprecatedTensorExtensions
 {
+    /// <summary>
+    /// Deprecated, use `AdjustPadToPool` version with pool as an array instead
+    /// </summary>
+    /// <param name="tensor">`Tensor`</param>
+    /// <param name="pool">pool tuple</param>
+    /// <param name="stride">stride</param>
+    /// <param name="pad">padding</param>
+    /// <returns>shape as int array</returns>
+    [ObsoleteAttribute("Use AdjustPadToPool version with pool as an array instead.", false)]
+    public static int[] AdjustPadToPool(this Tensor tensor, ValueTuple<int,int> pool, int[] stride, int[] pad)
+    {
+        return tensor.shape.AdjustPadToPool(new int[] {pool.Item1, pool.Item2}, stride, pad);
+    }
+
+    /// <summary>
+    /// Deprecated, use `AdjustPadToPool` version with pool as an array instead
+    /// </summary>
+    /// <param name="shape">`TensorShape`</param>
+    /// <param name="pool">pool tuple</param>
+    /// <param name="stride">stride</param>
+    /// <param name="pad">padding</param>
+    /// <returns>shape as int array</returns>
+    [ObsoleteAttribute("Use AdjustPadToPool version with pool as an array instead.", false)]
+    public static int[] AdjustPadToPool(this TensorShape shape, ValueTuple<int,int> pool, int[] stride, int[] pad)
+    {
+        return shape.AdjustPadToPool(new int[] {pool.Item1, pool.Item2}, stride, pad);
+    }
+
     /// <summary>
     /// Deprecated. Use <c>UploadToDevice</c> instead
     /// </summary>
@@ -63,6 +92,40 @@ public static class DeprecatedTensorExtensions
     // public float[] readonlyArray { get { PrepareCacheForAccess(); return m_Cache; } }
     // public int readonlyArrayOffset { get { return 0; } }
     #endregion
+}
+
+/// <summary>
+/// Deprecated `TestSet` extensions
+/// </summary>
+public static class DeprecatedTestSetExtensions
+{
+    /// <summary>
+    /// Deprecated. Use `GetInputShape` version returning a TensorShape instead
+    /// </summary>
+    /// <param name="self">`TestSet`</param>
+    /// <param name="idx">input index</param>
+    /// <returns>input shape as array</returns>
+    [ObsoleteAttribute("Use GetInputShape version returning a TensorShape instead.", false)]
+    public static int[] GetInputShape(this TestSet self, int idx = 0)
+    {
+        var shape = self.GetInputShape(idx);
+        Assert.IsTrue(shape.Is4D());
+        return shape.ToArray();
+    }
+
+    /// <summary>
+    /// Deprecated. Use `GetOutputShape` version returning a TensorShape instead
+    /// </summary>
+    /// <param name="self">`TestSet`</param>
+    /// <param name="idx">output index</param>
+    /// <returns>shape as int array</returns>
+    [ObsoleteAttribute("Use GetOutputShape version returning a TensorShape instead.", false)]
+    public static int[] GetOutputShape(this TestSet self, int idx = 0)
+    {
+        var shape = self.GetOutputShape(idx);
+        Assert.IsTrue(shape.Is4D());
+        return shape.ToArray();
+    }
 }
 
 /// <summary>

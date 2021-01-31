@@ -13,13 +13,18 @@ namespace Unity.Barracuda {
 /// </summary>
 public static class TensorExtensions
 {
-    static internal void TestInit(this Tensor X, int n = -1)
+    static internal void TestInit(this Tensor X, int n = -1, int modulus = -1)
     {
         if (n < 0)
             n = X.length;
         n = Math.Min(n, X.length);
         for (int i = 0; i < n; ++i)
-            X[i] = i;
+        {
+            if (modulus > 1)
+                X[i] = i % modulus;
+            else
+                X[i] = i;
+        }
     }
 
     static internal void TestInitCos(this Tensor X, int n = -1, float offset = 0.0f)
@@ -392,7 +397,7 @@ public static class TensorExtensions
     /// <returns>output shape</returns>
     static public TensorShape Scale(this TensorShape shape, int[] scale)
     {
-        scale = Get8DParametersFromNHWCParametersAndShape(shape, scale, 1);
+        scale = Get8DParametersFrom4DParametersAndShape(shape, scale, 1);
 
         for (var axis = 0; axis < TensorShape.MaxRank; axis++)
             shape[axis] *= scale[axis];
@@ -423,7 +428,7 @@ public static class TensorExtensions
     /// <exception cref="ArgumentException">more than one dimension is unspecified</exception>
     static public TensorShape Reshape(this TensorShape shape, int[] size)
     {
-        size = Get8DParametersFromNHWCParametersAndShape(shape, size, 1);
+        size = Get8DParametersFrom4DParametersAndShape(shape, size, 1);
         var newShapeArray = shape.ToArray();
 
         // From: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Reshape
@@ -499,7 +504,16 @@ public static class TensorExtensions
 
     static internal int[] AdjustPadToKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
-        return AdjustPadToPool(shape, (kernel.kernelWidth, kernel.kernelHeight), stride, pad);
+        Assert.IsTrue(stride.Length==2 || stride.Length==3);
+        int[] kernelDims = null;
+        switch (stride.Length)
+        {
+            case 2: kernelDims = new int[] {kernel.kernelWidth, kernel.kernelHeight};
+                break;
+            default: kernelDims = new int[] {kernel.kernelWidth, kernel.kernelHeight, kernel.kernelSpatialDepth};
+                break;
+        }
+        return AdjustPadToPool(shape, kernelDims, stride, pad);
     }
 
     static internal int[] AdjustPadToPool(this Tensor tensor, int[] pool, int[] stride, int[] pad)
@@ -509,17 +523,11 @@ public static class TensorExtensions
 
     static internal int[] AdjustPadToPool(this TensorShape shape, int[] pool, int[] stride, int[] pad)
     {
-        return AdjustPadToPool(shape, (pool[0], pool[1]), stride, pad);
-    }
+        Assert.IsTrue(stride.Length > 0);
+        Assert.IsTrue(stride.Length == pool.Length);
+        int featureCount = stride.Length;
+        Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
 
-    static internal int[] AdjustPadToPool(this Tensor tensor, ValueTuple<int,int> pool, int[] stride, int[] pad)
-    {
-        return AdjustPadToPool(tensor.shape, pool, stride, pad);
-    }
-
-    // @TODO: implement 3D, ND pool suppport
-    static internal int[] AdjustPadToPool(this TensorShape shape, ValueTuple<int,int> pool, int[] stride, int[] pad)
-    {
         // negative pad values mean auto_pad type is used
         if (pad[0] >= 0)
             return pad;
@@ -531,32 +539,28 @@ public static class TensorExtensions
             //        https://github.com/onnx/onnx/blob/master/docs/Operators.md
             // and TensorFlow docs:
             //         https://www.tensorflow.org/api_guides/python/nn#Notes_on_SAME_Convolution_Padding
+            var adjustedPad = new int [featureCount*2];
+            for (var i = 0; i < featureCount; ++i)
+            {
+                var featureModStride = shape.width % stride[i];
+                if (featureModStride == 0)
+                    featureModStride = stride[i];
 
-            var widthModStride = shape.width % stride[0];
-            var heightModStride = shape.height % stride[1];
-
-            if (widthModStride == 0)
-                widthModStride = stride[0];
-            if (heightModStride == 0)
-                heightModStride = stride[1];
-
-            var padAlongWidth = Math.Max(pool.Item1 - widthModStride, 0);
-            var padAlongHeight = Math.Max(pool.Item2 - heightModStride, 0);
-            // Code above (based on TensorFlow docs) is equivalent to (based on ONNX docs):
-            // padAlongWidth = (Mathf.Ceil(shape.width/stride[0]) - 1) * stride[0] + pool[0] - shape.width;
-            // padAlongHeight = (Mathf.Ceil(shape.height/stride[1]) - 1) * stride[1] + pool[1] - shape.height;
-
-            var widthSmall = padAlongWidth / 2;
-            var widthLarge = padAlongWidth - widthSmall;
-            var heightSmall = padAlongHeight / 2;
-            var heightLarge = padAlongHeight - heightSmall;
-
-            // In case of odd number add the extra padding
-            // at the end for SAME_UPPER and at the beginning for SAME_LOWER
-            if (type == Layer.AutoPad.SameUpper)
-                return new [] { widthSmall, heightSmall, widthLarge, heightLarge };
-            else
-                return new [] { widthLarge, heightLarge, widthSmall, heightSmall };
+                var padAlongFeature = Math.Max(pool[i] - featureModStride, 0);
+                // Code above (based on TensorFlow docs) is equivalent to (based on ONNX docs):
+                // padAlongWidth = (Mathf.Ceil(shape.width/stride[0]) - 1) * stride[0] + pool[0] - shape.width;
+                // padAlongHeight = (Mathf.Ceil(shape.height/stride[1]) - 1) * stride[1] + pool[1] - shape.height;
+                var featureSmall = padAlongFeature / 2;
+                var featureLarge = padAlongFeature - featureSmall;
+                if (type == Layer.AutoPad.SameUpper) {
+                    adjustedPad[i] = featureSmall;
+                    adjustedPad[i+featureCount] = featureLarge;
+                } else {
+                    adjustedPad[i] = featureLarge;
+                    adjustedPad[i+featureCount] = featureSmall;
+                }
+            }
+            return adjustedPad;
         }
         else
             throw new NotImplementedException("This padding type is not implemented yet!");
@@ -564,15 +568,12 @@ public static class TensorExtensions
 
     static internal TensorShape ApplyPool(this TensorShape shape, int[] pool, int[] stride, int[] pad, bool ceilMode = false)
     {
-         return ApplyPool(shape, (pool[0], pool[1]), stride, pad, ceilMode);
-    }
 
-    // @TODO: implement 3D, ND pool suppport
-    // @SEE: ApplyBorder() for generic impl
-    static internal TensorShape ApplyPool(this TensorShape shape, ValueTuple<int,int> pool, int[] stride, int[] pad, bool ceilMode = false)
-    {
-        Assert.AreEqual(stride.Length, 2);
-        Assert.AreEqual(pad.Length, 4);
+        Assert.IsTrue(stride.Length > 0);
+        Assert.IsTrue(stride.Length == pool.Length);
+        Assert.IsTrue(stride.Length*2 == pad.Length);
+        int featureCount = stride.Length;
+        Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
 
         // Based on ONNX (AveragePool & MaxPool)
         //        https://github.com/onnx/onnx/blob/master/docs/Operators.md
@@ -583,24 +584,27 @@ public static class TensorExtensions
         //         https://www.tensorflow.org/api_guides/python/nn#Notes_on_SAME_Convolution_Padding
         //
         //   output_size = (input_size + pad_left + pad_right - kernel_size) / stride + 1
-        //
         var newShape = shape;
-        if (ceilMode)
+        for (var i = 0; i < featureCount; ++i)
         {
-            newShape[TensorShape.H] = (shape.height + (pad[1]+pad[3]) - pool.Item2 + stride[1] - 1) / stride[1] + 1;
-            newShape[TensorShape.W] = (shape.width  + (pad[0]+pad[2]) - pool.Item1 + stride[1] - 1) / stride[0] + 1;
-            return newShape;
+            // C# automatically rounds down
+            // https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/operators/arithmetic-operators
+            if (ceilMode)
+                newShape[TensorShape.DataFeatures[i]] = (shape[TensorShape.DataFeatures[i]] + (pad[i]+pad[i+featureCount]) - pool[i] + stride[i] - 1) / stride[i] + 1;
+            else
+                newShape[TensorShape.DataFeatures[i]] = (shape[TensorShape.DataFeatures[i]] + (pad[i]+pad[i+featureCount]) - pool[i]) / stride[i] + 1;
         }
-        // C# automatically rounds down
-        // https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/operators/arithmetic-operators
-        newShape[TensorShape.H] = (shape.height + (pad[1]+pad[3]) - pool.Item2) / stride[1] + 1;
-        newShape[TensorShape.W] = (shape.width  + (pad[0]+pad[2]) - pool.Item1) / stride[0] + 1;
         return newShape;
     }
 
     static internal TensorShape ApplyKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
-        int[] shapeArray = ApplyPool(shape, (kernel.kernelWidth, kernel.kernelHeight), stride, pad).ToArray();
+        Assert.IsTrue(stride.Length==2 || stride.Length==3);
+        int[] kernelDims = (stride.Length == 2)
+            ? new int[] {kernel.kernelWidth, kernel.kernelHeight}
+            : new int[] {kernel.kernelWidth, kernel.kernelHeight, kernel.kernelSpatialDepth};
+
+        int[] shapeArray = ApplyPool(shape, kernelDims, stride, pad).ToArray();
         shapeArray[7] = kernel.kernelCount;
         return new TensorShape(shapeArray);
     }
@@ -667,7 +671,14 @@ public static class TensorExtensions
         return v < 0 ? (v + length): v;
     }
 
-    static internal bool IsNHWC(this TensorShape shape)
+    static internal bool IsNDHWC(this TensorShape shape)
+    {
+        return shape.sequenceLength == 1 &&
+               shape.numberOfDirections == 1 &&
+               shape.extraDimension == 1;
+    }
+
+    static internal bool Is4D(this TensorShape shape)
     {
         return shape.sequenceLength == 1 &&
                shape.numberOfDirections == 1 &&
@@ -675,21 +686,33 @@ public static class TensorExtensions
                shape.depth == 1;
     }
 
-    static internal int NHWCTo8DAxis(int nhwcAxis)
+    // Works for NCHW or NHWC
+    static internal int Convert4DTo8DAxis(int axis)
     {
-        Assert.IsTrue(nhwcAxis < 4);
-        Assert.IsTrue(nhwcAxis > -4);
-        if (nhwcAxis < 0) //backward indexing
+        Assert.IsTrue(axis < 4);
+        Assert.IsTrue(axis > -4);
+        if (axis < 0) //backward indexing
         {
-            return nhwcAxis;
+            return axis;
         }
-        else if (nhwcAxis == 0) //batch
+        else if (axis == 0) //batch
             return TensorShape.DataBatch;
         else //H,W,C
-            return nhwcAxis + TensorShape.D;
+            return axis + TensorShape.D;
     }
 
-    static internal bool Is8DAxisConvertibleToNHWC(int axis)
+    static internal int FirstNotIdentityFeatureDimensionIndex(this TensorShape shape)
+    {
+        for (int dimIndex = TensorShape.DataFeature3; dimIndex < TensorShape.MaxRank; ++dimIndex)
+        {
+            if (shape[dimIndex] > 1)
+                return dimIndex;
+        }
+
+        return TensorShape.MaxRank;
+    }
+
+    static internal bool Is8DAxisConvertibleTo4D(int axis)
     {
         Assert.IsTrue(axis > -4);
         Assert.IsTrue(axis < TensorShape.MaxRank);
@@ -701,20 +724,20 @@ public static class TensorExtensions
     /// </summary>
     /// <param name="tensors">tensors</param>
     /// <returns>`true` if all tensors are 4D (or less)</returns>
-    static public bool AreAllTensorsConvertibleToNCHW(Tensor[] tensors)
+    static public bool AreAllTensorsConvertibleTo4D(Tensor[] tensors)
     {
         for (int i = 0; i < tensors.Length; ++i)
         {
-            if (!tensors[i].shape.IsNHWC())
+            if (!tensors[i].shape.Is4D())
                 return false;
         }
 
         return true;
     }
 
-    static internal int Convert8DAxisToNHWC(int axis)
+    static internal int Convert8DAxisTo4D(int axis)
     {
-        Assert.IsTrue(Is8DAxisConvertibleToNHWC(axis));
+        Assert.IsTrue(Is8DAxisConvertibleTo4D(axis));
         if (axis < 0) //backward indexing
         {
             return axis;
@@ -731,12 +754,12 @@ public static class TensorExtensions
     /// <param name="shape">shape</param>
     /// <param name="parameters">shape as int array</param>
     /// <returns>int array representing 4D shape</returns>
-    static public int[] GetNHWCParametersFrom8DParameterAndShape(TensorShape shape, int[] parameters)
+    static public int[] Get4DParametersFrom8DParameterAndShape(this TensorShape shape, int[] parameters)
     {
         if (parameters.Length == 4)
             return parameters;
 
-        Assert.IsTrue(shape.IsNHWC(), $"Parameters {parameters} can't be converted to NCHW with a tensor of shape {shape} as it contains other dimensions.");
+        Assert.IsTrue(shape.Is4D(), $"Parameters {parameters} can't be converted to NCHW with a tensor of shape {shape} as it contains other dimensions.");
         Assert.AreEqual(parameters.Length, TensorShape.MaxRank);
         return new int[] {parameters[TensorShape.DataBatch], parameters[TensorShape.H], parameters[TensorShape.W], parameters[TensorShape.C] };
     }
@@ -748,13 +771,13 @@ public static class TensorExtensions
     /// <param name="parameters">shape as int array</param>
     /// <param name="defaultValue">default value for new axes</param>
     /// <returns>int array representing 8D shape</returns>
-    static public int[] Get8DParametersFromNHWCParametersAndShape(TensorShape shape, int[] parameters, int defaultValue)
+    static public int[] Get8DParametersFrom4DParametersAndShape(this TensorShape shape, int[] parameters, int defaultValue)
     {
         if (parameters.Length == TensorShape.MaxRank)
             return parameters;
 
         Assert.AreEqual(4, parameters.Length);
-        Assert.IsTrue(shape.IsNHWC(), $"4D NCHW Parameters {parameters} can't be used with a tensor of shape {shape} as it contains other dimensions, please use 8D parameters for this shape.");
+        Assert.IsTrue(shape.Is4D(), $"4D Parameters {parameters} can't be used with a tensor of shape {shape} as it contains other dimensions, please use 8D parameters for this shape.");
         return new int[] {defaultValue, defaultValue, parameters[0], defaultValue, defaultValue, parameters[1], parameters[2], parameters[3] };
     }
 
@@ -764,26 +787,40 @@ public static class TensorExtensions
     /// <param name="shape">shape</param>
     /// <param name="permutations">permutations</param>
     /// <returns>8D permutations</returns>
-    static public int[] Get8DPermutationsForNHWCPermutationsAndShape(TensorShape shape, int[] permutations)
+    static public int[] Get8DPermutationsForNHWCPermutationsAndShape(this TensorShape shape, int[] permutations)
     {
         if (permutations.Length == TensorShape.MaxRank)
             return permutations;
 
         Assert.AreEqual(4, permutations.Length);
-        Assert.IsTrue( shape.IsNHWC(), $"4D NCHW Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
-        int batchOldAxis = NHWCTo8DAxis(permutations[0]);
-        int heighOldAxis = NHWCTo8DAxis(permutations[1]);
-        int widthOldIndex = NHWCTo8DAxis(permutations[2]);
-        int channeOldIndex = NHWCTo8DAxis(permutations[3]);
+        Assert.IsTrue( shape.Is4D(), $"4D Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        int batchOldAxis = Convert4DTo8DAxis(permutations[0]);
+        int heighOldAxis = Convert4DTo8DAxis(permutations[1]);
+        int widthOldIndex = Convert4DTo8DAxis(permutations[2]);
+        int channeOldIndex = Convert4DTo8DAxis(permutations[3]);
         return new int[] {0, 1, batchOldAxis, 3, 4, heighOldAxis, widthOldIndex, channeOldIndex };
+    }
+
+    static internal int[] Get8DPermutationsForNCHWPermutationsAndShape(this TensorShape shape, int[] permutations)
+    {
+        if (permutations.Length == TensorShape.MaxRank)
+            return permutations;
+
+        Assert.AreEqual(4, permutations.Length);
+        Assert.IsTrue( shape.Is4D(), $"4D Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        int batchOldAxis = Convert4DTo8DAxis(permutations[0]);
+        int channelOldIndex = Convert4DTo8DAxis(permutations[1]);
+        int heightOldIndex = Convert4DTo8DAxis(permutations[2]);
+        int widthOldIndex = Convert4DTo8DAxis(permutations[3]);
+        return new int[] {0, 1, batchOldAxis, 3, 4, channelOldIndex, heightOldIndex, widthOldIndex };
     }
 
     // TODO: implement negative strides
     static internal TensorShape ApplyStridedSlice(this TensorShape shape, int[] starts, int[] ends, int[] stride)
     {
-        starts = Get8DParametersFromNHWCParametersAndShape(shape, starts, 0);
-        ends = Get8DParametersFromNHWCParametersAndShape(shape, ends, 1);
-        stride = Get8DParametersFromNHWCParametersAndShape(shape, stride, 1);
+        starts = Get8DParametersFrom4DParametersAndShape(shape, starts, 0);
+        ends = Get8DParametersFrom4DParametersAndShape(shape, ends, 1);
+        stride = Get8DParametersFrom4DParametersAndShape(shape, stride, 1);
 
         TensorShape counts = shape;
         TensorShape sliced = shape;
@@ -815,6 +852,22 @@ public static class TensorExtensions
         return sliced;
     }
 
+
+    /// <summary>
+    /// Calculate shape after applying permutations
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="permutations">permutations</param>
+    /// <returns>new shape</returns>
+    static public int[] Permute(int[] shape, int[] permutations)
+    {
+        Assert.AreEqual(shape.Length, permutations.Length);
+        var output = new int[shape.Length];
+        for (var i = 0; i < permutations.Length; ++i)
+            output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+        return output;
+    }
+
     /// <summary>
     /// Calculate TensorShape after applying permutations
     /// </summary>
@@ -823,6 +876,7 @@ public static class TensorExtensions
     /// <returns>new TensorShape</returns>
     static public TensorShape Permute(this TensorShape shape, int[] permutations)
     {
+        if (permutations.Length == 4)
         permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
 
         var output = new TensorShape();

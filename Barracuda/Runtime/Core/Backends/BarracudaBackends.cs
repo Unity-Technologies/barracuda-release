@@ -20,6 +20,16 @@ public interface IOps
     Tensor MatMul(Tensor x, bool xTranspose, Tensor y, bool yTranspose);// @TODO: consider MatMulAdd instead
 
     /// <summary>
+    /// Multidimensional Matrix multiplication o = `x` ⨯ `y`
+    /// </summary>
+    /// <param name="x">left Tensor</param>
+    /// <param name="rankX">rank of `x`</param>
+    /// <param name="y">right Tensor</param>
+    /// <param name="rankY">rank of `y`</param>
+    /// <returns>output Tensor</returns>
+    Tensor MatMul(Tensor x, int rankX, Tensor y, int rankY);
+
+    /// <summary>
     /// Dense layer (matrix multiplication) o = `x` ⨯ `w` + `b`
     /// </summary>
     /// <param name="x">x argument</param>
@@ -40,6 +50,18 @@ public interface IOps
     /// <param name="fusedActivation">fused activation type</param>
     /// <returns>output Tensor</returns>
     Tensor Conv2D(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, Layer.FusedActivation fusedActivation);
+
+    /// <summary>
+    /// 3D convolution
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="k">kernel</param>
+    /// <param name="b">bias</param>
+    /// <param name="stride">stride</param>
+    /// <param name="pad">padding</param>
+    /// <param name="fusedActivation">fused activation type</param>
+    /// <returns>output Tensor</returns>
+    Tensor Conv3D(Tensor x, Tensor k, Tensor b, int[] stride, int[] pad, Layer.FusedActivation fusedActivation);
 
     /// <summary>
     /// Depthwise 2D convolution
@@ -74,6 +96,15 @@ public interface IOps
     /// <param name="bilinear">bilinear flag</param>
     /// <returns>output Tensor</returns>
     Tensor Upsample2D(Tensor x, int[] scale, bool bilinear);
+
+    /// <summary>
+    /// Upsample 3D
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="scale">scale</param>
+    /// <param name="trilinear">trilinear flag</param>
+    /// <returns>output Tensor</returns>
+    Tensor Upsample3D(Tensor x, int[] scale, bool trilinear);
 
     /// <summary>
     /// Resample 2D
@@ -150,6 +181,15 @@ public interface IOps
     /// <param name="borderValue">border value</param>
     /// <returns>output Tensor</returns>
     Tensor Border2D(Tensor x, int[] pad, float borderValue);
+
+    /// <summary>
+    /// 3D border padding
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="pad">padding</param>
+    /// <param name="borderValue">border value</param>
+    /// <returns>output Tensor</returns>
+    Tensor Border3D(Tensor x, int[] pad, float borderValue);
 
     /// <summary>
     /// Reflection padding
@@ -310,6 +350,13 @@ public interface IOps
     /// <param name="x">input</param>
     /// <returns>output Tensor</returns>
     Tensor Tanh(Tensor x);
+
+    /// <summary>
+    /// Softplus
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <returns>output Tensor</returns>
+    Tensor Softplus(Tensor x);
 
     /// <summary>
     /// Sigmoid

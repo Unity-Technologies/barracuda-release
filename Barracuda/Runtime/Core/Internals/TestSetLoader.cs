@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 
 using UnityEngine;
+using UnityEngine.Assertions;
+using System.IO.Compression;
+
 
 namespace Unity.Barracuda {
 
@@ -133,16 +136,20 @@ public class TestSet
     /// Get input shape
     /// </summary>
     /// <param name="idx">input tensor index</param>
-    /// <returns>input shape as int array</returns>
-    public int[] GetInputShape(int idx = 0)
+    /// <returns>input shape</returns>
+    public TensorShape GetInputShape(int idx = 0)
     {
         if (rawTestSet != null)
-            return new int[4] {1, 1, 1, rawTestSet.input.Length};
+            return new TensorShape(1,rawTestSet.input.Length);
 
-        return new int[4] {Math.Max(jsonTestSet.inputs[idx].shape.batch,   1),
-                           Math.Max(jsonTestSet.inputs[idx].shape.height,  1),
-                           Math.Max(jsonTestSet.inputs[idx].shape.width,   1),
-                           Math.Max(jsonTestSet.inputs[idx].shape.channels,1)};
+        return new TensorShape(jsonTestSet.inputs[idx].shape.sequenceLength,
+                               jsonTestSet.inputs[idx].shape.numberOfDirections,
+                               jsonTestSet.inputs[idx].shape.batch,
+                               jsonTestSet.inputs[idx].shape.extraDimension,
+                               jsonTestSet.inputs[idx].shape.depth,
+                               jsonTestSet.inputs[idx].shape.height,
+                               jsonTestSet.inputs[idx].shape.width,
+                               jsonTestSet.inputs[idx].shape.channels);
     }
 
     /// <summary>
@@ -150,15 +157,19 @@ public class TestSet
     /// </summary>
     /// <param name="idx">output tensor index</param>
     /// <returns>tensor shape</returns>
-    public int[] GetOutputShape(int idx = 0)
+    public TensorShape GetOutputShape(int idx = 0)
     {
         if (rawTestSet != null)
-            return new int[4] {1, 1, 1, rawTestSet.labels.Length};
+            return new TensorShape(1,rawTestSet.labels.Length);
 
-        return new int[4] {Math.Max(jsonTestSet.outputs[idx].shape.batch,   1),
-                           Math.Max(jsonTestSet.outputs[idx].shape.height,  1),
-                           Math.Max(jsonTestSet.outputs[idx].shape.width,   1),
-                           Math.Max(jsonTestSet.outputs[idx].shape.channels,1)};
+        return new TensorShape(jsonTestSet.outputs[idx].shape.sequenceLength,
+            jsonTestSet.outputs[idx].shape.numberOfDirections,
+            jsonTestSet.outputs[idx].shape.batch,
+            jsonTestSet.outputs[idx].shape.extraDimension,
+            jsonTestSet.outputs[idx].shape.depth,
+            jsonTestSet.outputs[idx].shape.height,
+            jsonTestSet.outputs[idx].shape.width,
+            jsonTestSet.outputs[idx].shape.channels);
     }
 
     /// <summary>
@@ -218,16 +229,19 @@ public class TestSet
         if (rawTestSet != null)
             throw new Exception("GetInputAsTensor is not supported for RAW test suites");
 
-        var shape = GetInputShape(idx);
+        TensorShape shape = GetInputShape(idx);
+        Assert.IsTrue(shape.sequenceLength==1 && shape.numberOfDirections==1);
         var array = GetInputData(idx);
-        var maxBatchCount = array.Length / (shape[1] * shape[2] * shape[3]);
+        var maxBatchCount = array.Length / shape.flatWidth;
 
         fromBatch = Math.Min(fromBatch, maxBatchCount - 1);
         if (batchCount < 0)
             batchCount = maxBatchCount - fromBatch;
 
         // pad data with 0s, if test-set doesn't have enough batches
-        var tensorShape = new TensorShape(batchCount, shape[1], shape[2], shape[3]);
+        var shapeArray = shape.ToArray();
+        shapeArray[TensorShape.DataBatch] = batchCount;
+        var tensorShape = new TensorShape(shapeArray);
         var managedBufferStartIndex = fromBatch * tensorShape.flatWidth;
         var count = Math.Min(batchCount, maxBatchCount - fromBatch) * tensorShape.flatWidth;
         float[] dataToUpload = new float[tensorShape.length];
@@ -256,17 +270,21 @@ public class TestSet
         if (rawTestSet != null)
             throw new Exception("GetOutputAsTensor is not supported for RAW test suites");
 
-        var shape = GetOutputShape(idx);
+        TensorShape shape = GetOutputShape(idx);
+        Assert.IsTrue(shape.sequenceLength==1 && shape.numberOfDirections==1);
         var array = GetOutputData(idx);
-        var maxBatchCount = array.Length / (shape[1] * shape[2] * shape[3]);
+        var maxBatchCount = array.Length / shape.flatWidth;
 
         fromBatch = Math.Min(fromBatch, maxBatchCount - 1);
         if (batchCount < 0)
             batchCount = maxBatchCount - fromBatch;
         batchCount = Math.Min(batchCount, maxBatchCount - fromBatch);
 
-        var res = new Tensor(batchCount, shape[1], shape[2], shape[3],
-            new SharedArrayTensorData(array, fromBatch * shape[1] * shape[2] * shape[3]));
+        var shapeArray = shape.ToArray();
+        shapeArray[TensorShape.DataBatch] = batchCount;
+        var tensorShape = new TensorShape(shapeArray);
+
+        var res = new Tensor(tensorShape, new SharedArrayTensorData(array, fromBatch * tensorShape.flatWidth));
         res.name = GetOutputName(idx);
         res.name = res.name.EndsWith(":0") ? res.name.Remove(res.name.Length - 2) : res.name;
 
@@ -314,9 +332,29 @@ public class JSONTestSet
 public class JSONTensorShape
 {
     /// <summary>
+    /// Sequence length
+    /// </summary>
+    public int sequenceLength;
+
+    /// <summary>
+    /// Number of directions
+    /// </summary>
+    public int numberOfDirections;
+
+    /// <summary>
     /// Batch
     /// </summary>
     public int batch;
+
+    /// <summary>
+    /// Extra dimension
+    /// </summary>
+    public int extraDimension;
+
+    /// <summary>
+    /// Depth
+    /// </summary>
+    public int depth;
 
     /// <summary>
     /// Height
@@ -375,8 +413,36 @@ public class TestSetLoader
     {
         if (filename.ToLower().EndsWith(".raw"))
             return LoadRaw(filename);
+        else if (filename.ToLower().EndsWith(".gz"))
+            return LoadGZ(filename);
 
         return LoadJSON(filename);
+    }
+
+    /// <summary>
+    /// Load GZ
+    /// </summary>
+    /// <param name="filename">file name</param>
+    /// <returns>`TestSet`</returns>
+    public static TestSet LoadGZ(string filename)
+    {
+        var jsonFileName = filename.Substring(0, filename.Length - 3);
+        var sourceArchiveFileName = Path.Combine(Application.streamingAssetsPath, "TestSet", filename);
+        var destinationDirectoryName = sourceArchiveFileName.Substring(0, sourceArchiveFileName.Length - 3);
+
+        FileInfo fileToDecompress = new FileInfo(sourceArchiveFileName);
+        using (FileStream originalFileStream = fileToDecompress.OpenRead())
+        {
+            using (FileStream decompressedFileStream = File.Create(destinationDirectoryName))
+            {
+                using (GZipStream decompressionStream = new GZipStream(originalFileStream, CompressionMode.Decompress))
+                {
+                    decompressionStream.CopyTo(decompressedFileStream);
+                }
+            }
+        }
+
+        return LoadJSON(jsonFileName);
     }
 
     /// <summary>

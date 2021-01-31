@@ -59,21 +59,22 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.MatMul(Tensor X, int rankX, Tensor Y, int rankY)
+    {
+        var O = m_Ops.MatMul(X, rankX, Y, rankY);
+
+        m_Alu += (long)X.height * (long)X.width * (long)Y.width * 2L * (long)X.batch * (long)X.channels;
+        m_Mem += (long)X.length + (long)Y.length + (long)O.length;
+
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
-        var isStackOfMatrices = (X.dimensions != 2) || (Y.dimensions != 2);
-
         var O = m_Ops.MatMul(X, xTranspose, Y, yTranspose);
-        if (isStackOfMatrices)
-        {
-            m_Alu += (long)X.height * (long)X.width * (long)Y.width * 2L * (long)X.batch * (long)X.channels;
-            m_Mem += (long)X.length + (long)Y.length + (long)O.length;
-        }
-        else
-        {
-            m_Alu += (long)X.flatHeight * (long)X.flatWidth * (long)Y.flatWidth * 2L;
-            m_Mem += (long)X.length + (long)Y.length + (long)O.length;
-        }
+        m_Alu += (long)X.flatHeight * (long)X.flatWidth * (long)Y.flatWidth * 2L;
+        m_Mem += (long)X.length + (long)Y.length + (long)O.length;
         return O;
     }
 
@@ -93,6 +94,18 @@ public class StatsOps : IOps, IModelCompiler
         long m = (long)O.batch * (long)O.width * (long)O.height;
         long n = (long)X.channels;
         long k = (long)K.kernelWidth * (long)K.kernelHeight * (long)K.channels;
+        m_Alu += m * n * k * 2L;
+        m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Conv3D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
+    {
+        var O = m_Ops.Conv3D(X, K, B, stride, pad, fusedActivation);
+        long m = (long)O.batch * (long)O.width * (long)O.height * O.depth;
+        long n = (long)X.channels;
+        long k = (long)K.kernelSpatialDepth * K.kernelWidth * (long)K.kernelHeight * (long)K.channels;
         m_Alu += m * n * k * 2L;
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
         return O;
@@ -128,6 +141,15 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.Upsample2D(X, scale, bilinear);
         m_Alu += (long)O.length * (bilinear ? 8 : 1);
         m_Mem += (long)X.length * (bilinear ? 4 : 1) + (long)O.length;
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Upsample3D(Tensor X, int[] scale, bool trilinear)
+    {
+        var O = m_Ops.Upsample3D(X, scale, trilinear);
+        m_Alu += (long)O.length * (trilinear ? 18 : 1);
+        m_Mem += (long)X.length * (trilinear ? 8 : 1) + (long)O.length;
         return O;
     }
 
@@ -196,11 +218,18 @@ public class StatsOps : IOps, IModelCompiler
         m_Mem += (long)X.length + (long)O.length;
         return O;
     }
-
     /// <inheritdoc/>
     Tensor IOps.Border2D(Tensor X, int[] pad, float value)
     {
         var O = m_Ops.Border2D(X, pad, value);
+        m_Mem += (long)X.length + (long)O.length;
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Border3D(Tensor X, int[] pad, float value)
+    {
+        var O = m_Ops.Border3D(X, pad, value);
         m_Mem += (long)X.length + (long)O.length;
         return O;
     }
@@ -345,6 +374,13 @@ public class StatsOps : IOps, IModelCompiler
     {
         Elementwise(X, Transcendental.Trigonometric);
         return m_Ops.Tanh(X);
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Softplus(Tensor X)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        return m_Ops.Softplus(X);
     }
 
     /// <inheritdoc/>

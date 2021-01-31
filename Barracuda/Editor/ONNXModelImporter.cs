@@ -1,7 +1,4 @@
-using Google.Protobuf;
-using Onnx;
 using UnityEngine;
-using UnityEngine.Profiling;
 using UnityEditor;
 #if UNITY_2020_2_OR_NEWER
 using UnityEditor.AssetImporters;
@@ -11,12 +8,11 @@ using UnityEditor.Experimental.AssetImporters;
 #endif
 using System;
 using System.IO;
-using System.Linq;
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Unity.Barracuda.ONNX;
 
 [assembly: InternalsVisibleToAttribute("Barracuda.EditorTests")]
+[assembly: InternalsVisibleToAttribute("Unity.Barracuda.Tests")]
 
 namespace Unity.Barracuda
 {
@@ -24,7 +20,7 @@ namespace Unity.Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(17, new[] { "onnx" })]
+    [ScriptedImporter(27, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
@@ -43,6 +39,9 @@ namespace Unity.Barracuda
         /// </summary>
         public bool treatErrorsAsWarnings = false;
 
+        [SerializeField, HideInInspector]
+        internal ONNXModelConverter.ImportMode importMode = ONNXModelConverter.ImportMode.Standard;
+
         internal const string iconName = "ONNXModelIcon";
 
 
@@ -54,7 +53,7 @@ namespace Unity.Barracuda
         /// <param name="ctx">Asset import context</param>
         public override void OnImportAsset(AssetImportContext ctx)
         {
-            var converter = new ONNXModelConverter(optimizeModel);
+            var converter = new ONNXModelConverter(optimizeModel, treatErrorsAsWarnings, forceArbitraryBatchSize, importMode);
 
             var model = converter.Convert(ctx.assetPath);
 
@@ -91,10 +90,5 @@ namespace Unity.Barracuda
             }
             return m_IconTexture;
         }
-
-
-
     }
-
-
 }

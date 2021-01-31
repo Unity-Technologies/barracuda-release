@@ -41,6 +41,13 @@ internal class StaticLayerOppComplexity
             long k = (long)K.kernelWidth * (long)K.kernelHeight * (long)K.channels;
             return n * k * 2L;
         });
+        Add((Layer.Type.Conv3D), (l) =>
+        {
+            var K = l.datasets[0].shape;
+            long n = (long)K.kernelDepth;
+            long k = (long)K.kernelSpatialDepth * K.kernelWidth * (long)K.kernelHeight * (long)K.channels;
+            return n * k * 2L;
+        });
         Add((Layer.Type.DepthwiseConv2D), (l) =>
         {
             var K = l.datasets[0].shape;

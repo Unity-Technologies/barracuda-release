@@ -90,15 +90,17 @@ namespace Unity.Barracuda.ONNX
                     case 1:
                         return new int[] { _, _, _, _, _, _, _, 0}; // assume    C
                 }
-            else if (onnxLayout == "MCHW" || onnxLayout == "KCHW") // -> __H__WCK
+            else if (onnxLayout == "MCDHW" || onnxLayout == "MCHW" || onnxLayout == "KCHW") // -> __H__WCK
                 switch (onnxRank)
                 {
+                    case 5:
+                        return new int[] { _, 2, 3, _, _, 4, 1, 0};
                     case 4:
                         return new int[] { _, _, 2, _, _, 3, 1, 0};
                     case 3:
                         return new int[] { _, _, _, _, _, 2, 1, 0};
                     default:
-                        throw new OnnxLayerImportException($"MCHW layout requires kernel weight tensor of rank 3 or higher, but got {onnxRank}");
+                        throw new OnnxLayerImportException($"MCDHW layout requires kernel weight tensor of rank 3 or higher, but got {onnxRank}");
                 }
             else if (onnxLayout == "CMHW" || onnxLayout == "CKHW") // -> __H__WCK
                 switch (onnxRank)
@@ -156,7 +158,22 @@ namespace Unity.Barracuda.ONNX
                     default:
                         throw new OnnxLayerImportException($"C layout requires tensor of rank 1, but got {onnxRank}");
                 }
-
+            else if (onnxLayout == "ONNX") // Keep ONNX format
+                switch (onnxRank)
+                {
+                    case 6:
+                        return new int[] { _, _, 0, 1, 2, 3, 4, 5};
+                    case 5:
+                        return new int[] { _, _, 0, _, 1, 2, 3, 4};
+                    case 4:
+                        return new int[] { _, _, 0, _, _, 1, 2, 3};
+                    case 3:
+                        return new int[] { _, _, 0, _, _, 1, 2, _};
+                    case 2:
+                        return new int[] { _, _, 0, _, _, 1, _, _};
+                    case 1:
+                        return new int[] { _, _, 0, _, _, _, _, _};
+                }
             else if (onnxLayout == "?")
                 switch (onnxRank)
                 {
@@ -296,7 +313,7 @@ namespace Unity.Barracuda.ONNX
         {
             // TODO: use dimension denotation from TensorShapeProto to figure, if this particular tensor has specific data layout
             // https://github.com/onnx/onnx/blob/master/docs/DimensionDenotation.md
-            var onnxShape = shape.Dim.Select(v => v.DimValue < int.MinValue ? int.MinValue : v.DimValue > int.MaxValue ? int.MaxValue : (int)v.DimValue).ToArray();
+            var onnxShape = shape.AsInts();
             return ConvertSymbolicShapeToBarracuda(onnxShape, onnxLayout);
         }
 

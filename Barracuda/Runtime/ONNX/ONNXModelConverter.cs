@@ -2,11 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Google.Protobuf;
 using Onnx;
+using Unity.Barracuda.Compiler.Passes;
 using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.Profiling;
+
+[assembly: InternalsVisibleTo("Unity.Barracuda.Tests")]
 
 namespace Unity.Barracuda.ONNX
 {
@@ -15,15 +19,27 @@ namespace Unity.Barracuda.ONNX
     /// </summary>
     public class ONNXModelConverter
     {
+        [Flags]
+        internal enum ImportMode
+        {
+            Legacy         = 0, // No flags == legacy
+            Standard       = 1 << 0,
+
+            // Additional options
+            KeepAsNCHW     = 1 << 16,
+        }
+
         // Configuration
-        private bool treatErrorsAsWarnings;
-        private bool optimizeModel = true;
+        bool m_TreatErrorsAsWarnings;
+        bool m_OptimizeModel = true;
+        bool m_ForceArbitraryBatchSize;
+        ImportMode m_ImportMode;
 
         // TF2ONNX known issue: (as of 1.5.4)
         // - Conv are framed with Transposes as long as the NCHW flag is not set
         //      (note this seems that it's going to be fixed https://github.com/onnx/tensorflow-onnx/pull/796)
         // - Tensorflow appends :0 to all node names
-        bool fixTF2ONNXExportIssues = false;
+        bool m_FixTf2OnnxExportIssues;
 
         private readonly Dictionary<string, ONNXTensor> m_OverrideGlobalInputs = new Dictionary<string, ONNXTensor>()
         {
@@ -81,17 +97,31 @@ namespace Unity.Barracuda.ONNX
         internal Model Convert(CodedInputStream inputStream)
         {
             var onnxModel = new ModelProto();
-
             onnxModel.MergeFrom(inputStream);
 
-            fixTF2ONNXExportIssues = (onnxModel.ProducerName == "tf2onnx");
+            m_FixTf2OnnxExportIssues = (onnxModel.ProducerName == "tf2onnx");
 
-            return ConvertOnnxModel(onnxModel);
+            var model = ConvertOnnxModel(onnxModel);
+            if (m_ImportMode.HasFlag(ImportMode.Standard))
+            {
+                var preserveLayersPass = new PreserveLayersPass();
+                preserveLayersPass.Run(ref model);
+
+                if (m_ImportMode.HasFlag(ImportMode.KeepAsNCHW))
+                {
+                    // Since our model is non-runnable due to NHWC-native ops this pass is always required
+                    var runnableNCHWPass = new IntermediateToRunnableNCHWPass();
+                    runnableNCHWPass.Run(ref model);
+                }
+                else
+                {
+                    var runnableNHWCPass = new IntermediateToRunnableNHWCPass();
+                    runnableNHWCPass.Run(ref model);
+                }
+            }
+
+            return model;
         }
-
-
-        // ONNX parser declaration
-        // Add operator handlers here
 
         /// <summary>
         /// Constructs ONNX model converter
@@ -99,16 +129,851 @@ namespace Unity.Barracuda.ONNX
         /// <param name="optimizeModel">Enable/disable various model optimizations while importing model from ONNX format.</param>
         /// <param name="treatErrorsAsWarnings">Treat import errors as warnings.</param>
         /// <param name="forceArbitraryBatchSize">Repair model input batch size. Sometimes needed for ONNX models coming from PyTorch.</param>
-        public ONNXModelConverter(bool optimizeModel, bool treatErrorsAsWarnings = false,
-                                        bool forceArbitraryBatchSize = true)
+        public ONNXModelConverter(bool optimizeModel, bool treatErrorsAsWarnings = false, bool forceArbitraryBatchSize = true)
+            : this(optimizeModel, treatErrorsAsWarnings, forceArbitraryBatchSize, ImportMode.Standard)
         {
-            this.optimizeModel = optimizeModel;
-            this.treatErrorsAsWarnings = treatErrorsAsWarnings;
+        }
+
+        // Internal constructor to allow setting import mode
+        internal ONNXModelConverter(bool optimizeModel, bool treatErrorsAsWarnings, bool forceArbitraryBatchSize, ImportMode importMode)
+        {
+            m_OptimizeModel = optimizeModel;
+            m_TreatErrorsAsWarnings = treatErrorsAsWarnings;
+            m_ForceArbitraryBatchSize = forceArbitraryBatchSize;
+            m_ImportMode = importMode;
+
+            if (m_ImportMode.HasFlag(ImportMode.Standard))
+                UseStandardImporter();
+            else
+                UseLegacyImporter();
+        }
+
+        void UseStandardImporter()
+        {
+            m_NodeImporters.Clear();
+
+            var defaultZeroTensor = new ONNXTensor(new Tensor(1, 1, new[] { 0f }), new[] { 1 });
+
+            Add("Constant", (net, node) => {
+                node.UnsupportedAttribute("sparse_value");
+                Const(node, node.ValueAsTensor);
+            });
+            Add("ConstantOfShape", (net, node) => {
+                UnityEngine.Debug.Assert(node.InputCount > 0);
+
+                ONNXTensor valueTensor = node.GetOptionalTensor("value", defaultZeroTensor);
+                var value = valueTensor.ToBarracuda("ONNX").AsFloats()[0];
+
+                if (node.IsInput0Const)
+                {
+                    var onnxShape = node.Input0Constant("ONNX").AsInts();
+                    onnxShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "ONNX");
+                    var tensor = new Tensor(onnxShape);
+                    tensor.Fill(value);
+                    net.Const(node.Name, tensor);
+                }
+                else
+                {
+                    net.ConstantOfShape(node.Name, node.Input0, value);
+                }
+            });
+            Add("Reshape", (net, node)  => {
+                int[] onnxShape;
+
+                if (node.InputCount == 1)
+                {
+                    onnxShape = node.Shape;
+                    if (node.IsInput0Const)
+                    {
+                        // reshape constant source tensor and store it as the new constant
+                        var reshapedTensor = constantTensors[node.Input0].Reshape(onnxShape);
+                        Const(node, reshapedTensor);
+                    }
+                    else
+                    {
+                        net.Reshape(node.Name, node.Input0, onnxShape);
+                        Output(node, rank:onnxShape.Length);
+                    }
+                }
+                else
+                {
+                    if (node.IsInput1Const)
+                    {
+                        onnxShape = node.Input1Constant(onnxLayout: "ONNX", name: "shape").AsInts();
+                        if (node.IsInput0Const)
+                        {
+                            // reshape constant source tensor and store it as the new constant
+                            var reshapedTensor = constantTensors[node.Input0].Reshape(onnxShape);
+                            Const(node, reshapedTensor);
+                        }
+                        else
+                        {
+                            net.Reshape(node.Name, node.Input0, onnxShape);
+                            Output(node, rank:onnxShape.Length);
+                        }
+                    }
+                    else
+                    {
+                        net.Reshape(node.Name, node.Input0, node.Input1);
+                    }
+                }
+            });
+            Add("Expand", (net, node) => {
+                if (node.IsInput1Const)
+                {
+                    var onnxShape = node.Input1Constant(onnxLayout: "ONNX", name: "shape").AsInts();
+                    var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "ONNX");
+                    bool containsNoVariableDimensions = !symbolicShape.Any(v => v == -1);
+                    if (containsNoVariableDimensions && m_ForceArbitraryBatchSize)
+                        symbolicShape[TensorShape.DataBatch] = -1; // force arbitrary batch size
+
+                    net.Expand(node.Name, node.Input0, symbolicShape);
+                    Output(node, rank: symbolicShape.Length);
+                }
+                else
+                {
+                    net.Expand(node.Name, node.Input0, node.Input1);
+                }
+            });
+            Add("Shape", (net, node)    =>
+            {
+                float[] shapeValuesAsFloats;
+                if (node.IsInput0Const)
+                {
+                    shapeValuesAsFloats = constantTensors[node.Input0].shape.Select(x => (float)x).ToArray();
+                }
+                else
+                {
+                    net.Shape(node.Name, node.Input0);
+                }
+            });
+            Add("Unsqueeze", (net, node) => {
+                if (node.IsInput0Const)
+                {
+                    var unsqueezed = constantTensors[node.Input0].Unsqueeze(node.Axes);
+                    Const(node, unsqueezed);
+                }
+                else
+                {
+                    var features = node.Input0Features;
+                    var inputRank = node.Input0Rank;
+                    var outputRank = inputRank + 1;
+                    Output(node.Name, features: features, rank: outputRank);
+                    net.Unsqueeze(node.Name, node.Input0, node.Axes);
+                }
+            });
+            Add("Squeeze", (net, node) => {
+                if (node.IsInput0Const)
+                {
+                    var squeezed = constantTensors[node.Input0].Squeeze(node.Axes);
+                    Const(node, squeezed);
+                }
+                else
+                {
+                    var features = node.Input0Features;
+                    var inputRank = node.Input0Rank;
+                    var outputRank = inputRank - 1;
+                    Output(node.Name, features: features, rank: outputRank);
+                    net.Squeeze(node.Name, node.Input0, node.Axes);
+                }
+            });
+            Add("Tile", (net, node) =>
+            {
+                // only 4D Tile support for now
+                net.Tile(node.Name, node.Input0, node.Input1);
+            });
+            Add("Flatten", (net, node)  => {
+                node.UnsupportedAttribute("axis", 1); // TODO we can support it, insert transposes or if dimensions are ok, == reshape
+                net.Flatten(node.Name, node.Input0);
+                Output(node, rank:2);
+            });
+            Add("Concat", (net, node) => {
+                int axis = node.AxisOptional(0);
+
+                if (node.Inputs.Length == 1)
+                    net.Identity(node.Name, node.Input0);
+                else
+                {
+                    net.Concat(node.Name, node.Inputs, axis, true);
+                }
+            });
+            Add("Split", (net, node) => {
+                int axis = node.AxisOptional(0);
+                int[] splits;
+                try
+                {
+                    splits = node.GetRequiredIntArray("split");
+                }
+                catch (OnnxLayerImportException)
+                {
+                    throw new OnnxLayerImportException($"Unsupported default attribute `split` for node {node.Name} of type Split. Value is required.");
+                }
+
+                Assert.IsTrue(splits.Length == node.Outputs.Length);
+                int currentSliceStartIndex = 0;
+
+                // Convert `Split` into multiple `StridedSlice` operations.
+                for (int i = 0; i < splits.Length; ++i)
+                {
+                    var starts = currentSliceStartIndex;
+                    var ends = starts + splits[i];
+                    var strides = 1;
+
+                    net.StridedSlice(node.Outputs[i], node.Input0, new[] { starts }, new[] { ends }, new[] { strides }, new[] { axis });
+                    currentSliceStartIndex += splits[i];
+                }
+            });
+            Add("Slice", (net, node) => {
+                int[] starts, ends, axes, steps;
+                if (node.InputCount > 1) // Slice-10
+                {
+                    var constStarts      = node.Input1Constant(onnxLayout: "ONNX", name:"starts");
+                    var constEnds        = node.Input2Constant(onnxLayout: "ONNX", name:"ends");
+                    var defaultAxes = new Tensor(constStarts.shape, Enumerable.Range(0, constStarts.length).Select(v => (float)v).ToArray());
+                    var constAxes        = node.Input3ConstantOptional(defaultAxes, onnxLayout:"ONNX", name:"axes");
+                    var constSteps       = node.Input4ConstantOptional(constStarts.shape, 1.0f, onnxLayout:"ONNX", name:"steps");
+
+                    starts  = constStarts.AsInts();
+                    ends    = constEnds.AsInts();
+                    axes    = constAxes.AsInts();
+                    steps   = constSteps.AsInts();
+                }
+                else // Slice-1
+                {
+                    starts      = node.Starts;
+                    ends        = node.Ends;
+                    axes        = node.AxesOptional(Enumerable.Range(0, starts.Length).ToArray());
+                    steps       = Enumerable.Repeat(1, starts.Length).ToArray();
+                }
+
+                net.StridedSlice(node.Name, node.Input0, starts: starts, ends: ends, strides: steps, axes: axes);
+            });
+            Add("Gather", (net, node) =>
+            {
+                int axis = node.AxisOptional(0);
+
+                if (node.IsInput0Const && node.IsInput1Const)
+                {
+                    var indices = node.Input1Constant(onnxLayout:"ONNX", name:"indices").AsInts();
+                    ONNXTensor gatheredTensor = constantTensors[node.Input0].Gather(axis, indices);
+                    Const(node, gatheredTensor);
+                }
+                else
+                {
+                    int input1Rank = node.Input1Rank;
+                    if (node.IsInput1Const)
+                    {
+                        bool isIndicesIntValue = !node.IsInput1Array("indices");
+
+                        // The original rank was cached above since our constant tensor requires a shape of rank 1 and original may have been a scalar
+                        var indices = node.Input1Constant(onnxLayout: "ONNX", name: "indices").AsFloats();
+                        var shape = isIndicesIntValue ? new int[] { } : new[] { indices.Length };
+                        var constTensor = new ONNXTensor(new Tensor(new [] { indices.Length, 1, 1, 1, 1, 1, 1, 1 }, indices), shape);
+                        Const(node.Input1, constTensor);
+                    }
+
+                    // for import conveintcy, gather with single int values and not int[] implemented with int[] followed by squeeze
+                    if (node.Input1Rank == 0)
+                    {
+                        var gatherLayer = net.Gather(node.Name + "_Squeezed", node.Input0, node.Input1, axis, true);
+                        net.Squeeze(node.Name, gatherLayer, new[] { axis });
+                    }
+                    else
+                    {
+                        net.Gather(node.Name, node.Input0, node.Input1, axis, true);
+                    }
+                    Output(node.Name, rank: input1Rank + node.Input0Rank - 1);
+                }
+            });
+            Add("NonMaxSuppression", (net, node) =>
+            {
+                int centerPointBox = node.GetOptionalInt("center_point_box", 0);
+
+                var boxes = node.GetRequiredInput(0);
+                var scores = node.GetRequiredInput(1);
+                object maxOutputBoxesPerClass = 0f;
+                object iouThreshold = 0f;
+                object scoreThreshold = 0f;
+
+                if (node.InputCount > 4 && node.IsInput2Const && node.IsInput3Const && node.IsInput4Const
+                    || node.InputCount > 3 && node.IsInput2Const && node.IsInput3Const
+                    || node.InputCount > 2 && node.IsInput2Const)
+                {
+                    // Use constant version (possibly with defaults)
+                    maxOutputBoxesPerClass = node.Input2ConstantOptional((float)maxOutputBoxesPerClass, "ONNX", nameof(maxOutputBoxesPerClass))[0];
+                    iouThreshold = node.Input3ConstantOptional((float)iouThreshold, "ONNX", nameof(iouThreshold))[0];
+                    scoreThreshold = node.Input4ConstantOptional((float)scoreThreshold, "ONNX", nameof(scoreThreshold))[0];
+                }
+                else
+                {
+                    // Use dynamic tensor version
+                    maxOutputBoxesPerClass = node.Input2Optional;
+                    iouThreshold = node.Input3Optional;
+                    scoreThreshold = node.Input4Optional;
+                }
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.NonMaxSuppression(node.Name, boxes, scores, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, centerPointBox);
+                Output(node, rank: 2);
+            });
+            Add("OneHot", (net, node) => {
+                node.UnsupportedAttribute("axis", -1);
+
+                var defaultOffOn = new Tensor(2, 0, new float[] {0, 1});
+
+                var depth = (int)node.Input1Constant(onnxLayout:"C", name:"depth")[0];
+                var offon = node.Input2ConstantOptional(defaultOffOn, onnxLayout:"C", name:"values");
+                net.OneHot(node.Name, node.Input0, depth, (int)offon[1], (int)offon[0]);
+                Output(node, features:depth, rank: node.Input0Rank + 1);
+            });
+            Add("TopK", (net, node) => {
+                int axis = node.AxisOptional(-1);
+
+                // TopK-11 introduced these options
+                bool largest = node.GetOptionalInt("largest", 1) == 1;
+                // If sorted = false, then the output is undefined
+                bool sorted = node.GetOptionalInt("sorted", 1) == 1;
+
+                string kName;
+                if (node.InputCount > 1) // TopK-10 introduced K as an input tensor
+                {
+                    kName = node.Input1;
+                }
+                else
+                {
+                    // TopK-1
+                    int k = node.GetRequiredInt("k");
+                    kName = "Const_TopK";
+                    var kTensor = new ONNXTensor(
+                        data:new Tensor(new[] { 1, 1, 1, 1 }, new[] { (float)k }, kName),
+                        onnxShape:new [] { 1 });
+
+                    Const(node, kTensor);
+                }
+
+                Layer indices = net.TopKIndices(node.Outputs[1], node.Input0, kName, axis, largest, sorted);
+                Output(node.Outputs[1], rank: node.Input0Rank);
+                net.TopKValues(node.Outputs[0], node.Input0, indices, axis);
+                Output(node.Outputs[0], rank: node.Input0Rank);
+            });
+            Add("NonZero", (net, node) => {
+
+                if (node.IsInput0Const)
+                {
+                    var nonZeroTensor = constantTensors[node.Input0].NonZero();
+                    Const(node, nonZeroTensor);
+                }
+                else
+                {
+                    net.NonZero(node.Name, node.Input0);
+                    Output(node.Outputs[0], rank: 2);
+                }
+            });
+            Add("LSTM", (net, node) =>
+            {
+                var W = node.Input1Constant(onnxLayout: "RKC", name: "W");
+                var R = node.Input2Constant(onnxLayout: "RKC", name: "R");
+                var B = node.Input3Constant(onnxLayout: "RC", name: "B");
+                int hiddenSize = node.GetRequiredInt("hidden_size");
+
+                // We're resolving the base input and output names ahead-of-time for later conversion
+                var baseLSTMName = ResolveLstmInputName(node);
+                var baseLSTMOutputName = ResolveLstmOutputName(node);
+
+                // 0-2 are real inputs, 3-4 are being stored here for convenience
+                string[] outputs = { node.Outputs[0], node.Outputs[1], node.Outputs[2], baseLSTMName, baseLSTMOutputName };
+                net.LSTM(node.Name, node.Input0, outputs, W, R, B, hiddenSize);
+
+                Output(node.Outputs[0], rank:2); // Actually rank 4, but needs to be 2 for how we handle this layer
+                Output(node.Outputs[1], rank:2); // Actually rank 3, but needs to be 2 for how we handle this layer
+                Output(node.Outputs[2], rank:2); // Actually rank 3, but needs to be 2 for how we handle this layer
+            });
+
+            // Activation ops
+            Add("Relu", (net, node)     => { net.Relu(node.Name, node.Input0); });
+            Add("Softmax", (net, node) =>
+            {
+                const int defaultAxis = 1;
+                int axis = node.AxisOptional(defaultAxis);
+                net.Softmax(node.Name, node.Input0, axis, axisIs8D: true); // keep axis as is
+            });
+            Add("Tanh", (net, node)     => { net.Tanh(node.Name, node.Input0); });
+            Add("Sqrt", (net, node)     => { net.Sqrt(node.Name, node.Input0); });
+            Add("Sigmoid", (net, node)  => { net.Sigmoid(node.Name, node.Input0); });
+            Add("Elu", (net, node)      => { net.Elu(node.Name, node.Input0, node.AlphaOptional(1f)); });
+            Add("LeakyRelu",(net, node) => { net.LeakyRelu(node.Name, node.Input0, node.AlphaOptional(0.01f)); });
+            Add("Selu", (net, node)     => { net.Selu(node.Name, node.Input0, node.AlphaOptional(1.67326f), node.GammaOptional(1.0507f)); });
+            Add("Swish", (net, node)    => { net.Swish(node.Name, node.Input0); });
+            Add("PRelu", (net, node)    => { net.PRelu(node.Name, node.Input0, node.Input1); });
+            Add("LogSoftmax", (net, node) =>
+            {
+                node.UnsupportedAttribute("axis", 1);
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.LogSoftmax(node.Name, node.Input0);
+            });
+            // TODO: Add("Hardmax", (net, node)      => { net.Hardmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
+            Add("Softplus", (net, node)     => { net.Softplus(node.Name, node.Input0); });
+            // TODO: Add("Softsign", (net, node)     => { net.Softsign(node.Name, node.Input0); });
+            // TODO: Add("HardSigmoid", (net, node)  => { net.HardSigmoid(node.Name, node.Input0, node.AlphaOptional(0.2f), node.BetaOptional(0.5f)); });
+            Add("Exp", (net, node)      => { net.Exp(node.Name, node.Input0); });
+            Add("Log", (net, node)      => { net.Log(node.Name, node.Input0); });
+            Add("Reciprocal", (net, node) => { net.Reciprocal(node.Name, node.Input0); });
+            Add("Abs", (net, node)      => { net.Abs(node.Name, node.Input0); });
+            Add("Neg", (net, node)      => { net.Neg(node.Name, node.Input0); });
+            Add("Ceil", (net, node)     => { net.Ceil(node.Name, node.Input0); });
+            Add("Floor", (net, node)    => { net.Floor(node.Name, node.Input0); });
+            Add("Round", (net, node)    => { net.Round(node.Name, node.Input0); });
+            Add("Clip", (net, node)     => {
+                float minValue = float.MinValue;
+                float maxValue = float.MaxValue;
+
+                if (node.InputCount > 1) // Clip-11
+                {
+                    minValue = node.Input1ConstantOptional(minValue, onnxLayout:"C", name:"min")[0];
+                    maxValue = node.Input2ConstantOptional(maxValue, onnxLayout:"C", name:"max")[0];
+                }
+                else
+                {
+                    minValue = node.MinOptional(minValue);
+                    maxValue = node.MaxOptional(maxValue);
+                }
+                net.Clip(node.Name, node.Input0, minValue, maxValue);
+            });
+            Add("Acos", (net, node) => { net.Acos(node.Name, node.Input0); });
+            Add("Acosh", (net, node) => { net.Acosh(node.Name, node.Input0); });
+            Add("Asin", (net, node) => { net.Asin(node.Name, node.Input0); });
+            Add("Asinh", (net, node) => { net.Asinh(node.Name, node.Input0); });
+            Add("Atan", (net, node) => { net.Atan(node.Name, node.Input0); });
+            Add("Atanh", (net, node) => { net.Atanh(node.Name, node.Input0); });
+            Add("Cos", (net, node) => { net.Cos(node.Name, node.Input0); });
+            Add("Cosh", (net, node) => { net.Cosh(node.Name, node.Input0); });
+            Add("Sin", (net, node) => { net.Sin(node.Name, node.Input0); });
+            Add("Sinh", (net, node) => { net.Sinh(node.Name, node.Input0); });
+            Add("Tan", (net, node) => { net.Tan(node.Name, node.Input0); });
+
+            string[] GetArithmeticOpInputs(ONNXNodeWrapper node, ModelBuilder net)
+            {
+                string[] inputs = new string[node.Inputs.Length];
+                Array.Copy(node.Inputs, inputs, inputs.Length);
+
+                if (node.IsInput1Const)
+                {
+                    string onnxLayout = "ONNX";
+                    string constName = $"Const_{node.Input1}";
+                    if (!constantTensors.ContainsKey(constName))
+                    {
+                        Tensor tensorData = node.Input1Constant(onnxLayout, node.Input1);
+                        Layer layer = net.Const(constName, tensorData, rank: node.Input1Rank);
+                        inputs[1] = layer.name;
+                        Const(constName, new ONNXTensor(tensorData, tensorData.shape.ToArray()));
+                    }
+                }
+
+                return inputs;
+            }
+
+            // Broadcast ops
+            Add("Add", (net, node)     => { net.Add(node.Name, GetArithmeticOpInputs(node, net)); });
+            Add("Sum", (net, node)     => { net.Add(node.Name, GetArithmeticOpInputs(node, net)); }); // Sum is implemented via Add
+            Add("Sub", (net, node)     => { net.Sub(node.Name, GetArithmeticOpInputs(node, net)); });
+            Add("Mul", (net, node)     => { net.Mul(node.Name, GetArithmeticOpInputs(node, net)); });
+            Add("Div", (net, node)     => { net.Div(node.Name, GetArithmeticOpInputs(node, net)); });
+            Add("Pow", (net, node)     => { net.Pow(node.Name, node.Inputs); });
+            Add("Min", (net, node)     => { net.Min(node.Name, node.Inputs); });
+            Add("Max", (net, node)     => { net.Max(node.Name, node.Inputs); });
+            Add("Mean", (net, node)    => { net.Mean(node.Name, node.Inputs); });
+
+            // Logical ops
+            Add("Greater", (net, node) => { net.Greater(node.Name, node.Input0, node.Input1); });
+            Add("Less", (net, node)    => { net.Less(node.Name, node.Input0, node.Input1); });
+            Add("LessOrEqual", (net, node) => { net.LessEqual(node.Name, node.Input0, node.Input1); });
+            Add("Equal", (net, node)   => { net.Equal(node.Name, node.Input0, node.Input1); });
+            Add("Or", (net, node)      => { net.LogicalOr(node.Name, node.Input0, node.Input1); });
+            Add("And", (net, node)     => { net.LogicalAnd(node.Name, node.Input0, node.Input1); });
+            Add("Not", (net, node)     => { net.LogicalNot(node.Name, node.Input0); });
+            Add("Xor", (net, node)     => { net.LogicalXor(node.Name, node.Input0, node.Input1); });
+            Add("Where", (net, node)   => { net.Where(node.Name, node.Input0, node.Input1, node.Input2); });
+
+            // Padding ops
+            Add("Pad", (net, node) =>
+            {
+                var mode = node.ModeOptional("constant");
+                var pads = node.Pads;
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                switch (mode)
+                {
+                    case "constant":
+                        var value = node.GetOptionalFloat("value", 0.0f);
+                        if (pads.Length > 4)
+                            net.Border3D(node.Name, node.Input0, pads, value);
+                        else
+                            net.Border2D(node.Name, node.Input0, pads, value);
+                        break;
+                    case "reflect": net.Pad2DReflect(node.Name, node.Input0, node.Pads); break;
+                    case "edge": net.Pad2DEdge(node.Name, node.Input0, node.Pads); break;
+                }
+            });
+
+            // Pooling ops
+            Add("AveragePool", (net, node) => {
+                node.UnsupportedAttribute("ceil_mode", 0);
+                node.UnsupportedAttribute("count_include_pad", 0);
+                net.AvgPool2D(node.Name, node.Input0, node.KernelShape, node.Strides, node.Pads);
+            });
+            Add("MaxPool", (net, node) => {
+                node.UnsupportedAttribute("ceil_mode", 0);
+                node.UnsupportedAttribute("dilations", new[] {1, 1});
+                node.UnsupportedAttribute("storage_order", 0);
+
+                int[] strides = node.Strides;
+                int[] pads = node.Pads;
+
+                if (strides.Length == 1)
+                    strides = new[] { 1, strides[0] };
+                UnityEngine.Debug.Assert(strides.Length == 2);
+
+                int[] kernelShape = node.KernelShape;
+                if (kernelShape.Length == 1)
+                    kernelShape = new[] { kernelShape[0], 1 };
+
+                net.MaxPool2D(node.Name, node.Input0, kernelShape, strides, pads);
+            });
+            Add("GlobalAveragePool", (net, node) =>
+            {
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.GlobalAvgPool2D(node.Name, node.Input0);
+            });
+            Add("GlobalMaxPool", (net, node) =>
+            {
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.GlobalMaxPool2D(node.Name, node.Input0);
+            });
+            Add("Upsample", (net, node) => {
+                // @TODO: the same for Resize node
+                string mode = node.ModeOptional("nearest");
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                if (node.InputCount == 2 && !node.IsInput1Const)
+                {
+                    // TODO: Input1 make be rank 1, which means that this would require a swizzle in the actual data
+                    if (node.Input0Rank <= 4)
+                        net.Upsample2D(node.Name, node.Input0, node.Input1, IsModeBilinear(net, node, mode));
+                    else
+                        net.Upsample3D(node.Name, node.Input0, node.Input1, IsModeBilinear(net, node, mode));
+                }
+                else
+                    ResampleNCHW(net, node, node.Name, node.Input0, node.ConvertScales(), mode);
+            });
+            Add("Resize", (net, node) => {
+                if (node.InputCount > 2) // Resize-11
+                {
+                    node.UnsupportedAttribute("coordinate_transformation_mode", "half_pixel");
+                    node.UnsupportedAttribute("cubic_coeff_a", -0.75f);
+                    node.UnsupportedAttribute("exclude_outside", 0);
+                    node.UnsupportedAttribute("extrapolation_value", 0f);
+                    node.UnsupportedAttribute("nearest_mode", "round_prefer_floor");
+
+                    // Inputs (3 - 4)
+                    // X : T1
+                    // roi : T2, It only takes effect when coordinate_transformation_mode is "tf_crop_and_resize"
+                    // scales : tensor(float)
+                    // sizes (optional) : tensor(int64)
+
+                    // TODO: cropping via roi input
+                    // TODO: support sizes
+                }
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default and size as constants, so this is non-runnable as-is
+                var mode = node.ModeOptional("nearest");
+                var bilinear = IsModeBilinear(net, node, mode);
+                if (node.InputCount > 3)
+                {
+                    net.Resample2D(node.Name, node.Input0, node.Input3, bilinear);
+                }
+                else if (node.InputCount == 2)
+                {
+                    net.Upsample2D(node.Name, node.Input0, node.Input1, bilinear);
+                }
+                else
+                {
+                    ResampleNCHW(net, node, node.Name, node.Input0, node.ConvertScales(), mode);
+                }
+            });
+            Add("Transpose", (net, node) =>
+            {
+                // From https://github.com/onnx/onnx/blob/master/docs/Operators.md#transpose
+                // By default, reverse the dimensions, otherwise permute the axes according to the values given.
+
+                if (node.IsInput0Const)
+                {
+                    int inputTensorRank = constantTensors[node.Input0].rank;
+                    var defaultPermutations = new int[inputTensorRank];
+                    for (int i = 0; i < inputTensorRank; ++i)
+                        defaultPermutations[i] = inputTensorRank - 1 - i;
+                    var permutations = node.GetOptionalIntArray("perm", defaultPermutations);
+
+                    var transposedTensor = constantTensors[node.Input0].Permute(permutations);
+                    Const(node, transposedTensor);
+                }
+                else
+                {
+                    var defaultPermutations = new[] { 0, 1, 2, 3, 4, 5 };
+                    var permutations = node.GetOptionalIntArray("perm", defaultPermutations);
+                    if (permutations.Length > 6)
+                        throw new OnnxLayerImportException($"Transpose support up to 6 dimensions but got a permutations of rank {permutations}.");
+
+                    net.Transpose(node.Name, node.Input0, permutations);
+                }
+            });
+
+            Add("DepthToSpace", (net, node) => {
+                net.DepthToSpace(node.Name, node.Input0, node.BlockSize, node.ModeOptional("DCR"));
+            });
+
+            Add("SpaceToDepth", (net, node) => {
+                net.SpaceToDepth(node.Name, node.Input0, node.BlockSize);
+            });
+
+            // Tensor ops
+            Add("Gemm", (net, node)     => {
+                node.UnsupportedAttribute("alpha", 1.0f);
+                node.UnsupportedAttribute("beta", 1.0f);
+                node.UnsupportedAttribute("transA", 0);
+
+                var weights = node.Input1Constant(node.TransBOptional() ? "KC" : "CK", name:"B");
+                var biases  = node.Input2ConstantOptional(Bias(weights.shape), 0.0f, "C", name:"C");
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.Dense(node.Name, node.Input0, weights, biases);
+                Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
+            });
+            Add("MatMul", (net, node)   => {
+                // TODO, make that distinction latter on in rank inference
+                if (node.InputCount == 2 && !node.IsInput1Const || node.Input0Rank != 2 || node.Input1Rank != 2)
+                {
+                    // if inputs are const, need to transpose them
+                    if (node.IsInput1Const)
+                    {
+                        var Y = constantTensors[node.Input1].ToBarracuda("ONNX");
+                        net.Const(node.Input1, Y, insertionIndex:-1, rank:node.Input1Rank);
+                    }
+                    net.MatMul(node.Name, node.Input0, node.Input1);
+                    Output(node, features: node.Input0Features, rank: Math.Max(node.Input0Rank, node.Input1Rank));
+                }
+                else
+                {
+                    var weights = node.Input1Constant(onnxLayout: "CK", name: "B");
+                    var biases = node.DefaultTensor(Bias(weights.shape), 0.0f);
+                    // Change data layout from "channels first" to "channels last"
+                    //weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features, node.Input0Layout);
+                    net.Dense(node.Name, node.Input0, weights, biases);
+                    Output(node, features: weights.channels, rank: 2); // MatMul forces flatten of the input to rank 2
+                }
+            });
+            Add("Conv", (net, node)     => {
+                int[] dilationsDHW = new[] { 1, 1, 1 }; // @TODO trap on wrong values
+                int[] strides = node.Strides;
+                int[] pads = node.Pads;
+
+                node.IgnoredAttribute("kernel_shape", "Kernel shape is derived from K tensor weights instead");
+
+                // Ideally, we'd import kernels/biases in native ONNX layout, but we already have to transpose input since the op doesn't work natively in NCHW
+                var kernels = node.Input1Constant(onnxLayout: "KCHW", name: "W");
+
+                var kernelRank = node.Input1Rank;
+                if (kernelRank == 3) // Conv1D
+                {
+                    dilationsDHW = node.DilatationsOptional(new[] { 1 }); // @TODO trap on wrong values
+                    UnityEngine.Debug.Assert(dilationsDHW.Length == 1);
+                    dilationsDHW = new[] { 1, 1, dilationsDHW[0] };
+
+                    if (strides.Length == 1)
+                        strides = new[] { strides[0], 1 };
+
+                    if (pads.Length == 2)
+                        pads = new[] { pads[0], 0, pads[1], 0 };
+                }
+                else if (kernelRank == 4) // Conv2D
+                {
+                    dilationsDHW = node.DilatationsOptional(new[] { 1, 1 });
+                    UnityEngine.Debug.Assert(dilationsDHW.Length == 2);
+                    dilationsDHW = new[] { 1, dilationsDHW[0], dilationsDHW[1] };
+                }
+                else if (kernelRank == 5) // Conv3D
+                {
+                    //TODO specific error message for DepthwiseConv3D (or support it).
+                    node.UnsupportedAttribute("group", 1);
+
+                    dilationsDHW = node.DilatationsOptional(new[] { 1, 1, 1 });
+                    UnityEngine.Debug.Assert(dilationsDHW.Length == 3);
+                    pads = node.Pads3D;
+                    strides = node.Strides3D;
+                }
+                else
+                {
+                    Warn(net, node, $"Unsuported Conv kernel rank. Conv1D/2D/3 assumes rank 3/4/5 respectively, but got {kernelRank}.");
+                }
+
+                UnityEngine.Debug.Assert(dilationsDHW.Length == 3);
+                if (dilationsDHW[0] != 1 || dilationsDHW[1] != 1 || dilationsDHW[2] != 1)
+                    kernels = DilateKernel(kernels, dilationsDHW); // @TODO inefficient method. Support dilatation in kernel code properly
+
+                var biases = node.Input2ConstantOptional(Bias(kernels.shape), 0.0f, onnxLayout: "C", name: "B");
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                // TODO assert correctly: with group == 2 or group != in_channel we don't support it
+                if (node.GroupOptional() > 1)
+                    net.DepthwiseConv2D(node.Name, node.Input0, strides, pads, kernels, biases);
+                else
+                {
+                    if (kernelRank < 5)
+                        net.Conv2D(node.Name, node.Input0, strides, pads, kernels, biases);
+                    else
+                        net.Conv3D(node.Name, node.Input0, strides, pads, kernels, biases);
+                }
+
+                Output(node, features: kernels.channels);
+            });
+            Add("ConvTranspose", (net, node)     => {
+                node.UnsupportedAttribute("dilations", new[] {1, 1});
+                node.UnsupportedAttribute("group", 1);
+                node.UnsupportedAttribute("output_shape", new int[0]);
+                node.IgnoredAttribute("kernel_shape", "Kernel shape is derived from K tensor weights instead");
+
+                // Ideally, we'd import kernels/biases in native ONNX layout, but we already have to transpose input since the op doesn't work natively in NCHW
+                var kernels = node.Input1Constant(onnxLayout:"CKHW", name:"W");
+                var biases  = node.Input2ConstantOptional(Bias(kernels.shape), 0.0f, onnxLayout:"C", name:"B");
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.Conv2DTrans(node.Name, node.Input0, node.Strides, node.Pads, node.OutputPadding, kernels, biases);
+                Output(node, features:kernels.channels);
+            });
+            Add("BatchNormalization", (net, node) => {
+                // Ideally, we'd import variances/scales/biases/means in native ONNX layout, but we already have to transpose input since the op doesn't work natively in NCHW
+                var variance  = node.Input4Constant(onnxLayout:"C", name:"var");
+                var scale     = node.Input1ConstantOptional(variance.shape, 1.0f, onnxLayout:"C", name:"scale");
+                var bias      = node.Input2ConstantOptional(variance.shape, 0.0f, onnxLayout:"C", name:"B");
+                var mean      = node.Input3ConstantOptional(variance.shape, 0.0f, onnxLayout:"C", name:"mean");
+                if (variance.length != scale.length || scale.length != bias.length || bias.length != mean.length)
+                    Warn(net, node, $"Number of elements in all parameters for BatchNorm must be the same." +
+                        $"Parameter shapes are: {scale.shape}, {bias.shape}, {mean.shape}, {variance.shape}");
+                // TODO: Jeremy has one non valid onnx model with #channels > than input_channels, see if we want to support his model?
+                var fusedData = FuseBatchNormWeights(scale, bias, mean, variance, node.EpsilonOptional(), variance.shape.channels);
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.ScaleBias(node.Name, node.Input0, fusedData.Item1, fusedData.Item2);
+            });
+            Add("ImageScaler", (net, node) =>
+            {
+                var attrBias = node.Bias;
+                var attrScale = node.ScaleOptional();
+                int maxElements = attrBias.Length;
+
+                Tensor scale = new Tensor(1, maxElements);
+                Tensor bias = new Tensor(1, maxElements);
+                for (int i = 0; i < maxElements; ++i)
+                {
+                    scale[i] = attrScale;
+                    bias[i] = attrBias[i];
+                }
+                net.ScaleBias(node.Name, node.Input0, scale, bias);
+            });
+            Add("InstanceNormalization", (net, node) => {
+                // Ideally, we'd import scales/biases in native ONNX layout, but we already have to transpose input since the op doesn't work natively in NCHW
+                var scale     = node.Input1Constant(onnxLayout:"C", name:"scale");
+                var bias      = node.Input2ConstantOptional(scale.shape, 0.0f, onnxLayout:"C", name:"B");
+                if (scale.length != bias.length)
+                    Warn(net, node, $"Number of elements in all parameters for InstanceNorm must be the same." +
+                        $"Parameter shapes are: {scale.shape}, {bias.shape}");
+                if (scale.channels != node.Input0Features && node.Input0Features > 0)
+                {
+                    Warn(net, node, $"Number of elements in InstanceNorm must match features from the previous layer. Was expecting {node.Input0Features}, but got {scale.channels}.");
+                    var scaleArray = scale.ToReadOnlyArray();
+                    Array.Resize(ref scaleArray, node.Input0Features);
+                    var biasArray = bias.ToReadOnlyArray();
+                    Array.Resize(ref biasArray, node.Input0Features);
+                    scale = new Tensor(1, node.Input0Features, scaleArray);
+                    bias = new Tensor(1, node.Input0Features, biasArray);
+                }
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                net.Normalization(node.Name, node.Input0, scale, bias, node.EpsilonOptional());
+            });
+            Add("LRN", (net, node) => {
+                float bias = node.GetOptionalFloat("bias", 1.0f);
+                int size = node.GetRequiredInt("size");
+                net.LRN(node.Name, node.Input0, node.AlphaOptional(0.0001f), node.BetaOptional(0.75f), bias, size);
+            });
+            // random ops
+            Add("RandomNormal", (net, node) => {
+                var shape = ONNXLayout.ConvertShapeToBarracuda(onnxShape:node.Shape, onnxLayout:"ONNX");
+                net.RandomNormal(node.Name, shape, node.MeanOptional(), node.ScaleOptional(), node.Seed);
+                Output(node, rank:node.Shape.Length);
+            });
+            Add("RandomNormalLike", (net, node) => {
+                net.RandomNormal(node.Name, node.Input0, node.MeanOptional(), node.ScaleOptional(), node.Seed);
+            });
+            Add("RandomUniform", (net, node) => {
+                float high     = node.GetOptionalFloat("high",  1.0f);
+                float low      = node.GetOptionalFloat("low",   0.0f);
+                var shape = ONNXLayout.ConvertShapeToBarracuda(onnxShape:node.Shape, onnxLayout:"ONNX");
+                net.RandomUniform(node.Name, shape, low, high, node.Seed);
+                Output(node, rank:node.Shape.Length);
+            });
+            Add("RandomUniformLike", (net, node) => {
+                float high     = node.GetOptionalFloat("high",  1.0f);
+                float low      = node.GetOptionalFloat("low",   0.0f);
+                net.RandomUniform(node.Name, node.Input0, low, high, node.Seed);
+            });
+            Add("Multinomial", (net, node) => {
+                int samples    = node.GetOptionalInt("sample_size", 1);
+                net.Multinomial(node.Name, node.Input0, samples, node.Seed);
+            });
+
+            // Reduce ops
+            Add("ReduceMax", (net, node)  => {
+                ReduceNCHW(net, node, Layer.Type.ReduceMax);
+            });
+            Add("ReduceMean", (net, node) => {
+                ReduceNCHW(net, node, Layer.Type.ReduceMean);
+            });
+            Add("ReduceMin", (net, node)  => {
+                ReduceNCHW(net, node, Layer.Type.ReduceMin);
+            });
+            Add("ReduceProd", (net, node) => {
+                ReduceNCHW(net, node, Layer.Type.ReduceProd);
+            });
+            Add("ReduceSum", (net, node)  => {
+                ReduceNCHW(net, node, Layer.Type.ReduceSum);
+            });
+            Add("ArgMax", (net, node)  => {
+                node.UnsupportedAttribute("select_last_index");
+                ReduceNCHW(net, node, Layer.Type.ArgMax);
+            });
+            Add("ArgMin", (net, node)  => {
+                node.UnsupportedAttribute("select_last_index");
+                ReduceNCHW(net, node, Layer.Type.ArgMin);
+            });
+
+
+            // Ignore, noop during inference
+            Add("Identity", (net, node)     => { net.Identity(node.Name, node.Input0); });
+            Add("Cast", (net, node)         => { net.Identity(node.Name, node.Input0); });
+            Add("Dropout", (net, node)      => { net.Identity(node.Name, node.Input0); });
+        }
+
+        void UseLegacyImporter()
+        {
+            m_NodeImporters.Clear();
 
             var defaultZeroTensor = new ONNXTensor(new Tensor(1, 1, new[] { 0f }), new[] { 1 });
             var defaultOneTensor = new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new[] { 1 });
             var toNCHW = new [] { 0, 3, 1, 2 };
             var toNHWC = new [] { 0, 2, 3, 1 };
+            var fromN1WCtoNCH = new [] { 0, 3, 2, 1 };
+            var fromNCHtoN1WC = new [] { 0, 3, 2, 1 };
 
             // TODO: setup m_NodeImporters via initializer list
             // TODO: simplify code to avoid passing node.Name over and over again
@@ -136,13 +1001,22 @@ namespace Unity.Barracuda.ONNX
                     }
                     else
                     {
-                        if (node.Input0Rank <= 4 && variableTensors.TryGetValue(node.Input0, out VariableTensor previousOutput)
+                        int input0Rank = node.Input0Rank;
+                        if (input0Rank <= 4 && variableTensors.TryGetValue(node.Input0, out VariableTensor previousOutput)
                             && previousOutput.layout != VariableTensor.Layout.ChannelsLast)
                         {
+                            int outputRank = 4;
+                            Model.Input input1 = net.model.inputs.Where(i => i.name == node.Input1).FirstOrDefault();
+                            if (!input1.Equals(default))
+                            {
+                                if (input1.rank == 1) // shape is in the tensor
+                                    outputRank = input1.shape[TensorShape.DataBatch];
+                            }
+
                             // For handling all reshapes correctly with dynamic shapes (e.g. rank 3) perform in NCHW layout
-                            Layer nchwTranspose = net.Transpose($"Transpose_{node.Input0}_For_{node.Name}", node.Input0, toNCHW);
+                            Layer nchwTranspose = net.Transpose($"Transpose_{node.Input0}_For_{node.Name}", node.Input0, input0Rank == 3 ? fromN1WCtoNCH : toNCHW);
                             Layer reshape = net.Reshape($"{node.Name}_NCHW", nchwTranspose, node.Input1);
-                            net.Transpose(node.Name, reshape, toNHWC);
+                            net.Transpose(node.Name, reshape, outputRank == 3 ? fromNCHtoN1WC : toNHWC);
                             Output(node, rank:4);
                         }
                         else
@@ -184,9 +1058,10 @@ namespace Unity.Barracuda.ONNX
                         return;
                     }
 
+
                     if (containsNoVariableDimensions)
                     {
-                        if (forceArbitraryBatchSize)
+                        if (m_ForceArbitraryBatchSize)
                             symbolicShape[0] = -1; // force arbitrary batch size
 
                         // Creating any of the spatial dimensions requires to run reshape in NCHW and transpose to NHWC after it to match NCHW behavior.
@@ -194,14 +1069,14 @@ namespace Unity.Barracuda.ONNX
                         {
                             int[] onnxPaddedShape = onnxShape;
                             if (onnxShape.Length == 3) // correct NCH to NCW
-                                onnxPaddedShape = new[] { onnxShape[0], onnxShape[1], 1, onnxShape[2] };
+                                onnxPaddedShape = new[] {onnxShape[0], onnxShape[1], 1, onnxShape[2]};
 
                             reshapeLayer = net.Reshape($"{node.Name}_NCHW", node.Input0, onnxPaddedShape);
                             reshapeLayer = net.Transpose(node.Name, reshapeLayer, toNHWC);
                         }
                     }
                     else if (onnxShape.Length <= 4 && node.Input0Rank <= 4
-                        && variableDimension != TensorShape.C
+                        && (onnxShape.Length == 2 || variableDimension != TensorShape.C)
                         && variableTensors.TryGetValue(node.Input0, out VariableTensor previousOutput)
                         && previousOutput.layout != VariableTensor.Layout.ChannelsLast)
                     {
@@ -222,14 +1097,14 @@ namespace Unity.Barracuda.ONNX
 
                     reshapeLayer.axis = numDimensionContainingChannelsInformationAfterReshape;
                     var features = onnxShape.Length > 1 ? onnxShape[1] : -1;
-                    Output(node, features: features, rank: onnxShape.Length);
+                    Output(node, features: features, rank:onnxShape.Length);
                 }
             });
             Add("Expand", (net, node) => {
                 var onnxShape = node.Input1Constant(onnxLayout: "C", name: "shape").AsInts();
                 var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "NCHW");
                 bool containsNoVariableDimensions = Array.IndexOf(symbolicShape, -1) == -1;
-                if (containsNoVariableDimensions && forceArbitraryBatchSize)
+                if (containsNoVariableDimensions && m_ForceArbitraryBatchSize)
                     symbolicShape[0] = -1; // force arbitrary batch size
 
                 net.Expand(node.Name, node.Input0, symbolicShape);
@@ -314,7 +1189,7 @@ namespace Unity.Barracuda.ONNX
                     // `a` would be [2, 1, 1, 10], but `b` would have to be [1, 10, 1, 2]. Note the actual data swap in channels!
                     int axis = node.Axes[0];
                     if (axis < 0)
-                        axis = node.Input0Rank + 1 - axis;
+                        axis = node.Input0Rank+1 - axis;
 
                     var transpose = ONNXLayout.UnSqueezeAxisPermutationForMappingONNXLayoutToBarracuda(inputRank, axis, "NCHW");
                     net.Transpose(node.Name, node.Input0, transpose);
@@ -344,7 +1219,15 @@ namespace Unity.Barracuda.ONNX
             });
             Add("Flatten", (net, node)  => {
                 node.UnsupportedAttribute("axis", 1);
-                net.Flatten(node.Name, node.Input0);
+                if (variableTensors.TryGetValue(node.Input0, out var inputTensor) && inputTensor.layout == VariableTensor.Layout.ChannelsLast)
+                    net.Flatten(node.Name, node.Input0);
+                else
+                {
+                    Layer nchwTranspose = net.Transpose($"Transpose_{node.Input0}_For_{node.Name}", node.Input0, node.Input0Rank == 3 ? fromN1WCtoNCH : toNCHW);
+                    net.Flatten(node.Name, nchwTranspose);
+                    // No need to transpose back b/c final shape is always NC (rank 2)
+                }
+
                 Output(node, rank:2);
             });
             Add("Concat", (net, node) => {
@@ -456,7 +1339,8 @@ namespace Unity.Barracuda.ONNX
                         strides:ONNXLayout.PermuteToBarracuda(onnxSteps, onnxLayout:"NCHW",1));
                 }
             });
-            Add("Tile", (net, node) => {
+            Add("Tile", (net, node) =>
+            {
                 // TODO: Implement Tile in ONNXTensor for const
                 var onnxRepeats = node.Input1Constant(onnxLayout: "C", name: "repeats").AsInts();
                 var repeats = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxRepeats, onnxLayout: "NCHW");
@@ -547,7 +1431,7 @@ namespace Unity.Barracuda.ONNX
                 var depth = (int)node.Input1Constant(onnxLayout:"C", name:"depth")[0];
                 var offon = node.Input2ConstantOptional(defaultOffOn, onnxLayout:"C", name:"values");
                 net.OneHot(node.Name, node.Input0, depth, (int)offon[1], (int)offon[0]);
-                Output(node, rank: node.Input0Rank + 1);
+                Output(node, features: depth, rank: node.Input0Rank + 1);
             });
             Add("TopK", (net, node) => {
                 int axis = node.AxisOptional(-1);
@@ -719,7 +1603,7 @@ namespace Unity.Barracuda.ONNX
             Add("PRelu", (net, node)    => { net.PRelu(node.Name, node.Input0, node.Input1); });
             Add("LogSoftmax", (net, node)   => { net.LogSoftmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
             // TODO: Add("Hardmax", (net, node)      => { net.Hardmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
-            // TODO: Add("Softplus", (net, node)     => { net.Softplus(node.Name, node.Input0); });
+            Add("Softplus", (net, node)     => { net.Softplus(node.Name, node.Input0); });
             // TODO: Add("Softsign", (net, node)     => { net.Softsign(node.Name, node.Input0); });
             // TODO: Add("HardSigmoid", (net, node)  => { net.HardSigmoid(node.Name, node.Input0, node.AlphaOptional(0.2f), node.BetaOptional(0.5f)); });
             Add("Exp", (net, node)      => { net.Exp(node.Name, node.Input0); });
@@ -771,7 +1655,6 @@ namespace Unity.Barracuda.ONNX
                         case 1:
                             onnxLayout = "C";
                             break;
-
                         default:
                             onnxLayout = "NCHW";
                             break;
@@ -782,7 +1665,7 @@ namespace Unity.Barracuda.ONNX
                     {
                         Tensor tensorData = node.Input1Constant(onnxLayout, node.Input1);
 
-                        if (node.Input0Rank == 3)
+                        if(node.Input0Rank == 3 && node.Input1Rank == 1)
                         {
                             // 1,1,1,C -> 1,1,C,1
                             tensorData = tensorData.Reshape(new int[] { 1, 1, tensorData.channels, 1 });
@@ -822,12 +1705,20 @@ namespace Unity.Barracuda.ONNX
             // Padding ops
             Add("Pad", (net, node) =>
             {
+                // TODO refactor pad handling to truncate only in NCHWToNHWCPass
                 var mode = node.ModeOptional("constant");
+                var pads = node.Pads;
                 switch (mode)
                 {
-                    case "constant": net.Border2D(node.Name, node.Input0, node.Pads, node.GetOptionalFloat("value", 0.0f)); break;
-                    case "reflect": net.Pad2DReflect(node.Name, node.Input0, node.Pads); break;
-                    case "edge": net.Pad2DEdge(node.Name, node.Input0, node.Pads); break;
+                    case "constant":
+                        var value = node.GetOptionalFloat("value", 0.0f);
+                        if (pads.Length > 4)
+                            net.Border3D(node.Name, node.Input0, pads, value);
+                        else
+                            net.Border2D(node.Name, node.Input0, pads, value);
+                        break;
+                    case "reflect": net.Pad2DReflect(node.Name, node.Input0, pads); break;
+                    case "edge": net.Pad2DEdge(node.Name, node.Input0, pads); break;
                 }
             });
 
@@ -861,9 +1752,12 @@ namespace Unity.Barracuda.ONNX
                 // @TODO: the same for Resize node
                 string mode = node.ModeOptional("nearest");
                 if (node.InputCount == 2 && !node.IsInput1Const)
-                    net.Upsample2D(node.Name, node.Inputs[0], node.Inputs[1], IsModeBilinear(net, node, mode));
+                    if (node.Input0Rank <= 4)
+                        net.Upsample2D(node.Name, node.Input0, node.Input1, IsModeBilinear(net, node, mode));
+                    else
+                        net.Upsample3D(node.Name, node.Input0, node.Input1, IsModeBilinear(net, node, mode));
                 else
-                    Resize2D(net, node, node.Scales, mode);
+                    Resample(net, node, node.Name, node.Input0, node.Scales, mode);
             });
             Add("Resize", (net, node) => {
                 if (node.InputCount > 2) // Resize-11
@@ -892,7 +1786,7 @@ namespace Unity.Barracuda.ONNX
                 }
                 else
                 {
-                    Resize2D(net, node, node.Scales, node.ModeOptional("nearest"));
+                    Resample(net, node, node.Name, node.Input0, node.Scales, node.ModeOptional("nearest"));
                 }
             });
             Add("Transpose", (net, node) =>
@@ -918,8 +1812,6 @@ namespace Unity.Barracuda.ONNX
                     if (permutations.Length > 6)
                         throw new OnnxLayerImportException($"Transpose support up to 6 dimensions but got a permutations of rank {permutations}.");
 
-                    bool fromTF = net.model.ProducerName.Contains("tf2onnx");
-
                     if (Enumerable.SequenceEqual(permutations, new[] { 0, 3, 1, 2 }) || // NHWC -> NCHW
                         Enumerable.SequenceEqual(permutations, new[] { 0, 2, 3, 1 }))   // NCHW -> NHWC
                     {
@@ -939,7 +1831,7 @@ namespace Unity.Barracuda.ONNX
                     else if (Enumerable.SequenceEqual(permutations, new[] { 0, 2, 1 }))       // NWC <-> NCW
                     {
                         // @TODO: reorder uptream nodes and global input dimensions accordingly from NHWC -> NCHW
-                        if (fromTF)
+                        if (m_FixTf2OnnxExportIssues)
                         {
                             Warn(net, node, $"Use '--inputs-as-nchw' flag when exporting model from Tensorflow with tf2onnx");
                             net.Identity(node.Name, node.Input0);
@@ -1013,11 +1905,11 @@ namespace Unity.Barracuda.ONNX
                 net.Dense(node.Name, node.Input0, weights, biases);
                 Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
             });
-            Add("MatMul", (net, node) => {
+            Add("MatMul", (net, node)   => {
                 if (node.InputCount == 2 && !node.IsInput1Const || node.Input0Rank != 2 || node.Input1Rank != 2)
                 {
                     // if inputs are const, need to transpose them
-                    if (node.IsInput1Const)
+                    if(node.IsInput1Const)
                     {
                         var Y = constantTensors[node.Input1].ToBarracuda("NCTDHW");
                         net.Const(node.Input1, Y);
@@ -1036,7 +1928,7 @@ namespace Unity.Barracuda.ONNX
                 }
             });
             Add("Conv", (net, node)     => {
-                int[] dilations = new[] { 1, 1 }; // @TODO trap on wrong values
+                int[] dilationsDHW = new[] { 1, 1, 1 }; // @TODO trap on wrong values
                 int[] strides = node.Strides;
                 int[] pads = node.Pads;
 
@@ -1046,9 +1938,9 @@ namespace Unity.Barracuda.ONNX
                 var kernelRank = node.Input1Rank;
                 if (kernelRank == 3) // Conv1D
                 {
-                    dilations = node.DilatationsOptional(new[] { 1 }); // @TODO trap on wrong values
-                    Assert.IsTrue(dilations.Length == 1);
-                    dilations = new[] { dilations[0], 1 };
+                    dilationsDHW = node.DilatationsOptional(new[] { 1 }); // @TODO trap on wrong values
+                    Assert.IsTrue(dilationsDHW.Length == 1);
+                    dilationsDHW = new[] { 1, 1, dilationsDHW[0] };
 
                     if (strides.Length == 1)
                         strides = new[] { strides[0], 1 };
@@ -1058,24 +1950,40 @@ namespace Unity.Barracuda.ONNX
                 }
                 else if (kernelRank == 4) // Conv2D
                 {
-                    dilations = node.DilatationsOptional(new[] { 1, 1 });
-                    Assert.IsTrue(dilations.Length == 2);
+                    dilationsDHW = node.DilatationsOptional(new[] { 1, 1 });
+                    Assert.IsTrue(dilationsDHW.Length == 2);
+                    dilationsDHW = new[] { 1, dilationsDHW[0], dilationsDHW[1] };
+                }
+                else if (kernelRank == 5) // Conv3D
+                {
+                    //TODO specific error message for DepthwiseConv3D (or support it).
+                    node.UnsupportedAttribute("group", 1);
+
+                    dilationsDHW = node.DilatationsOptional(new[] { 1, 1, 1 });
+                    Assert.IsTrue(dilationsDHW.Length == 3);
+                    pads = node.Pads3D;
+                    strides = node.Strides3D;
                 }
                 else
                 {
-                    Warn(net, node, $"Unsuported Conv kernel rank. Conv2D assumes rank 4, Conv1D assumes rank 3, but got {kernelRank}.");
+                    Warn(net, node, $"Unsuported Conv kernel rank. Conv1D/2D/3 assumes rank 3/4/5 respectively, but got {kernelRank}.");
                 }
 
-                Assert.IsTrue(dilations.Length == 2);
-                if (dilations[0] != 1 || dilations[1] != 1)
-                    kernels = DilateKernel(kernels, dilations); // @TODO inefficient method. Support dilatation in kernel code properly
+                Assert.IsTrue(dilationsDHW.Length == 3);
+                if (dilationsDHW[0] != 1 || dilationsDHW[1] != 1 || dilationsDHW[2] != 1)
+                    kernels = DilateKernel(kernels, dilationsDHW); // @TODO inefficient method. Support dilatation in kernel code properly
 
                 var biases = node.Input2ConstantOptional(Bias(kernels.shape), 0.0f, onnxLayout: "C", name: "B");
 
                 if (node.GroupOptional() > 1)
                     net.DepthwiseConv2D(node.Name, node.Input0, strides, pads, kernels, biases);
                 else
-                    net.Conv2D(node.Name, node.Input0, strides, pads, kernels, biases);
+                {
+                    if (kernelRank < 5)
+                        net.Conv2D(node.Name, node.Input0, strides, pads, kernels, biases);
+                    else
+                        net.Conv3D(node.Name, node.Input0, strides, pads, kernels, biases);
+                }
 
                 Output(node, features: kernels.channels);
             });
@@ -1200,7 +2108,7 @@ namespace Unity.Barracuda.ONNX
 
         private string ResolveLstmOutputName(ONNXNodeWrapper node)
         {
-            var baseLSTMOutputName = "recurrent_out";
+            var baseLSTMOutputName = $"recurrent_out_{node.Name}";
             if (lstmOutputs.ContainsKey(node.Name))
             {
                 var actualName = lstmOutputs[node.Name];
@@ -1218,7 +2126,7 @@ namespace Unity.Barracuda.ONNX
 
         private string ResolveLstmInputName(ONNXNodeWrapper node)
         {
-            var baseLSTMName = "recurrent_in";
+            var baseLSTMName = $"recurrent_in_{node.Name}";
             if (lstmInputs.ContainsKey(node.Name))
             {
                 var actualName = lstmInputs[node.Name];
@@ -1232,18 +2140,6 @@ namespace Unity.Barracuda.ONNX
             }
 
             return baseLSTMName;
-        }
-
-        // TODO: move to commonly used utility funcs
-        internal static bool IsEmpty(object o)
-        {
-            if (o == null)
-                return true;
-
-            if (o is string)
-                return o as string == "";
-
-            return false;
         }
 
         // Fuse training time BatchNorm tensors into Scale & Bias
@@ -1271,6 +2167,7 @@ namespace Unity.Barracuda.ONNX
             return Tuple.Create(scale, bias);
         }
 
+        // TODO move that in custom pass if need be
         // Transpose channels first to channels last data in MatMul/GEMM weight tensor
         internal static Tensor SwapSpatialDimensionsAndFeaturesInMatMulWeights(Tensor weights, int featureCount, VariableTensor.Layout layout)
         {
@@ -1348,38 +2245,50 @@ namespace Unity.Barracuda.ONNX
             return model;
         }
 
-        internal static Tensor DilateKernel(Tensor kernel, int[] dilations)
+        // TODO: use Burst for this
+        internal static Tensor DilateKernel(Tensor kernel, int[] dilationsDHW)
         {
-            Assert.IsTrue(dilations.Length == 2);
-            Assert.IsTrue(dilations[0] > 0);
-            Assert.IsTrue(dilations[1] > 0);
+            //TODO: slow path in C# consider refactoring in Burst
+            Assert.IsTrue(dilationsDHW.Length == 3);
+            Assert.IsTrue(dilationsDHW[0] > 0);
+            Assert.IsTrue(dilationsDHW[1] > 0);
+            Assert.IsTrue(dilationsDHW[2] > 0);
 
             // https://arxiv.org/pdf/1603.07285.pdf
-            Tensor dilatedKernel = new Tensor(new TensorShape(kernel.shape.kernelHeight + (kernel.shape.kernelHeight - 1) * (dilations[0] - 1),
-                                                              kernel.shape.kernelWidth  + (kernel.shape.kernelWidth - 1)  * (dilations[1] - 1),
-                                                              kernel.shape.kernelDepth, kernel.shape.kernelCount));
+            Tensor dilatedKernel = new Tensor(new TensorShape(1,
+                                                              kernel.shape.kernelSpatialDepth  + (kernel.shape.kernelSpatialDepth - 1)  * (dilationsDHW[0] - 1),
+                                                              kernel.shape.kernelHeight + (kernel.shape.kernelHeight - 1) * (dilationsDHW[1] - 1),
+                                                              1,
+                                                              1,
+                                                              kernel.shape.kernelWidth  + (kernel.shape.kernelWidth - 1)  * (dilationsDHW[2] - 1),
+                                                              kernel.shape.kernelDepth,
+                                                              kernel.shape.kernelCount));
 
             for (int c = 0; c < dilatedKernel.kernelDepth; ++c)
                 for (int k = 0; k < dilatedKernel.kernelCount; ++k)
-                    {
+                {
+                    for (int d = 0; d < kernel.shape.kernelSpatialDepth; ++d)
                         for (int y = 0; y < kernel.shape.kernelHeight; ++y)
                             for (int x = 0; x < kernel.shape.kernelWidth; ++x)
                             {
-                                int ox = x * dilations[0];
-                                int oy = y * dilations[1];
+                                int od = d * dilationsDHW[0];
+                                int oy = y * dilationsDHW[1];
+                                int ox = x * dilationsDHW[2];
 
-                                int strideX = x == (kernel.shape.kernelWidth - 1)  ? 1 : dilations[0];
-                                int strideY = y == (kernel.shape.kernelHeight - 1) ? 1 : dilations[1];
+                                int strideD = d == (kernel.shape.kernelSpatialDepth - 1) ? 1 : dilationsDHW[0];
+                                int strideY = y == (kernel.shape.kernelHeight - 1) ? 1 : dilationsDHW[1];
+                                int strideX = x == (kernel.shape.kernelWidth - 1)  ? 1 : dilationsDHW[2];
 
                                 for (int dx = 0; dx < strideX; dx++)
                                     for (int dy = 0; dy < strideY; dy++)
-                                    {
-                                        dilatedKernel[oy + dy, ox + dx, c, k] = 0.0f;
-                                    }
+                                        for (int dd = 0; dd < strideD; dd++)
+                                        {
+                                            dilatedKernel[ 0, od +dd, oy + dy, 0, 0, ox + dx, c, k] = 0.0f;
+                                        }
 
-                                float v = kernel[y, x, c, k];
-                                dilatedKernel[oy, ox, c, k] = v;
-                        }
+                                float v = kernel[ 0, d, y, 0, 0, x, c, k];
+                                dilatedKernel[0, od, oy, 0, 0, ox, c, k] = v;
+                            }
                 }
 
             return dilatedKernel;
@@ -1401,7 +2310,37 @@ namespace Unity.Barracuda.ONNX
             return bilinear;
         }
 
-        internal static void Resize2D(ModelBuilder net, ONNXNodeWrapper node, float[] scales, string mode)
+        internal static Layer ResampleNCHW(ModelBuilder net, ONNXNodeWrapper node, string name, object input, float[] scales, string mode)
+        {
+            if (!scales.All(x => x > 0.0f))
+                Warn(net, node, $"Only positive scale values are supported.");
+
+            if (scales.All(x => x < 1.0f))
+            {
+                if (!scales.All(x => Mathf.Approximately(1f / x, Mathf.Round(1f / x))))
+                    Warn(net, node, $"Only inverse of scale values which produce integer are currently supported. Inverse of scale value will be rounded to closest integer.");
+
+                var noStride = new[] { 1, 1 };
+                var noPad = new[] { 0, 0 };
+                var inverseScalesRoundedToInt = scales.Select(x => (int)Mathf.Round(1f / x)).ToArray();
+                return net.AvgPool2D(name, input, inverseScalesRoundedToInt, noStride, noPad);
+            }
+            else
+            {
+                if (!scales.All(x => Mathf.Approximately(x, Mathf.Round(x))))
+                    Warn(net, node, $"Only integer scale values are currently supported. Scale value will be rounded to closest integer value.");
+
+                var scalesRoundedToInt = scales.Select(x => (int)Mathf.Round(x)).ToArray();
+                if (scales.Length > 5)
+                    Warn(net, node, ">3D upsampling are not supported yet!");
+                if (scales.Length == 5)
+                    return net.Upsample3D(name, input, scalesRoundedToInt, IsModeBilinear(net, node, mode));
+                else
+                    return net.Upsample2D(name, input, scalesRoundedToInt, IsModeBilinear(net, node, mode));
+            }
+        }
+
+        internal static Layer Resample(ModelBuilder net, ONNXNodeWrapper node, string name, object input, float[] scales, string mode)
         {
             if (!scales.All(x => x > 0.0f))
                 Warn(net, node, $"Only positive scale values are supported.");
@@ -1415,7 +2354,9 @@ namespace Unity.Barracuda.ONNX
                 var noPad = new[] {0, 0};
                 var inverseScalesRoundedToInt = scales.Select(x => (int)Mathf.Round(1f/x)).ToArray();
                 // @TODO: nearest, actually this is bilinear downsampling
-                net.AvgPool2D(node.Name, node.Input0, inverseScalesRoundedToInt, noStride, noPad);
+                if (scales.Length > 2)
+                    Warn(net, node, ">2D downsampling are not supported yet!");
+                return net.AvgPool2D(name, input, inverseScalesRoundedToInt, noStride, noPad);
             }
             else
             {
@@ -1423,7 +2364,12 @@ namespace Unity.Barracuda.ONNX
                     Warn(net, node, $"Only integer scale values are currently supported. Scale value will be rounded to closest integer value.");
 
                 var scalesRoundedToInt = scales.Select(x => (int)Mathf.Round(x)).ToArray();
-                net.Upsample2D(node.Name, node.Input0, scalesRoundedToInt, IsModeBilinear(net, node, mode));
+                if (scales.Length > 3)
+                    Warn(net, node, ">3D upsampling are not supported yet!");
+                if (scales.Length > 2)
+                    return net.Upsample3D(name, input, scalesRoundedToInt, IsModeBilinear(net, node, mode));
+                else
+                    return net.Upsample2D(name, input, scalesRoundedToInt, IsModeBilinear(net, node, mode));
             }
         }
 
@@ -1521,6 +2467,43 @@ namespace Unity.Barracuda.ONNX
             return permutation;
         }
 
+        internal void ReduceNCHW(ModelBuilder net, ONNXNodeWrapper node, Layer.Type reduceType)
+        {
+            var keepdims = node.GetOptionalInt("keepdims", 1);
+
+            var features = node.Input0Features;
+            var rank = node.Input0Rank;
+            object input = node.Input0;
+
+            // Sort high to low since we are reducing rank in each iteration
+            // var axes = node.AxesOptional(new[] { 0 }).OrderByDescending(a => a).ToArray();
+            var axes = node.HasAttribute("axes") ? node.AxesOptional(new[] { 0 }) : new[] {node.AxisOptional(0)};
+            int reducedDim = 0;
+            foreach (var onnxAxis in axes)
+            {
+                //TODO support 8D inputs
+                //var axis = ONNXLayout.ConvertAxisToBarracuda(onnxAxis, onnxRank: rank, onnxLayout: "ONNX");
+                var axis = onnxAxis;
+                if (reducedDim != 0)
+                    axis--;
+
+                var nameR = $"{node.Name}__axis{onnxAxis}";
+                input = net.Reduce(reduceType, nameR, input, axis, true, keepdims);
+                //if (axis == TensorShape.C) // This is actually W
+                //    features = 1; // this operation collapse all features to 1
+                Output(nameR, features: features, rank: rank);
+
+                // Without keepdims, we will be reducing rank every axis iteration
+                if((keepdims == 0))
+                {
+                    rank--;
+                    reducedDim++;
+                }
+            }
+
+            net.Identity(node.Name, input);
+        }
+
         internal void Reduce(ModelBuilder net, ONNXNodeWrapper node, Layer.Type reduceType)
         {
             var keepdims = node.GetOptionalInt("keepdims", 1);
@@ -1529,16 +2512,16 @@ namespace Unity.Barracuda.ONNX
             var rank = node.Input0Rank;
             object input = node.Input0;
 
-            var axes = node.HasAttribute("axes") ? node.AxesOptional(new[] { 0 }) : new[] { node.AxisOptional(0) };
+            var axes = node.HasAttribute("axes") ? node.AxesOptional(new[] { 0 }) : new[] {node.AxisOptional(0)};
             foreach (var onnxAxis in axes)
             {
                 //TODO support 8D inputs
                 var axis = ONNXLayout.ConvertAxisToBarracuda(onnxAxis, onnxRank: rank, onnxLayout: "NCHW");
                 if (node.Input0Layout == VariableTensor.Layout.ChannelsLast && node.Input0Rank == 4)
-                    axis = TensorExtensions.NHWCTo8DAxis(onnxAxis);
+                    axis = TensorExtensions.Convert4DTo8DAxis(onnxAxis);
 
                 var nameR = $"{node.Name}__axis{axis}";
-                input = net.Reduce(reduceType, nameR, input, axis, true);
+                input = net.Reduce(reduceType, nameR, input, axis, true, keepdims);
                 if (axis == TensorShape.C)
                     features = 1; // this operation collapse all features to 1
                 Output(nameR, features: features, rank: rank);
@@ -1556,6 +2539,7 @@ namespace Unity.Barracuda.ONNX
             }
 
             net.Identity(node.Name, input);
+            //TODO: features count is wrong and should potentially be deduced from input
             Output(node.Name, features: 0, rank: rank);
         }
 
@@ -1566,6 +2550,8 @@ namespace Unity.Barracuda.ONNX
         private Model ConvertOnnxModel(ModelProto onnxModel)
         {
             var model = new Model();
+            bool standardImport = m_ImportMode.HasFlag(ImportMode.Standard);
+            model.layout = standardImport ? "iNCHW" : "NHWC";
             var modelBuilder = new ModelBuilder(model);
 
             // Builds list of nodes that should not be included into the final Barracuda Model, mostly for LSTMs
@@ -1586,7 +2572,8 @@ namespace Unity.Barracuda.ONNX
                     continue;
                 }
 
-                modelBuilder.Input(i.Name, ONNXLayout.ConvertSymbolicShapeToBarracuda(i.Type.TensorType.Shape, onnxLayout:"NCHW"));
+                int[] onnxShape = i.Type.TensorType.Shape.AsInts();
+                modelBuilder.Input(i.Name, ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, onnxLayout:standardImport ? "ONNX" : "NCHW"), onnxShape.Length);
                 var shapeValues = i.Type.TensorType.Shape.Dim.Select(d => d.DimValue).ToArray();
                 Output(i.Name, onnxShape: shapeValues, onnxLayout:"NCHW");
             }
@@ -1614,7 +2601,7 @@ namespace Unity.Barracuda.ONNX
                 {
                     try
                     {
-                        if (node.AreAllInputsConst && !m_ShouldNotBeBaked.Contains(opType))
+                        if (!standardImport && node.AreAllInputsConst && !m_ShouldNotBeBaked.Contains(opType))
                         {
                             Profiler.BeginSample($"Bake {opType} {node.Name}");
                             var bakedTensor = BakeNodeIntoConstant(opType, node);
@@ -1675,21 +2662,36 @@ namespace Unity.Barracuda.ONNX
             requiredConstants.UnionWith(unreferencedConstantsContainMLAgentsMetadata); // keep ML-Agents metadata
             int insertionIndex = 0; // insert constants at the beginning of the model
             foreach(var entry in constantTensors)
+            {
                 if (requiredConstants.Contains(entry.Key)) // skip if constant is unused
-                    modelBuilder.Const(entry.Key, entry.Value.ToBarracuda(onnxLayout:GetONNXLayoutForConstant(model, entry.Key)),
-                        insertionIndex++);
+                {
+                    modelBuilder.Const(entry.Key, entry.Value.ToBarracuda(standardImport ? "ONNX" :
+                            GetONNXLayoutForConstant(model, entry.Key)),
+                        insertionIndex++, rank: entry.Value.rank);
+                }
+            }
 
-            model = ModelOptimizer.Optimize(model, allowFusing: optimizeModel, keepLayers:requiredConstants); // keep ML-Agents metadata
+            if (m_ImportMode == ImportMode.Legacy)
+            {
+                foreach (Layer l in model.layers)
+                {
+                    if (requiredConstants.Contains(l.name))
+                        l.flags |= Layer.Flags.Preserve;
+                }
 
-            model = FixReshapeTransposePatternWhenChannelsAreSplitIntoMultipleDimensions(model);
+                model = ModelOptimizer.Optimize(model, allowFusing: m_OptimizeModel, keepLayers:requiredConstants); // keep ML-Agents metadata
+                model = FixReshapeTransposePatternWhenChannelsAreSplitIntoMultipleDimensions(model);
 
-            model = PatchFromIncorrectlyAssumedChannelsFirstToChannelsLastLayoutUpstream(model, layerRequiringUpstreamPatch);
+                if (!m_FixTf2OnnxExportIssues)
+                    model = PatchFromIncorrectlyAssumedChannelsFirstToChannelsLastLayoutUpstream(model, layerRequiringUpstreamPatch);
+            }
 
             // strip :0 at the end of string name for TF import
-            if (fixTF2ONNXExportIssues)
+            if (m_FixTf2OnnxExportIssues)
                 model = TrimTensorflowNames(model);
 
-            Validate(model);
+            if (m_ImportMode == ImportMode.Legacy)
+                Validate(model);
 
             // Parse meta data
             var irVersion = onnxModel.IrVersion; // legacy
@@ -1778,7 +2780,8 @@ namespace Unity.Barracuda.ONNX
                 var bakedConstant = worker.Execute().PeekOutput();
 
                 // convert from Barracuda back into ONNX layout
-                var onnxData = ONNXTensor.Permute(bakedConstant, new int[] {0,1,2,7,3,4,5,6}); // S,R,N,T,D,H,W,C (channelLast)-> S,R,N,C,H,W (channelFirst)
+                Tensor onnxData = bakedConstant;
+                onnxData = ONNXTensor.Permute(bakedConstant, new int[] {0,1,2,7,3,4,5,6}); // S,R,N,T,D,H,W,C (channelLast)-> S,R,N,C,H,W (channelFirst)
                 var onnxShape = onnxData.shape.ToArray();
 
                 return new ONNXTensor(onnxData, onnxShape).SqueezeAll();
@@ -1854,9 +2857,16 @@ namespace Unity.Barracuda.ONNX
                 if (onnxNode.OpType == "LSTM")
                 {
                     var lstmNodeName = ONNXNodeWrapper.GetName(onnxNode);
+                    var initial_h = onnxNode.Input[5];
+                    var initial_c = onnxNode.Input[6];
+                    List<NodeProto> startingNodes = new List<NodeProto>();
+                    if (nameToNode.ContainsKey(initial_h))
+                        startingNodes.Add(nameToNode[initial_h]);
+                    if (nameToNode.ContainsKey(initial_c))
+                        startingNodes.Add(nameToNode[initial_c]);
                     BacktraceNodeInputs(
                         nameToNode,
-                        new[] {nameToNode[onnxNode.Input[5]], nameToNode[onnxNode.Input[6]]},
+                        startingNodes.ToArray(),
                         el => { res.Add(ONNXNodeWrapper.GetName(el)); },
                         el => { lstmInputs[lstmNodeName] = el.Input[0]; res.Add(el.Input[0]);}
                         );
@@ -2030,6 +3040,11 @@ namespace Unity.Barracuda.ONNX
                     l.datasets[i].name = TrimTensorflowName(l.datasets[i].name);
                 for(int i = 0; i < l.inputs.Length; i++)
                     l.inputs[i] = TrimTensorflowName(l.inputs[i]);
+                if (l.outputs != null)
+                {
+                    for (int i = 0; i < l.outputs.Length; i++)
+                        l.outputs[i] = TrimTensorflowName(l.outputs[i]);
+                }
                 return l;
             }).ToList();
 
@@ -2091,7 +3106,7 @@ namespace Unity.Barracuda.ONNX
 
         private void Err(Model model, string layerName, string message, string extendedMessage = "", string debugMessage = "")
         {
-            if (treatErrorsAsWarnings)
+            if (m_TreatErrorsAsWarnings)
             {
                 model.Warnings.Add(new Model.ImporterWarning(layerName,$"{message} {extendedMessage}"));
                 Debug.LogWarning($"{message} {extendedMessage}\n{debugMessage}");

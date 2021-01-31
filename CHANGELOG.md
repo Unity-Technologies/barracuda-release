@@ -1,5 +1,22 @@
 # Release notes
 
+## [1.3.0] - 2021-01-28
+- ONNX: Major ONNX import refactoring, which allows to better track `Tensor` shapes and axes. More models should import correctly.
+- ONNX: Improved multidimensional MatMul support.   
+- ONNX: Improved 1D/2D `OneHot` handling.
+- ONNX: Improved Transformer architecture support.
+- ONNX: Added spatial rank 3 support for `Pad` and upsampling via `Resize` or `Upsample`.
+- ONNX: Added `LessOrEqual` support.
+- ONNX: Improved `Tile` support.
+- Improvement: Improved `Conv3D` op performance on GPU.
+- Improvement: Improved support for existing operations on >4D `Tensors` in general.
+- Improvement: Improved tensor shape display in Model Inspector, now it will show >4D dimensions only if they are actually used.
+- Performance: Improved layer fusing and optimization as ONNX post-import step.
+- Fix: Fixed axis handling for `Squeeze` op.
+- Fix: Fixed `Softmax` negative axis support.
+- Fix: Fixed possible name collision in compute shaders responsible for `Texture`<->`Tensor` conversion. 
+- Docs: Improved supported op documentation.
+
 ## [1.2.1] - 2020-12-02
 - ONNX: Added `ArgMax`/`ArgMin` support.
 - Improvement: Added `Tensor` constructors for `float[,]` and `float[,,,]`.

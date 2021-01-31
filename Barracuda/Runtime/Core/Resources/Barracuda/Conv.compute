@@ -804,7 +804,7 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_Disp
     uint centroidId = by + (ti&63);
     #if KERNEL_1x1
     int readX = heightX * widthX * (ti>>6) + centroidId + batchReadOffset;
-    bool mask = centroidId < (batches * w * h);
+    bool mask = centroidId < (widthX * heightX);
     #else
     int batch = 0;//not needed dispatched over batches.
     int topY = (centroidId / w % h) * _Stride.y - _Pad.y;
@@ -821,7 +821,7 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_Disp
         (by + (ti>>4) + 48));
     #if KERNEL_1x1
     int4 readX = strideX * centroidId + (ti&15);
-    bool4 mask = centroidId < (batches * w * h);
+    bool4 mask = centroidId < (batches * widthX * heightX);
     #else
     int4 batch = centroidId / w / h;
     int4 topY = (centroidId / w % h) * _Stride.y - _Pad.y;

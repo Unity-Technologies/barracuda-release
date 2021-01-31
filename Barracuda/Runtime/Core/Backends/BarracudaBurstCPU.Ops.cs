@@ -24,7 +24,7 @@ public partial class BurstCPUOps
     }
 
     /// <inheritdoc/>
-    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
@@ -172,7 +172,7 @@ public partial class BurstCPUOps
 
     Tensor Conv2DUsingIm2ColSliced(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -389,7 +389,7 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -439,7 +439,7 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -502,9 +502,9 @@ public partial class BurstCPUOps
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
-            throw new NotImplementedException();
+            return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -566,8 +566,8 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
+        if (!X.shape.Is4D())
+            base.ScaleBias(X, S, B);
 
         Assert.AreEqual(S.shape, B.shape);
         bool isScalarOp = (S.length == 1);
@@ -695,6 +695,30 @@ public partial class BurstCPUOps
                 ptrO = &pinO.array[pinO.offset])
             {
                 var job = new TanhJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+        return O;
+    }
+
+     /// <inheritdoc/>
+    public override Tensor Softplus(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new SoftplusJob();
                 job.X = ptrX;
                 job.O = ptrO;
                 pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
@@ -872,10 +896,10 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
-        if (!X.shape.IsNHWC() || axis != TensorExtensions.NHWCTo8DAxis(1))
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1 || axis > X.shape.FirstNotIdentityFeatureDimensionIndex())
             return base.Softmax(X, axis);
 
-        var O = NewTensor(X.shape.Flatten());
+        var O = NewTensor(X.shape);
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
@@ -960,7 +984,10 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
-        var O = NewTensor(X.shape.Flatten());
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+            return base.LogSoftmax(X);
+
+        var O = NewTensor(X.shape);
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
@@ -1809,8 +1836,8 @@ public partial class BurstCPUOps
     // O = tensors[0] + tensors[1] + ... + tensors[N-1]
     public override Tensor Add(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Add(tensors);
 
         var O = NewTensorLike(tensors);
         var X = tensors[0];
@@ -1827,8 +1854,8 @@ public partial class BurstCPUOps
     // O = tensors[0] - tensors[1] - ... - tensors[N-1]
     public override Tensor Sub(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Sub(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -1846,8 +1873,8 @@ public partial class BurstCPUOps
     // O = tensors[0] * tensors[1] * ... * tensors[N-1]
     public override Tensor Mul(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Mul(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -1865,8 +1892,8 @@ public partial class BurstCPUOps
     // O = tensors[0] / tensors[1] / ... / tensors[N-1]
     public override Tensor Div(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Div(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -1884,8 +1911,8 @@ public partial class BurstCPUOps
     // O = tensors[0] ^ tensors[1] ^ ... ^ tensors[N-1]
     public override Tensor Pow(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Pow(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -1903,9 +1930,8 @@ public partial class BurstCPUOps
     // O = min(tensors[0], tensors[1],  ... , tensors[N-1])
     public override Tensor Min(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
-
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Min(tensors);
 
         var O = NewTensorLike(tensors);
         var X = tensors[0];
@@ -1922,9 +1948,8 @@ public partial class BurstCPUOps
     // O = max(tensors[0], tensors[1],  ... , tensors[N-1])
     public override Tensor Max(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-            throw new NotImplementedException();
-
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            base.Max(tensors);
 
         var O = NewTensorLike(tensors);
         var X = tensors[0];
@@ -1940,8 +1965,8 @@ public partial class BurstCPUOps
     // // O = (1/N) * (tensors[0] + tensors[1] + ... + tensors[N-1])
     // public override Tensor Mean(Tensor[] tensors)
     // {
-    //    if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
-    //        throw new NotImplementedException();
+    //    if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+    //        base.Mean(tensors);
 
     //     // accumulate
     //     Func<float, float, float> op = (a, b) => a + b;

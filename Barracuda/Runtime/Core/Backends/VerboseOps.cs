@@ -35,19 +35,21 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.MatMul(Tensor X, int rankX, Tensor Y, int rankY)
+    {
+        D.Log(rankX + ":(" + X.batch * X.channels + "," + X.height + "," + X.width + ")" +
+            " *" + rankY + ":(" + Y.batch * Y.channels + "," + Y.height + "," + Y.width + ")");
+        var O = m_Ops.MatMul(X, rankX, Y, rankY);
+        O.PrintDataPart(32, Prefix + "MatMul");
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
-        var isStackOfMatrices = (X.dimensions != 2) || (Y.dimensions != 2);
-        if (isStackOfMatrices)
-        {
-            D.Log("(" + X.flatHeight + "," + X.flatWidth + ")" + (xTranspose ? ".T" : "") +
-                " * (" + Y.flatHeight + "," + Y.flatWidth + ")" + (yTranspose ? ".T" : ""));
-        }
-        else
-        {
-            D.Log("(" + X.batch * X.channels + "," + X.height + "," + X.width + ")" +
-                " * (" + Y.batch * Y.channels + "," + Y.height + "," + Y.width + ")");
-        }
+
+        D.Log("(" + X.flatHeight + "," + X.flatWidth + ")" + (xTranspose ? ".T" : "") +
+            " * (" + Y.flatHeight + "," + Y.flatWidth + ")" + (yTranspose ? ".T" : ""));
         var O = m_Ops.MatMul(X, xTranspose, Y, yTranspose);
         O.PrintDataPart(32, Prefix + "MatMul");
         return O;
@@ -68,6 +70,15 @@ public class VerboseOps : IOps, IModelCompiler
         D.Log(X.shape + " # " + K.shape + " + (" + B.flatWidth + ")");
         var O = m_Ops.Conv2D(X, K, B, stride, pad, fusedActivation);
         O.PrintDataPart(32, Prefix + "Conv2D");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Conv3D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
+    {
+        D.Log(X.shape + " # " + K.shape + " + (" + B.flatWidth + ")");
+        var O = m_Ops.Conv3D(X, K, B, stride, pad, fusedActivation);
+        O.PrintDataPart(32, Prefix + "Conv3D");
         return O;
     }
 
@@ -95,6 +106,15 @@ public class VerboseOps : IOps, IModelCompiler
         var O = m_Ops.Upsample2D(X, scale, bilinear);
         D.Log(X.shape + " ^ " + (bilinear ? "bilinear" : "") + O.shape);
         O.PrintDataPart(32, Prefix + "Upsample2D");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Upsample3D(Tensor X, int[] scale, bool trilinear)
+    {
+        var O = m_Ops.Upsample3D(X, scale, trilinear);
+        D.Log(X.shape + " ^ " + (trilinear ? "trilinear" : "") + O.shape);
+        O.PrintDataPart(32, Prefix + "Upsample3D");
         return O;
     }
 
@@ -176,6 +196,15 @@ public class VerboseOps : IOps, IModelCompiler
         D.Log($"{X.shape} ¶(border) value={value} pad=[{pad[0]},{pad[1]},{pad[2]},{pad[3]})");
         var O = m_Ops.Border2D(X, pad, value);
         O.PrintDataPart(32, Prefix + "Border2D");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Border3D(Tensor X, int[] pad, float value)
+    {
+        D.Log($"{X.shape} ¶(border3d) value={value} pad=[{pad[0]},{pad[1]},{pad[2]},{pad[3]},{pad[4]},{pad[5]})");
+        var O = m_Ops.Border3D(X, pad, value);
+        O.PrintDataPart(32, Prefix + "Border3D");
         return O;
     }
 
@@ -338,6 +367,15 @@ public class VerboseOps : IOps, IModelCompiler
         D.Log(X.shape + " ()");
         var O = m_Ops.Tanh(X);
         O.PrintDataPart(32, Prefix + "Tanh");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Softplus(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Softplus(X);
+        O.PrintDataPart(32, Prefix + "Softplus");
         return O;
     }
 

@@ -451,6 +451,44 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     }
 
     /// <inheritdoc/>
+    public override Tensor Softplus(Tensor X)
+    {
+        // f(x) = 1 / (1 + exp(-x))
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            fixed (float*
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                SoftplusInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Log(Mathf.Exp(v) + 1f);
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void SoftplusInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_softplusInnerLoopDelegate);
+    }
+
+    /// <inheritdoc/>
     public override Tensor Sigmoid(Tensor X)
     {
         // f(x) = 1 / (1 + exp(-x))
@@ -1077,7 +1115,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float,float,float> opRemainder, Action<long> opInnerLoop, Action<long> opInnerLoopNoBroadcast)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleToNCHW(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
             throw new NotImplementedException();
 
         var O = NewTensorLike(tensors);
@@ -1127,93 +1165,132 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Add(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.Add(tensors);
+
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_addOpDelegate, m_InnerLoop.m_addInnerLoopDelegate, m_InnerLoop.m_addInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Sub(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.Sub(tensors);
+
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_subOpDelegate, m_InnerLoop.m_subInnerLoopDelegate, m_InnerLoop.m_subInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Mul(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.Mul(tensors);
+
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_mulOpDelegate, m_InnerLoop.m_mulInnerLoopDelegate, m_InnerLoop.m_mulInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Div(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.Div(tensors);
+
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_divOpDelegate, m_InnerLoop.m_divInnerLoopDelegate, m_InnerLoop.m_divInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Min(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.Min(tensors);
+
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_minOpDelegate, m_InnerLoop.m_minInnerLoopDelegate, m_InnerLoop.m_minInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Max(Tensor[] tensors)
     {
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+            return base.Max(tensors);
+
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_maxOpDelegate, m_InnerLoop.m_maxInnerLoopDelegate, m_InnerLoop.m_maxInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Greater(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.Greater(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_greaterOpDelegate, m_InnerLoop.m_greaterInnerLoopDelegate, m_InnerLoop.m_greaterInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor GreaterEqual(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.GreaterEqual(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_greaterEqualOpDelegate, m_InnerLoop.m_greaterEqualInnerLoopDelegate, m_InnerLoop.m_greaterEqualInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Less(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.Less(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_lessOpDelegate, m_InnerLoop.m_lessInnerLoopDelegate, m_InnerLoop.m_lessInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor LessEqual(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.LessEqual(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_lessEqualOpDelegate, m_InnerLoop.m_lessEqualInnerLoopDelegate, m_InnerLoop.m_lessEqualInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor Equal(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.Equal(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_equalOpDelegate, m_InnerLoop.m_equalInnerLoopDelegate, m_InnerLoop.m_equalInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalOr(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.LogicalOr(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalOrOpDelegate, m_InnerLoop.m_logicalOrInnerLoopDelegate, m_InnerLoop.m_logicalOrInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalAnd(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.LogicalAnd(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalAndOpDelegate, m_InnerLoop.m_logicalAndInnerLoopDelegate, m_InnerLoop.m_logicalAndInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalXor(Tensor A, Tensor B)
     {
+        if (!A.shape.Is4D() || !B.shape.Is4D())
+            return base.LogicalXor(A,B);
+
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalXorOpDelegate, m_InnerLoop.m_logicalXorInnerLoopDelegate, m_InnerLoop.m_logicalXorInnerLoopDelegateNoBroadcast);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
-
         var O = NewTensorLike(X);
 
         unsafe
@@ -1237,8 +1314,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        if (!C.shape.IsNHWC() || !C.shape.IsNHWC() || !B.shape.IsNHWC())
-            throw new NotImplementedException();
+        if (!C.shape.Is4D() || !C.shape.Is4D() || !B.shape.Is4D())
+            return base.Where(C,A,B);
 
         var O = NewTensorLike(C);
 
@@ -1272,7 +1349,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyLogicalOperator(Tensor A, Tensor B, Func<float,float,float> logicalOpRemainder, Action<long> logicalOpInnerLoop, Action<long> logicalOpInnerLoopNoBroadcast)
     {
-        if (!A.shape.IsNHWC() || !B.shape.IsNHWC())
+        if (!A.shape.Is4D() || !B.shape.Is4D())
             throw new NotImplementedException();
 
         var O = NewTensorLike(new Tensor[] { A, B });
@@ -1305,7 +1382,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     }
 
     /// <inheritdoc/>
-    protected override Tensor MatMul2D(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
@@ -1406,6 +1483,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 return Relu(X);
             case Layer.FusedActivation.Tanh:
                 return Tanh(X);
+            case Layer.FusedActivation.Softplus:
+                return Softplus(X);
             case Layer.FusedActivation.Sigmoid:
                 return Sigmoid(X);
             case Layer.FusedActivation.Relu6:
@@ -1450,7 +1529,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -1520,7 +1599,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
@@ -1674,7 +1753,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     Tensor Conv2DUsingIm2Col(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -1813,7 +1892,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     Tensor Conv2DUsingIm2ColSliced(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
         Assert.AreEqual(B.flatWidth, B.length);
@@ -2042,9 +2121,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
-            throw new NotImplementedException();
+            return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
         Assert.AreEqual(K.kernelCount, X.channels);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -2532,7 +2611,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyPadding(Tensor X, int[] pad, float constant, Action<long> paddingOp)
     {
-        Assert.IsTrue(X.shape.IsNHWC());
+        Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 4);
 
         var O = NewTensor(X.shape.ApplyBorder(pad));
@@ -2642,8 +2721,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (!X.shape.IsNHWC())
-            throw new NotImplementedException();
+        if (!X.shape.Is4D())
+            base.ScaleBias(X, S, B);
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
@@ -2718,6 +2797,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_expInnerLoopDelegate;
         public Action<long> m_sqrtInnerLoopDelegate;
         public Action<long> m_swishInnerLoopDelegate;
+        public Action<long> m_softplusInnerLoopDelegate;
         public Action<long> m_sigmoidInnerLoopDelegate;
         public Action<long> m_negInnerLoopDelegate;
         public Action<long> m_eluInnerLoopDelegate;
@@ -2796,6 +2876,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_expInnerLoopDelegate = ExpInnerLoop;
             m_sqrtInnerLoopDelegate = SqrtInnerLoop;
             m_swishInnerLoopDelegate = SwishInnerLoop;
+            m_softplusInnerLoopDelegate = SoftplusInnerLoop;
             m_sigmoidInnerLoopDelegate = SigmoidInnerLoop;
             m_negInnerLoopDelegate = NegInnerLoop;
             m_eluInnerLoopDelegate = EluInnerLoop;
@@ -3641,6 +3722,26 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 v2 = s2 * v2;
             if (v3 <= 0)
                 v3 = s3 * v3;
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void SoftplusInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Log(Mathf.Exp(v0) + 1f);
+            v1 = Mathf.Log(Mathf.Exp(v1) + 1f);
+            v2 = Mathf.Log(Mathf.Exp(v2) + 1f);
+            v3 = Mathf.Log(Mathf.Exp(v3) + 1f);
 
             baseOPtr[0] = v0;
             baseOPtr[1] = v1;

@@ -92,7 +92,7 @@ public static class ModelLoader
             layerType == Layer.Type.ReduceSumSquare ||
             layerType == Layer.Type.Gather ||
             layerType == Layer.Type.Concat)
-            axis = TensorExtensions.NHWCTo8DAxis(axis);
+            axis = TensorExtensions.Convert4DTo8DAxis(axis);
 
         return axis;
     }

@@ -542,21 +542,277 @@ struct SharedTensor : Tensor
     }
 };
 
+#define INDEX_HELPER_5D \
+uint IndexNCDHW(uint n, uint d, uint h, uint w, uint c)\
+{\
+    KERNEL_ASSERT(sequenceLength==1);\
+    KERNEL_ASSERT(numberOfDirections==1);\
+    KERNEL_ASSERT(extraDimension==1);\
+    uint index =\
+        n * channels * depth * height * width +\
+        c * depth * height * width +\
+        d * height * width +\
+        h * width +\
+        w;\
+    return index;\
+}\
+uint IndexNDHWC(uint n, uint d, uint h, uint w, uint c)\
+{\
+    KERNEL_ASSERT(sequenceLength==1);\
+    KERNEL_ASSERT(numberOfDirections==1);\
+    KERNEL_ASSERT(extraDimension==1);\
+    uint index =\
+        n * depth * height * width * channels +\
+        d * height * width * channels +\
+        h * width * channels +\
+        w * channels +\
+        c;\
+    return index;\
+}
+
+#define INDEX_HELPER_8D \
+uint IndexSRNCTDHW(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint c)\
+{\
+    uint index =\
+        s * numberOfDirections * batch * channels * extraDimension * depth * height * width +\
+        r * batch * channels * extraDimension * depth * height * width +\
+        n * channels * extraDimension * depth * height * width +\
+        c * extraDimension * depth * height * width +\
+        t * depth * height * width +\
+        d * height * width +\
+        h * width +\
+        w;\
+\
+    return index;\
+}\
+uint IndexSRNTDHWC(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint c)\
+{\
+    uint index =\
+        s * numberOfDirections * batch * extraDimension * depth * height * width * channels +\
+        r * batch * extraDimension * depth * height * width * channels +\
+        n * extraDimension * depth * height * width * channels +\
+        t * depth * height * width * channels +\
+        d * height * width * channels +\
+        h * width * channels +\
+        w * channels +\
+        c;\
+\
+    return index;\
+}\
+uint GetFlatWidth8D()\
+{\
+    return extraDimension * depth * height * width * channels;\
+}
+
+struct SharedTensor8D : SharedTensor
+{
+    uint sequenceLength, numberOfDirections, extraDimension, depth;
+
+    void Init(uint4 nhwc, uint4 srtd, uint4 info, StructuredBuffer<float> data_)
+    {
+        SharedTensor::Init(nhwc, info, data_);
+        sequenceLength = srtd.x;
+        numberOfDirections = srtd.y;
+        extraDimension = srtd.z;
+        depth = srtd.w;
+    }
+
+    uint GetKernelSpatialDepth()
+    {
+        // kernels storage: {1,kernelSpatialDepth,kernel_width,1,1,kernel_height,kernel_channels,kernel_count}
+        uint kernelSpatialDepth = numberOfDirections;
+        return kernelSpatialDepth;
+    }
+
+    uint GetLength5D()
+    {
+        return GetKernelSpatialDepth()*GetLength();
+    }
+
+    float GetKernel5D(uint d, uint w, uint h, uint c, uint k)
+    {
+        KERNEL_ASSERT(sequenceLength==1);
+        KERNEL_ASSERT(extraDimension==1);
+        KERNEL_ASSERT(depth==1);
+        // kernels storage: {1,kernelSpatialDepth,kernel_width,1,1,kernel_height,kernel_channels,kernel_count}
+        uint index = d * batch * height * width * channels + IndexHWC(w,h,c,k) + offset;
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_SHARED_READ);
+        return value;
+    }
+
+    float Get8D(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint c)
+    {
+        uint index = IndexSRNTDHWC(s,r,n,t,d,h,w,c) + offset;
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_SHARED_READ);
+        return value;
+    }
+
+    float BroadcastGet8D(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint c)
+    {
+        return Get8D(s % sequenceLength, r % numberOfDirections, n % batch, t % extraDimension, d % depth, h % height, w % width, c % channels);
+    }
+
+    INDEX_HELPER_8D
+};
+
+struct ReadonlyTensor8D : ReadonlyTensor
+{
+    //8D memory layout SRNTDHWC (channelLast) or SRNCTDHW (channelFirst)
+    uint sequenceLength, numberOfDirections, extraDimension, depth;
+
+    void Init(uint4 nhwc, uint4 srtd, StructuredBuffer<float> data_)
+    {
+        ReadonlyTensor::Init(nhwc, data_);
+        sequenceLength = srtd.x;
+        numberOfDirections = srtd.y;
+        extraDimension = srtd.z;
+        depth = srtd.w;
+    }
+
+    float SafeGet5D(uint b, uint3 pos, uint ch, uint3 pad, float def = 0)
+    {
+        KERNEL_ASSERT(sequenceLength==1);
+        KERNEL_ASSERT(numberOfDirections==1);
+        KERNEL_ASSERT(extraDimension==1);
+        bool cond =
+            (b >= batch || ch >= channels ||
+            any(pos < pad) ||
+            any(pos >= uint3(width, height, depth) + pad));
+
+        if (cond)
+            return def;
+        else
+            return Get5D(b, pos - pad, ch);
+    }
+
+    float ClampGet5D(int b, int3 pos, int ch, int3 pad = int3(0,0,0))
+    {
+        KERNEL_ASSERT(sequenceLength==1);
+        KERNEL_ASSERT(numberOfDirections==1);
+        KERNEL_ASSERT(extraDimension==1);
+        b = clamp(b, 0, (int)batch - 1);
+        pos = clamp(pos, pad, int3(width, height, depth) + pad - 1);
+        ch = clamp(ch, 0, (int)channels - 1);
+
+        pos -= pad;
+        return Get5D(b, pos.z, pos.y, pos.x, ch);
+    }
+
+    float BroadcastGet8D(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint c)
+    {
+        return Get8D(s % sequenceLength, r % numberOfDirections, n % batch, t % extraDimension, d % depth, h % height, w % width, c % channels);
+    }
+
+    float Get8D(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint c)
+    {
+        #if CHANNELS_FIRST
+            uint index = IndexSRNCTDHW(s,r,n,t,d,h,w,c);
+        #else
+            uint index = IndexSRNTDHWC(s,r,n,t,d,h,w,c);
+        #endif
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
+    }
+
+    float Get8D(uint b, uint i)
+    {
+        uint index = b * extraDimension * depth * height * width * channels + i;
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
+    }
+
+    float Get5D(uint n, uint3 pos, uint ch)
+    {
+        return Get5D(n, pos.z, pos.y, pos.x, ch);
+    }
+
+    float Get5D(uint n, uint d, uint h, uint w, uint ch)
+    {
+        #if CHANNELS_FIRST
+            uint index = IndexNCDHW(n,d,h,w,ch);
+        #else
+            uint index = IndexNDHWC(n,d,h,w,ch);
+        #endif
+        float value;
+        TENSOR_READ(value, index, KERNEL_ASSERT_CONTEXT_READONLY_READ);
+        return value;
+    }
+
+    INDEX_HELPER_5D
+    INDEX_HELPER_8D
+};
+
+struct ReadWriteTensor8D : ReadWriteTensor
+{
+    uint sequenceLength, numberOfDirections, extraDimension, depth;
+
+    void Init(int4 nhwc, uint4 srtd, RWStructuredBuffer<float> data_)
+    {
+        ReadWriteTensor::Init(nhwc, data_);
+        sequenceLength = srtd.x;
+        numberOfDirections = srtd.y;
+        extraDimension = srtd.z;
+        depth = srtd.w;
+    }
+
+    void Set5D(uint n, uint d, uint h, uint w, uint ch, float v)
+    {
+        #if CHANNELS_FIRST
+            uint index = IndexNCDHW(n,d,h,w,ch);
+        #else
+            uint index = IndexNDHWC(n,d,h,w,ch);
+        #endif
+        TENSOR_WRITE(v, index, KERNEL_ASSERT_CONTEXT_READWRITE_WRITE);
+    }
+
+    void Set8D(uint s, uint r, uint n, uint t, uint d, uint h, uint w, uint ch, float v)
+    {
+        #if CHANNELS_FIRST
+            uint index = IndexSRNCTDHW(s,r,n,t,d,h,w,ch);
+        #else
+            uint index = IndexSRNTDHWC(s,r,n,t,d,h,w,ch);
+        #endif
+        TENSOR_WRITE(v, index, KERNEL_ASSERT_CONTEXT_READWRITE_WRITE);
+    }
+
+    void Set8D(uint b, uint i, float v)
+    {
+        uint index = b * GetFlatWidth8D() + i;
+        TENSOR_WRITE(v, index, KERNEL_ASSERT_CONTEXT_READWRITE_WRITE);
+    }
+
+    void Set5DWithActivation(uint n, uint d, uint h, uint w, uint ch, float v)
+    {
+        v = ApplyFusedActivation(v);
+        Set5D(n,d,h,w,ch,v);
+    }
+
+    INDEX_HELPER_5D
+    INDEX_HELPER_8D
+};
+
 #if CHANNELS_FIRST
     #define KERNEL_FUNC(name) name##_NCHW
 #else
     #define KERNEL_FUNC(name) name##_NHWC
 #endif
 
-#define TENSOR_DECL(X) uint4 X##declShape; uint4 X##declInfo; StructuredBuffer<float> X##data;
-#define TENSOR_DECL_RW(X) uint4 X##declShape; uint4 X##declInfo; RWStructuredBuffer<float> X##data;
+#define TENSOR_DECL(X) uint4 X##declShape; uint4 X##declInfo; StructuredBuffer<float> X##data; uint4 X##declShape8D;
+#define TENSOR_DECL_RW(X) uint4 X##declShape; uint4 X##declInfo; RWStructuredBuffer<float> X##data; uint4 X##declShape8D;
 
 // readonly with channel order support (for inputs).
 #define TENSOR_ARG(X) ReadonlyTensor X; X.Init(X##declShape, X##data);
+#define TENSOR_ARG_8D(X) ReadonlyTensor8D X; X.Init(X##declShape, X##declShape8D, X##data);
 // readonly with offset, no channel order support (for weights and biases).
 #define TENSOR_MODEL(X) SharedTensor X; X.Init(X##declShape, X##declInfo, X##data);
+#define TENSOR_MODEL_8D(X) SharedTensor8D X; X.Init(X##declShape, X##declShape8D, X##declInfo, X##data);
 // read/write with channel order support (for outputs).
 #define TENSOR_ARG_RW(X) ReadWriteTensor X; X.Init(X##declShape, X##data);
+#define TENSOR_ARG_8D_RW(X) ReadWriteTensor8D X; X.Init(X##declShape, X##declShape8D, X##data);
 
 #define TENSOR_ARGS2(X, O) TENSOR_ARG(X); TENSOR_ARG_RW(O);
 #define TENSOR_ARGS3(X, A, O) TENSOR_ARG(X); TENSOR_MODEL(A); TENSOR_ARG_RW(O);
@@ -564,9 +820,17 @@ struct SharedTensor : Tensor
 #define TENSOR_THREEINPUTS(X, X1, X2, O) TENSOR_ARG(X); TENSOR_ARG(X1); TENSOR_ARG(X2); TENSOR_ARG_RW(O);
 #define TENSOR_ARGS4(X, A, B, O) TENSOR_ARG(X); TENSOR_MODEL(A); TENSOR_MODEL(B); TENSOR_ARG_RW(O);
 
+#define TENSOR_ARGS2_8D(X, O) TENSOR_ARG_8D(X); TENSOR_ARG_8D_RW(O);
+#define TENSOR_ARGS3_8D(X, A, O) TENSOR_ARG_8D(X); TENSOR_MODEL_8D(A); TENSOR_ARG_8D_RW(O);
+#define TENSOR_TWOINPUTS_8D(X, X1, O) TENSOR_ARG_8D(X); TENSOR_ARG_8D(X1); TENSOR_ARG_8D_RW(O);
+#define TENSOR_THREEINPUTS_8D(X, X1, X2, O) TENSOR_ARG_8D(X); TENSOR_ARG_8D(X1); TENSOR_ARG_8D(X2); TENSOR_ARG_8D_RW(O);
+#define TENSOR_ARGS4_8D(X, A, B, O) TENSOR_ARG_8D(X); TENSOR_MODEL_8D(A); TENSOR_MODEL_8D(B); TENSOR_ARG_8D_RW(O);
+
 // shared model tensors
 #define TENSOR_SHARED_MODEL(X, S) SharedTensor X; X.Init(X##declShape, X##declInfo, S##data);
+#define TENSOR_SHARED_MODEL_8D(X, S) SharedTensor8D X; X.Init(X##declShape, X##declShape8D, X##declInfo, S##data);
 #define TENSOR_SHARED2_ARGS4(X, A, B, S, O) TENSOR_ARG(X); TENSOR_SHARED_MODEL(A, S); TENSOR_SHARED_MODEL(B, S); TENSOR_ARG_RW(O);
+#define TENSOR_SHARED2_ARGS4_8D(X, A, B, S, O) TENSOR_ARG_8D(X); TENSOR_SHARED_MODEL_8D(A, S); TENSOR_SHARED_MODEL_8D(B, S); TENSOR_ARG_8D_RW(O);
 
 
 // Purely informational - declares contract between caller of Dispatch() and kernel

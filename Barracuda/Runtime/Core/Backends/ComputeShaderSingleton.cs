@@ -57,7 +57,7 @@ namespace Unity.Barracuda
         private ComputeShader LoadReferenceKernels()
         {
             Profiler.BeginSample("Barracuda.LoadReferenceKernels");
-            var res = LoadIf(ComputeInfo.supportsCompute, "BarracudaReferenceImpl");
+            var res = LoadIf(ComputeInfo.supportsCompute, "Barracuda/BarracudaReferenceImpl");
             Profiler.EndSample();
             return res;
         }
@@ -65,7 +65,7 @@ namespace Unity.Barracuda
         private ComputeShader LoadTextureKernels()
         {
             Profiler.BeginSample("Barracuda.LoadTextureKernels");
-            var res = LoadIf(ComputeInfo.supportsCompute, "TextureUtils");
+            var res = LoadIf(ComputeInfo.supportsCompute, "Barracuda/TextureUtils");
             Profiler.EndSample();
             return res;
         }
@@ -74,14 +74,15 @@ namespace Unity.Barracuda
             Profiler.BeginSample("Barracuda.LoadOptimizedKernels");
             List<ComputeShader> kernelsList = new List<ComputeShader>();
 
-            LoadIf(ComputeInfo.supportsCompute, "Generic", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "Activation", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "Broadcast", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "Pool", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "Pad", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "Dense", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "DenseFP16", kernelsList);
-            LoadIf(ComputeInfo.supportsCompute, "Conv", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Generic", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Activation", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Broadcast", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Pool", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Pad", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Dense", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/DenseFP16", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Conv", kernelsList);
+            LoadIf(ComputeInfo.supportsCompute, "Barracuda/Conv3d", kernelsList);
 
             var res = kernelsList.ToArray();
             Profiler.EndSample();

@@ -115,46 +115,33 @@ internal class ModelAnalyzer
 
                 var Y = shapesByName[l.inputs[1]].Value;
 
-                // ONNX rank 2 : N,C => N,1,1,C
-                //      rank 3 : one must be N C W, (batches = N) => N, 1, W, C
-                //      rank 4 : one must be N C H W, (batches = N * C) => N H W C
-                // X and Y can be different ranks
-                var onnxXshape = new List<int> { X.batch, X.channels, X.height, X.width };
-                if (X.height == 1) onnxXshape = new List<int> { X.batch, X.channels, X.width, 1 };
-                var onnxYshape = new List<int> { Y.batch, Y.channels, Y.height, Y.width };
-                if (Y.height == 1) onnxYshape = new List<int> { Y.batch, Y.channels, Y.width, 1 };
+                int rankX;
+                int rankY;
+                List<int> onnxXshape;
+                List<int> onnxYshape;
 
-                int rankX = 0;
-                for (int i = 3; i >= 0; i--)
+                if (l.pool == null || l.pool.Length == 0)
                 {
-                    if (onnxXshape[i] != 1)
-                    {
-                        rankX = i + 1;
-                        break;
-                    }
+                    LegacyGetXYRanks(X, Y, out rankX, out rankY);
                 }
-                int rankY = 0;
-                for (int i = 3; i >= 0; i--)
+                else
                 {
-                    if (onnxYshape[i] != 1)
-                    {
-                        rankY = i + 1;
-                        break;
-                    }
+                    rankX = l.pool[0];
+                    rankY = l.pool[1];
                 }
+
+                onnxXshape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToOnnxLayout(X, rankX);
+                onnxYshape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToOnnxLayout(Y, rankY);
 
                 int rankO = Math.Max(rankX, rankY);
 
                 // pad 1 on front of shape to both be rankO shape
                 for (int i = 0; i < (rankX - rankY); i++)
                     onnxYshape.Insert(0, 1);
-                onnxYshape.RemoveRange(4, onnxYshape.Count - 4);
 
                 for (int i = 0; i < (rankY - rankX); i++)
                     onnxXshape.Insert(0, 1);
-                onnxXshape.RemoveRange(4, onnxXshape.Count - 4);
 
- 
                 if (rankO == 2)
                     O = new TensorShape(onnxXshape[0], 1, 1, onnxYshape[1]);
                 else if (rankO == 3)
@@ -164,6 +151,7 @@ internal class ModelAnalyzer
             }
             else if (
                 l.type == Layer.Type.Conv2D ||
+                l.type == Layer.Type.Conv3D ||
                 l.type == Layer.Type.DepthwiseConv2D)
             {
                 var K = l.datasets[0].shape;
@@ -198,6 +186,21 @@ internal class ModelAnalyzer
                     Assert.IsNotNull(l.pool);
                     Assert.AreEqual(l.pool.Length, 2);
                     O = new TensorShape(X.batch, X.height * l.pool[1], X.width * l.pool[0], X.channels);
+                }
+            }
+            else if (
+                l.type == Layer.Type.Upsample3D)
+            {
+                if(inputShapes.Count > 1)
+                {
+                    O = null;
+                }
+                else
+                {
+                    // pool size is treated as upsample coefficient here
+                    Assert.IsNotNull(l.pool);
+                    Assert.AreEqual(l.pool.Length, 3);
+                    O = new TensorShape(1,1,X.batch, 1, X.depth * l.pool[2], X.height * l.pool[1], X.width * l.pool[0], X.channels);
                 }
             }
             else if (
@@ -251,6 +254,7 @@ internal class ModelAnalyzer
             }
             else if (
                 l.type == Layer.Type.Border2D ||
+                l.type == Layer.Type.Border3D ||
                 l.type == Layer.Type.Pad2DReflect ||
                 l.type == Layer.Type.Pad2DSymmetric ||
                 l.type == Layer.Type.Pad2DEdge)
@@ -427,7 +431,7 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)
             {
-                throw new NotImplementedException();
+                O = X;
             }
             else if (
                 l.type == Layer.Type.Concat)
@@ -460,7 +464,6 @@ internal class ModelAnalyzer
             {
                 // pool size is treated as tiling coefficient here
                 Assert.IsNotNull(l.pool);
-                Assert.AreEqual(l.pool.Length, 4);
                 var scale = l.pool;
                 O = X.Scale(scale);
             }
@@ -477,7 +480,7 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.LRN ||
                 l.type == Layer.Type.Dropout ||
                 l.type == Layer.Type.LogicalNot ||
-                l.activation == Layer.Activation.PRelu)
+                l.type == Layer.Type.Where)
             {
                 // works in place, keeps the same shape size
                 O = X;
@@ -495,10 +498,6 @@ internal class ModelAnalyzer
             {
                 int shapeRank = l.axis > 0 ? 1 : X.length;
                 O = new TensorShape(shapeRank, 1, 1, 1);
-            }
-            else if (l.type == Layer.Type.Where)
-            {
-                O = X;
             }
             else if (
                 l.type == Layer.Type.Conv3D ||
@@ -525,6 +524,39 @@ internal class ModelAnalyzer
         return shapes.ToArray();
     }
 
+    // TODO: Remove when the legacy importer / code path is no longer needed (i.e. when pool is always set)
+    public static void LegacyGetXYRanks(TensorShape X, TensorShape Y, out int rankX, out int rankY)
+    {
+        // ONNX rank 2 : N,C => N,1,1,C
+        //      rank 3 : one must be N C W, (batches = N) => N, 1, W, C
+        //      rank 4 : one must be N C H W, (batches = N * C) => N H W C
+        // X and Y can be different ranks
+        var onnxXshape = new List<int> { X.batch, X.channels, X.height, X.width };
+        if (X.height == 1) onnxXshape = new List<int> { X.batch, X.channels, X.width, 1 };
+        var onnxYshape = new List<int> { Y.batch, Y.channels, Y.height, Y.width };
+        if (Y.height == 1) onnxYshape = new List<int> { Y.batch, Y.channels, Y.width, 1 };
+
+        rankX = 0;
+        for (int i = 3; i >= 0; i--)
+        {
+            if (onnxXshape[i] != 1)
+            {
+                rankX = i + 1;
+                break;
+            }
+        }
+
+        rankY = 0;
+        for (int i = 3; i >= 0; i--)
+        {
+            if (onnxYshape[i] != 1)
+            {
+                rankY = i + 1;
+                break;
+            }
+        }
+    }
+
     public static bool TryGetOutputTensorShape(Model model, IDictionary<string, TensorShape> inputShapes, string output, out TensorShape shape)
     {
         shape = new TensorShape();
@@ -544,6 +576,20 @@ internal class ModelAnalyzer
         foreach (var i in model.inputs)
             inputShapes.Add(i.name, new TensorShape(i.shape));
         return TryGetOutputTensorShape(model, inputShapes, output, out shape);
+    }
+
+    public static bool FindLayerByName(Model model, string name, out Layer layer)
+    {
+        layer = new Layer("",Layer.Type.Nop);
+        foreach (var l in model.layers)
+        {
+            if (l.name == name)
+            {
+                layer = l;
+                return true;
+            }
+        }
+        return false;
     }
 
     public static HashSet<Layer> FindLayersThatRequireStorage(Model model)
@@ -648,14 +694,25 @@ internal class ModelAnalyzer
     {
         var layerUsageByName = model.layers.ToDictionary(i => i.name, i => false);
         foreach (var layer in model.layers)
+        {
+            if (layer.flags.HasFlag(Layer.Flags.Preserve))
+                layerUsageByName[layer.name] = true;
+
             foreach (var i in layer.inputs)
+            {
                 layerUsageByName[i] = true;
+            }
+        }
 
         foreach (var o in model.outputs)
+        {
             layerUsageByName[o] = true;
+        }
 
         foreach (var mem in model.memories)
+        {
             layerUsageByName[mem.output] = true;
+        }
 
         return layerUsageByName.Where(keyValue => !keyValue.Value).Select(keyValue => keyValue.Key).ToArray();
     }
@@ -710,6 +767,41 @@ internal class ModelAnalyzer
     static public string[] FindUnconnectedOutputs(Model model)
     {
         return FindBrokenLinks(model, model.outputs.ToArray());
+    }
+
+    public static bool IsLayerBroacastable(Layer layer)
+    {
+        return layer.type == Layer.Type.Add ||
+                layer.type == Layer.Type.Sub ||
+                layer.type == Layer.Type.Mul ||
+                layer.type == Layer.Type.Div ||
+                layer.type == Layer.Type.Pow ||
+                layer.type == Layer.Type.Min ||
+                layer.type == Layer.Type.Max ||
+                layer.type == Layer.Type.Mean ||
+                layer.type == Layer.Type.Greater ||
+                layer.type == Layer.Type.GreaterEqual ||
+                layer.type == Layer.Type.Less ||
+                layer.type == Layer.Type.LessEqual ||
+                layer.type == Layer.Type.Equal ||
+                layer.type == Layer.Type.LogicalOr ||
+                layer.type == Layer.Type.LogicalAnd ||
+                layer.type == Layer.Type.LogicalXor ||
+                layer.type == Layer.Type.Where ||
+                layer.type == Layer.Type.Concat;
+    }
+
+    // Allow some unknown input dimension for shape inference pass
+    // for now batch does not yield problematic shape inference, so allow for unkown batch
+    public static bool IsInputShapeAcceptablyKnowForShapeInference(Model.Input input) // acceptable unknown shape : N
+    {
+        for (int i = 0; i < input.shape.Length; i++)
+        {
+            var x = input.shape[i];
+            if (x <= 0 && i != TensorShape.DataBatch)
+                return false;
+        }
+        return true;
     }
 }
 
