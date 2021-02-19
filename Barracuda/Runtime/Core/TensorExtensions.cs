@@ -397,10 +397,19 @@ public static class TensorExtensions
     /// <returns>output shape</returns>
     static public TensorShape Scale(this TensorShape shape, int[] scale)
     {
-        scale = Get8DParametersFrom4DParametersAndShape(shape, scale, 1);
-
-        for (var axis = 0; axis < TensorShape.MaxRank; axis++)
-            shape[axis] *= scale[axis];
+        if (scale.Length == TensorShape.MaxRank)
+        {
+            for (var axis = 0; axis < TensorShape.MaxRank; axis++)
+                shape[axis] *= scale[axis];
+        }
+        else
+        {
+            Assert.AreEqual(4, scale.Length);
+            shape[TensorShape.DataBatch] *= scale[0];
+            shape[5] *= scale[1];
+            shape[6] *= scale[2];
+            shape[7] *= scale[3];
+        }
         return shape;
     }
 
@@ -423,58 +432,67 @@ public static class TensorExtensions
     /// See: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Reshape
     /// </summary>
     /// <param name="shape">TensorShape</param>
-    /// <param name="size">new shape</param>
+    /// <param name="size4Dor8D">new shape</param>
     /// <returns>output shape</returns>
     /// <exception cref="ArgumentException">more than one dimension is unspecified</exception>
-    static public TensorShape Reshape(this TensorShape shape, int[] size)
+    static public TensorShape Reshape(this TensorShape shape, int[] size4Dor8D)
     {
-        size = Get8DParametersFrom4DParametersAndShape(shape, size, 1);
-        var newShapeArray = shape.ToArray();
-
-        // From: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Reshape
-        //
-        // At most one dimension of the new shape can be -1.
-        // In this case, the value is inferred from the size of the tensor and the remaining dimensions.
-        //
-        // A dimension could also be 0,
-        // in which case the actual dimension value is unchanged (i.e. taken from the input tensor).
-
-        var multipleOf = 1;
-        var unknownIndex = -1;
-        for (int q = 0; q < size.Length; ++q)
+        unsafe
         {
-            if (size[q] > 0)
+            int* size = stackalloc int[TensorShape.MaxRank];
+            int* newShapeArray = stackalloc int[TensorShape.MaxRank];
+
+            Get8DParametersNoAlloc(shape, size4Dor8D, size, 1);
+            for (int d = 0; d < TensorShape.MaxRank; ++d)
+                newShapeArray[d] = shape[d];
+
+            // From: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Reshape
+            //
+            // At most one dimension of the new shape can be -1.
+            // In this case, the value is inferred from the size of the tensor and the remaining dimensions.
+            //
+            // A dimension could also be 0,
+            // in which case the actual dimension value is unchanged (i.e. taken from the input tensor).
+
+            var multipleOf = 1;
+            var unknownIndex = -1;
+            for (int q = 0; q < TensorShape.MaxRank; ++q)
             {
-                multipleOf *= size[q];
-                newShapeArray[q] = size[q];
+                if (size[q] > 0)
+                {
+                    multipleOf *= size[q];
+                    newShapeArray[q] = size[q];
+                }
+                else if (size[q] == 0)
+                    multipleOf *= newShapeArray[q];
+                else if (unknownIndex == -1)
+                    unknownIndex = q;
+                else
+                    throw new ArgumentException("Can only specify one unknown dimension");
             }
-            else if (size[q] == 0)
-                multipleOf *= newShapeArray[q];
-            else if (unknownIndex == -1)
-                unknownIndex = q;
-            else
-                throw new ArgumentException("Can only specify one unknown dimension");
-        }
 
-        if (unknownIndex == -1)
-        {
-            // all dimensions are given
-            var newShape = new TensorShape(newShapeArray);
-            if (shape.length != newShape.length)
+            if (unknownIndex == -1)
+            {
+                // all dimensions are given
+                var newShape = new TensorShape(newShapeArray[0], newShapeArray[1], newShapeArray[2], newShapeArray[3],
+                                               newShapeArray[4], newShapeArray[5], newShapeArray[6], newShapeArray[7]);
+                if (shape.length != newShape.length)
+                    throw new ArgumentException("Cannot reshape array of size " + shape.length +
+                                                " into shape " + newShape);
+                return newShape;
+            }
+
+            var solveForIndex = shape.length / multipleOf;
+            bool remainderLeft = shape.length % multipleOf != 0;
+
+            if (remainderLeft)
                 throw new ArgumentException("Cannot reshape array of size " + shape.length +
-                    " into shape " + newShape);
-            return newShape;
+                                            " into shape with multiple of " + multipleOf + " elements");
+
+            newShapeArray[unknownIndex] = solveForIndex;
+            return new TensorShape(newShapeArray[0], newShapeArray[1], newShapeArray[2], newShapeArray[3],
+                                   newShapeArray[4], newShapeArray[5], newShapeArray[6], newShapeArray[7]);
         }
-
-        var solveForIndex = shape.length / multipleOf;
-        bool remainderLeft = shape.length % multipleOf != 0;
-
-        if (remainderLeft)
-            throw new ArgumentException("Cannot reshape array of size " + shape.length +
-                " into shape with multiple of " + multipleOf + " elements");
-
-        newShapeArray[unknownIndex] = solveForIndex;
-        return new TensorShape(newShapeArray);
     }
 
     /// <summary>
@@ -505,15 +523,17 @@ public static class TensorExtensions
     static internal int[] AdjustPadToKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
         Assert.IsTrue(stride.Length==2 || stride.Length==3);
-        int[] kernelDims = null;
-        switch (stride.Length)
+        unsafe
         {
-            case 2: kernelDims = new int[] {kernel.kernelWidth, kernel.kernelHeight};
-                break;
-            default: kernelDims = new int[] {kernel.kernelWidth, kernel.kernelHeight, kernel.kernelSpatialDepth};
-                break;
+            int* kernelDims = stackalloc int[stride.Length == 2 ? 2 : 3];
+            kernelDims[0] = kernel.kernelWidth;
+            kernelDims[1] = kernel.kernelHeight;
+
+            if (stride.Length > 2)
+                kernelDims[2] = kernel.kernelSpatialDepth;
+
+            return AdjustPadToPool(shape, kernelDims, stride, pad);
         }
-        return AdjustPadToPool(shape, kernelDims, stride, pad);
     }
 
     static internal int[] AdjustPadToPool(this Tensor tensor, int[] pool, int[] stride, int[] pad)
@@ -521,10 +541,25 @@ public static class TensorExtensions
         return AdjustPadToPool(tensor.shape, pool, stride, pad);
     }
 
+    static internal unsafe int[] AdjustPadToPool(this Tensor tensor, int* pool, int[] stride, int[] pad)
+    {
+        return AdjustPadToPool(tensor.shape, pool, stride, pad);
+    }
+
     static internal int[] AdjustPadToPool(this TensorShape shape, int[] pool, int[] stride, int[] pad)
     {
+        unsafe
+        {
+            fixed (int* pPool = pool)
+            {
+                return AdjustPadToPool(shape, pPool, stride, pad);
+            }
+        }
+    }
+
+    static internal unsafe int[] AdjustPadToPool(this TensorShape shape, int* pool, int[] stride, int[] pad)
+    {
         Assert.IsTrue(stride.Length > 0);
-        Assert.IsTrue(stride.Length == pool.Length);
         int featureCount = stride.Length;
         Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
 
@@ -566,11 +601,24 @@ public static class TensorExtensions
             throw new NotImplementedException("This padding type is not implemented yet!");
     }
 
-    static internal TensorShape ApplyPool(this TensorShape shape, int[] pool, int[] stride, int[] pad, bool ceilMode = false)
+    static internal TensorShape ApplyPool(this TensorShape shape, int[] pool, int[] stride, int[] pad,
+        bool ceilMode = false)
+    {
+        Assert.IsTrue(stride.Length == pool.Length);
+        unsafe
+        {
+            fixed (int* pPool = pool)
+            {
+                return ApplyPool(shape, pPool, stride, pad, ceilMode);
+            }
+        }
+    }
+
+    static internal unsafe TensorShape ApplyPool(this TensorShape shape, int* pool, int[] stride, int[] pad, bool ceilMode = false)
     {
 
         Assert.IsTrue(stride.Length > 0);
-        Assert.IsTrue(stride.Length == pool.Length);
+
         Assert.IsTrue(stride.Length*2 == pad.Length);
         int featureCount = stride.Length;
         Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
@@ -599,14 +647,19 @@ public static class TensorExtensions
 
     static internal TensorShape ApplyKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
-        Assert.IsTrue(stride.Length==2 || stride.Length==3);
-        int[] kernelDims = (stride.Length == 2)
-            ? new int[] {kernel.kernelWidth, kernel.kernelHeight}
-            : new int[] {kernel.kernelWidth, kernel.kernelHeight, kernel.kernelSpatialDepth};
+        unsafe
+        {
+            Assert.IsTrue(stride.Length==2 || stride.Length==3);
+            int* kernelDims = stackalloc int[stride.Length == 2 ? 2 : 3];
+            kernelDims[0] = kernel.kernelWidth;
+            kernelDims[1] = kernel.kernelHeight;
+            if (stride.Length > 2)
+                kernelDims[2] = kernel.kernelSpatialDepth;
 
-        int[] shapeArray = ApplyPool(shape, kernelDims, stride, pad).ToArray();
-        shapeArray[7] = kernel.kernelCount;
-        return new TensorShape(shapeArray);
+            var outShape = ApplyPool(shape, kernelDims, stride, pad);
+            outShape[7] = kernel.kernelCount;
+            return outShape;
+        }
     }
 
     static internal TensorShape ApplyKernelInverse(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad, int[] outputAdjustment)
@@ -748,37 +801,26 @@ public static class TensorExtensions
             return axis - TensorShape.D;
     }
 
-    /// <summary>
-    /// Retrieve 4D tensor shape from 8D shape
-    /// </summary>
-    /// <param name="shape">shape</param>
-    /// <param name="parameters">shape as int array</param>
-    /// <returns>int array representing 4D shape</returns>
-    static public int[] Get4DParametersFrom8DParameterAndShape(this TensorShape shape, int[] parameters)
-    {
-        if (parameters.Length == 4)
-            return parameters;
-
-        Assert.IsTrue(shape.Is4D(), $"Parameters {parameters} can't be converted to NCHW with a tensor of shape {shape} as it contains other dimensions.");
-        Assert.AreEqual(parameters.Length, TensorShape.MaxRank);
-        return new int[] {parameters[TensorShape.DataBatch], parameters[TensorShape.H], parameters[TensorShape.W], parameters[TensorShape.C] };
-    }
-
-    /// <summary>
-    /// Retrieve 8D tensor shape from 4D shape
-    /// </summary>
-    /// <param name="shape">shape</param>
-    /// <param name="parameters">shape as int array</param>
-    /// <param name="defaultValue">default value for new axes</param>
-    /// <returns>int array representing 8D shape</returns>
-    static public int[] Get8DParametersFrom4DParametersAndShape(this TensorShape shape, int[] parameters, int defaultValue)
+    static internal unsafe void Get8DParametersNoAlloc(this TensorShape shape, int[] parameters, int* parameters8D, int defaultValue)
     {
         if (parameters.Length == TensorShape.MaxRank)
-            return parameters;
-
-        Assert.AreEqual(4, parameters.Length);
-        Assert.IsTrue(shape.Is4D(), $"4D Parameters {parameters} can't be used with a tensor of shape {shape} as it contains other dimensions, please use 8D parameters for this shape.");
-        return new int[] {defaultValue, defaultValue, parameters[0], defaultValue, defaultValue, parameters[1], parameters[2], parameters[3] };
+        {
+            for (int i = 0; i < TensorShape.MaxRank; ++i)
+                parameters8D[i] = parameters[i];
+        }
+        else
+        {
+            Assert.AreEqual(4, parameters.Length);
+            if (!shape.Is4D()) Assert.IsTrue(false, $"4D Parameters {parameters} can't be used with a tensor of shape {shape} as it contains other dimensions, please use 8D parameters for this shape.");
+            parameters8D[0] = defaultValue;
+            parameters8D[1] = defaultValue;
+            parameters8D[2] = parameters[0];
+            parameters8D[3] = defaultValue;
+            parameters8D[4] = defaultValue;
+            parameters8D[5] = parameters[1];
+            parameters8D[6] = parameters[2];
+            parameters8D[7] = parameters[3];
+        }
     }
 
     /// <summary>
@@ -793,7 +835,7 @@ public static class TensorExtensions
             return permutations;
 
         Assert.AreEqual(4, permutations.Length);
-        Assert.IsTrue( shape.Is4D(), $"4D Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        if (!shape.Is4D()) Assert.IsTrue(false, $"4D Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
         int batchOldAxis = Convert4DTo8DAxis(permutations[0]);
         int heighOldAxis = Convert4DTo8DAxis(permutations[1]);
         int widthOldIndex = Convert4DTo8DAxis(permutations[2]);
@@ -807,7 +849,7 @@ public static class TensorExtensions
             return permutations;
 
         Assert.AreEqual(4, permutations.Length);
-        Assert.IsTrue( shape.Is4D(), $"4D Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        if (!shape.Is4D()) Assert.IsTrue(false, $"4D Permutation {permutations} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
         int batchOldAxis = Convert4DTo8DAxis(permutations[0]);
         int channelOldIndex = Convert4DTo8DAxis(permutations[1]);
         int heightOldIndex = Convert4DTo8DAxis(permutations[2]);
@@ -816,12 +858,9 @@ public static class TensorExtensions
     }
 
     // TODO: implement negative strides
-    static internal TensorShape ApplyStridedSlice(this TensorShape shape, int[] starts, int[] ends, int[] stride)
+    static internal unsafe TensorShape ApplyStridedSlice8DUnsafeNoAlloc(this TensorShape shape, int* starts, int* ends,
+        int* stride)
     {
-        starts = Get8DParametersFrom4DParametersAndShape(shape, starts, 0);
-        ends = Get8DParametersFrom4DParametersAndShape(shape, ends, 1);
-        stride = Get8DParametersFrom4DParametersAndShape(shape, stride, 1);
-
         TensorShape counts = shape;
         TensorShape sliced = shape;
 
@@ -850,6 +889,21 @@ public static class TensorExtensions
         }
 
         return sliced;
+    }
+
+    static internal TensorShape ApplyStridedSlice(this TensorShape shape, int[] starts, int[] ends, int[] stride)
+    {
+        unsafe
+        {
+            int* starts8Dbuffer = stackalloc int[TensorShape.MaxRank];
+            int* ends8Dbuffer = stackalloc int[TensorShape.MaxRank];
+            int* stride8Dbuffer = stackalloc int[TensorShape.MaxRank];
+            Get8DParametersNoAlloc(shape, starts, starts8Dbuffer, 0);
+            Get8DParametersNoAlloc(shape, ends, ends8Dbuffer, 1);
+            Get8DParametersNoAlloc(shape, stride, stride8Dbuffer, 1);
+
+            return shape.ApplyStridedSlice8DUnsafeNoAlloc(starts8Dbuffer, ends8Dbuffer, stride8Dbuffer);
+        }
     }
 
 

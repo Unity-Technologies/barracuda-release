@@ -48,15 +48,13 @@ internal class BarracudaBackendsFactory
         switch(type)
         {
         case WorkerFactory.Type.ComputePrecompiled:
-            return new PrecompiledComputeOps(ComputeShaderSingleton.Instance.kernels,
-                                            ComputeShaderSingleton.Instance.referenceKernels, allocator, verbose);
+            return new PrecompiledComputeOps(allocator, verbose);
 
         case WorkerFactory.Type.Compute:
-            return new ComputeOps(ComputeShaderSingleton.Instance.kernels,
-                                 ComputeShaderSingleton.Instance.referenceKernels, allocator, verbose);
+            return new ComputeOps(allocator, verbose);
 
         case WorkerFactory.Type.ComputeRef:
-            return new ReferenceComputeOps(ComputeShaderSingleton.Instance.referenceKernels, allocator);
+            return new ReferenceComputeOps(allocator);
 
         case WorkerFactory.Type.CSharpBurst:
             return new BurstCPUOps(allocator);

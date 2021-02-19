@@ -1,0 +1,232 @@
+#pragma kernel Abs_Flat
+#pragma kernel Abs_FlatStrict
+#pragma kernel Abs_Loop
+#pragma kernel Neg_Flat
+#pragma kernel Neg_FlatStrict
+#pragma kernel Neg_Loop
+#pragma kernel Ceil_Flat
+#pragma kernel Ceil_FlatStrict
+#pragma kernel Ceil_Loop
+#pragma kernel Floor_Flat
+#pragma kernel Floor_FlatStrict
+#pragma kernel Floor_Loop
+
+#pragma kernel Selu_Flat
+#pragma kernel Selu_FlatStrict
+#pragma kernel Selu_Loop
+
+#pragma kernel Softplus_Flat
+#pragma kernel Softplus_FlatStrict
+#pragma kernel Softplus_Loop
+
+#pragma kernel Elu_Flat
+#pragma kernel Elu_FlatStrict
+#pragma kernel Elu_Loop
+
+#pragma kernel Exp_Flat
+#pragma kernel Exp_FlatStrict
+#pragma kernel Exp_Loop
+#pragma kernel Log_Flat
+#pragma kernel Log_FlatStrict
+#pragma kernel Log_Loop
+#pragma kernel Pow_Flat
+#pragma kernel Pow_FlatStrict
+#pragma kernel Pow_Loop
+#pragma kernel LogicalNot_Flat
+#pragma kernel LogicalNot_FlatStrict
+#pragma kernel LogicalNot_Loop
+
+#pragma kernel Acos_Flat
+#pragma kernel Acos_FlatStrict
+#pragma kernel Acos_Loop
+#pragma kernel Acosh_Flat
+#pragma kernel Acosh_FlatStrict
+#pragma kernel Acosh_Loop
+#pragma kernel Asin_Flat
+#pragma kernel Asin_FlatStrict
+#pragma kernel Asin_Loop
+#pragma kernel Asinh_Flat
+#pragma kernel Asinh_FlatStrict
+#pragma kernel Asinh_Loop
+#pragma kernel Atan_Flat
+#pragma kernel Atan_FlatStrict
+#pragma kernel Atan_Loop
+#pragma kernel Atanh_Flat
+#pragma kernel Atanh_FlatStrict
+#pragma kernel Atanh_Loop
+#pragma kernel Cos_Flat
+#pragma kernel Cos_FlatStrict
+#pragma kernel Cos_Loop
+#pragma kernel Cosh_Flat
+#pragma kernel Cosh_FlatStrict
+#pragma kernel Cosh_Loop
+#pragma kernel Sin_Flat
+#pragma kernel Sin_FlatStrict
+#pragma kernel Sin_Loop
+#pragma kernel Sinh_Flat
+#pragma kernel Sinh_FlatStrict
+#pragma kernel Sinh_Loop
+#pragma kernel Tan_Flat
+#pragma kernel Tan_FlatStrict
+#pragma kernel Tan_Loop
+
+#pragma kernel Relu_NHWC CHANNELS_FIRST=0
+#pragma kernel Relu_NCHW CHANNELS_FIRST=1
+#pragma kernel Relu_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Relu_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Relu_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Relu_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Relu6_NHWC CHANNELS_FIRST=0
+#pragma kernel Relu6_NCHW CHANNELS_FIRST=1
+#pragma kernel Relu6_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Relu6_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Relu6_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Relu6_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel PRelu_NHWC CHANNELS_FIRST=0
+#pragma kernel PRelu_NCHW CHANNELS_FIRST=1
+#pragma kernel PRelu_CNyx2_NHWC CHANNELS_FIRST=0
+//#pragma kernel PRelu_CNyx2_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Selu_NHWC CHANNELS_FIRST=0
+#pragma kernel Selu_NCHW CHANNELS_FIRST=1
+#pragma kernel Selu_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Selu_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Selu_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Selu_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Tanh_NHWC CHANNELS_FIRST=0
+#pragma kernel Tanh_NCHW CHANNELS_FIRST=1
+#pragma kernel Tanh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Tanh_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Tanh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Tanh_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Swish_NHWC CHANNELS_FIRST=0
+#pragma kernel Swish_NCHW CHANNELS_FIRST=1
+#pragma kernel Swish_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Swish_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Swish_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Swish_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Softplus_NHWC CHANNELS_FIRST=0
+#pragma kernel Softplus_NCHW CHANNELS_FIRST=1
+#pragma kernel Softplus_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Softplus_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Softplus_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Softplus_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Sigmoid_NHWC CHANNELS_FIRST=0
+#pragma kernel Sigmoid_NCHW CHANNELS_FIRST=1
+#pragma kernel Sigmoid_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sigmoid_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Sigmoid_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sigmoid_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Elu_NHWC CHANNELS_FIRST=0
+#pragma kernel Elu_NCHW CHANNELS_FIRST=1
+#pragma kernel Elu_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Elu_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Elu_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Elu_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel LeakyRelu_NHWC CHANNELS_FIRST=0
+#pragma kernel LeakyRelu_NCHW CHANNELS_FIRST=1
+#pragma kernel LeakyRelu_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel LeakyRelu_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel LeakyRelu_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel LeakyRelu_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Exp_NHWC CHANNELS_FIRST=0
+#pragma kernel Exp_NCHW CHANNELS_FIRST=1
+#pragma kernel Exp_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Exp_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Exp_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Exp_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Log_NHWC CHANNELS_FIRST=0
+#pragma kernel Log_NCHW CHANNELS_FIRST=1
+#pragma kernel Log_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Log_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Log_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Log_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Sqrt_NHWC CHANNELS_FIRST=0
+#pragma kernel Sqrt_NCHW CHANNELS_FIRST=1
+#pragma kernel Sqrt_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sqrt_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Sqrt_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sqrt_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Pow_NHWC CHANNELS_FIRST=0
+#pragma kernel Pow_NCHW CHANNELS_FIRST=1
+#pragma kernel Pow_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Pow_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Pow_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Pow_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Softmax_NHWC CHANNELS_FIRST=0
+#pragma kernel Softmax_NCHW CHANNELS_FIRST=1
+#pragma kernel LogSoftmax_NHWC CHANNELS_FIRST=0
+#pragma kernel LogSoftmax_NCHW CHANNELS_FIRST=1
+#pragma kernel Clip_NHWC CHANNELS_FIRST=0
+#pragma kernel Clip_NCHW CHANNELS_FIRST=1
+#pragma kernel Clip_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Clip_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Clip_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Clip_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel Acos_NHWC CHANNELS_FIRST=0
+#pragma kernel Acos_NCHW CHANNELS_FIRST=1
+#pragma kernel Acos_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acos_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Acos_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acos_Nyxc_NHWCCHANNELS_FIRST=1
+#pragma kernel Acosh_NHWC CHANNELS_FIRST=0
+#pragma kernel Acosh_NCHW CHANNELS_FIRST=1
+#pragma kernel Acosh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acosh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Acosh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Acosh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Asin_NHWC CHANNELS_FIRST=0
+#pragma kernel Asin_NCHW CHANNELS_FIRST=1
+#pragma kernel Asin_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asin_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Asin_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asin_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Asinh_NHWC CHANNELS_FIRST=0
+#pragma kernel Asinh_NCHW CHANNELS_FIRST=1
+#pragma kernel Asinh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asinh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Asinh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Asin_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Atan_NHWC CHANNELS_FIRST=0
+#pragma kernel Atan_NCHW CHANNELS_FIRST=1
+#pragma kernel Atan_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atan_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Atan_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atan_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Atanh_NHWC CHANNELS_FIRST=0
+#pragma kernel Atanh_NCHW CHANNELS_FIRST=1
+#pragma kernel Atanh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atanh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Atanh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Atanh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Cos_NHWC CHANNELS_FIRST=0
+#pragma kernel Cos_NCHW CHANNELS_FIRST=1
+#pragma kernel Cos_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cos_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Cos_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cos_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Cosh_NHWC CHANNELS_FIRST=0
+#pragma kernel Cosh_NCHW CHANNELS_FIRST=1
+#pragma kernel Cosh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cosh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Cosh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Cosh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Sin_NHWC CHANNELS_FIRST=0
+#pragma kernel Sin_NCHW CHANNELS_FIRST=1
+#pragma kernel Sin_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sin_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Sin_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sin_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Sinh_NHWC CHANNELS_FIRST=0
+#pragma kernel Sinh_NCHW CHANNELS_FIRST=1
+#pragma kernel Sinh_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sinh_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Sinh_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Sinh_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Tan_NHWC CHANNELS_FIRST=0
+#pragma kernel Tan_NCHW CHANNELS_FIRST=1
+#pragma kernel Tan_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Tan_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Tan_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Tan_Nyxc_NHWC CHANNELS_FIRST=1
+
+#include "Activation.cginc"

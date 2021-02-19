@@ -348,6 +348,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.ReduceProd:
                 case Layer.Type.ReduceSum:
                 case Layer.Type.ReduceSumSquare:
+                case Layer.Type.ArgMax:
+                case Layer.Type.ArgMin:
                 {
                     TensorShape X = inputShapes[0];
                     int rank = inputRanks[0];

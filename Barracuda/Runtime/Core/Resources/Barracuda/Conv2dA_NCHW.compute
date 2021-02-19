@@ -1,0 +1,17 @@
+// Most often used kernels
+
+#pragma kernel Conv2D_NCHW CHANNELS_FIRST=1
+#pragma kernel Conv2D_RegisterBlock4x2_NCHW CHANNELS_FIRST=1
+
+#pragma kernel DepthwiseConv2D_NCHW CHANNELS_FIRST=1
+
+//R4x4_64k
+#pragma kernel Conv2DKernelKxK_StrictC16K64_T16x16_R4x4_NCHW      CHANNELS_FIRST=1 BLOCK_SIZE=4                  STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC16K64_T16x16_R
+
+#pragma kernel Conv2DKernelKxK_T16x16_R4x4_NCHW                   CHANNELS_FIRST=1 BLOCK_SIZE=4                                                 SUFFIX=KernelKxK_T16x16_R
+
+#pragma kernel Conv2DKernel1x1_StrictC16K64_T16x16_R4x4_NCHW      CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_1x1=1     STRICT_CHANNELS=1              SUFFIX=Kernel1x1_StrictC16K64_T16x16_R
+
+
+
+#include "Conv2d.cginc"

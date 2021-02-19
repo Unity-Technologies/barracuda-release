@@ -1,5 +1,12 @@
 # Release notes
 
+## [1.3.1] - 2021-01-31
+- Performance: Improved Transformer (MatMul rank-3 / rank-4) performance on `CSharpBurst` backend.
+- Performance: Reduced compute shader loading times for most popular networks.
+- Performance: Reduced amount of temp allocations for `Compute`, `ComputePrecompiled` and `CSharpBurst` backends.
+- Performance: Improved `StridedSlice`, `Concat` and `Border2D` performance on `CSharpBurst` backend.
+- ONNX: Fixed import of models with `ArgMin`, `ArgMax`
+
 ## [1.3.0] - 2021-01-28
 - ONNX: Major ONNX import refactoring, which allows to better track `Tensor` shapes and axes. More models should import correctly.
 - ONNX: Improved multidimensional MatMul support.   

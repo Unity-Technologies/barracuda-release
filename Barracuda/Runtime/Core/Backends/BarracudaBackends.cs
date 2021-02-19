@@ -805,11 +805,11 @@ public interface IOps
     /// Strided slice
     /// </summary>
     /// <param name="x">input</param>
-    /// <param name="starts"></param>
-    /// <param name="ends"></param>
-    /// <param name="stride">stride</param>
+    /// <param name="starts4Dor8D"></param>
+    /// <param name="ends4Dor8D"></param>
+    /// <param name="strides4Dor8D">stride</param>
     /// <returns>output Tensor</returns>
-    Tensor StridedSlice(Tensor x, int[] starts, int[] ends, int[] stride);
+    Tensor StridedSlice(Tensor x, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D);
 
     /// <summary>
     /// Tile

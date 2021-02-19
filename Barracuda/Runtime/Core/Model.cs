@@ -433,7 +433,7 @@ public class Layer
         Load = 255
     }
 
-    //Keep in sync with Tensor.cginc ACTIVATION defines
+    //Keep in sync with Tensor.cginc ACTIVATION defines and IsActivationFusable() methods in ModelBuilder.cs and FuseActivationsPass.cs
     /// <summary>
     /// Fused activations enum
     /// </summary>

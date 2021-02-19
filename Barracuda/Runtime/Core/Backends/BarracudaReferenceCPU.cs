@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.Assertions;
 using Random = UnityEngine.Random;
@@ -67,7 +69,7 @@ public class ArrayTensorData : ITensorData
         Assert.IsTrue(managedBufferStartIndex >= 0);
         if (m_Array == data && managedBufferStartIndex == 0)
         {
-            Assert.IsTrue(count == data.Length);
+            Assert.IsTrue(count <= data.Length);
             return;
         }
 
@@ -1525,7 +1527,7 @@ public class ReferenceCPUOps : IOps
         }
     }
 
-    private Random.State[] m_DropoutSeed;
+    protected Random.State[] m_DropoutSeed;
     /// <inheritdoc/>
     public virtual Tensor Dropout(Tensor X, float alpha)
     {
@@ -2441,28 +2443,38 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
+    protected long GetAggregatedDimLength(TensorShape shape, int startDim, int endDim)
+    {
+        long aggregatedLength = 1L;
+        for (var d = startDim; d < endDim; ++d)
+            aggregatedLength *= shape[d];
+        return aggregatedLength;
+    }
+
     /// <inheritdoc/>
     public virtual Tensor Concat(Tensor[] tensors, int axis)
     {
         var concatShape = TensorExtensions.Concat(tensors, axis);
         var O = NewTensor(concatShape);
 
-        var srcIndices = new long[tensors.Length];
-        for (int i = 0; i < tensors.Length; ++i)
-            srcIndices[i] = 0; // NOTE: once we have Tensor.ToReadOnlyArray(ref arrayOffset),
-                               // will need to initialize srcIndices[i] = arrayOffset;
+        unsafe
+        {
+            var srcIndices = stackalloc long[tensors.Length];
+            UnsafeUtility.MemClear(srcIndices, tensors.Length * Marshal.SizeOf<long>());
+            // NOTE: once we have Tensor.ToReadOnlyArray(ref arrayOffset),
+            // will need to initialize srcIndices[i] = arrayOffset;
 
-        // product of all tensor dimensions starting from axis
-        var copyBlockLengths = new long[tensors.Length];
-        for (int i = 0; i < tensors.Length; ++i)
-            copyBlockLengths[i] = tensors[i].shape.ToArray().Skip(tensors[i].shape.Axis(axis)).Aggregate(1L, (a, b) => (long)a * (long)b);
+            // product of all tensor dimensions starting from axis
+            var copyBlockLengths = stackalloc long[tensors.Length];
+            for (int i = 0; i < tensors.Length; ++i)
+                copyBlockLengths[i] = GetAggregatedDimLength(tensors[i].shape,  tensors[i].shape.Axis(axis), TensorShape.MaxRank);
 
-        // copy tensor data interleaved into O
-        int intDstIndex = 0;
-        var dstArray = new float[concatShape.length];
-        long dstIndex = intDstIndex;
-        long takes = concatShape.ToArray().Take(concatShape.Axis(axis)).Aggregate(1L, (a, b) => (long)a * (long)b);
-        for (int take = 0; take < takes; ++take)
+            // copy tensor data interleaved into O
+            int intDstIndex = 0;
+            var dstArray = new float[concatShape.length];
+            long dstIndex = intDstIndex;
+            long takes = GetAggregatedDimLength(concatShape,  0, concatShape.Axis(axis));
+            for (int take = 0; take < takes; ++take)
             for (int i = 0; i < tensors.Length; ++i)
             {
                 var copyLength = copyBlockLengths[i];
@@ -2474,39 +2486,46 @@ public class ReferenceCPUOps : IOps
                 dstIndex += copyLength;
             }
 
-        O.data.Upload(dstArray, concatShape, 0);
+            O.data.Upload(dstArray, concatShape, 0);
+        }
         return O;
     }
 
     /// <inheritdoc/>
-    public virtual Tensor StridedSlice(Tensor X, int[] starts, int[] ends, int[] stride)
+    public virtual Tensor StridedSlice(Tensor X, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D)
     {
-        starts = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, starts, 0);
-        ends = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, ends, 1);
-        stride = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, stride, 1);
-
-        var O = NewTensor(X.shape.ApplyStridedSlice(starts, ends, stride));
-
-        int[] wrappedStartsIndices = new int[TensorShape.MaxRank];
-        for (int i = 0; i < TensorShape.MaxRank; ++i)
-            wrappedStartsIndices[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
-
-        Assert.AreEqual(8, TensorShape.MaxRank);
-        for (var it = new TensorIterator(O); it.IsValid(); it.Next())
+        unsafe
         {
-            // sample either from dim or index 0 in case of expansion
-            O[it.index] = X[
-                wrappedStartsIndices[0] + it.d0 * stride[0],
-                wrappedStartsIndices[1] + it.d1 * stride[1],
-                wrappedStartsIndices[2] + it.d2 * stride[2],
-                wrappedStartsIndices[3] + it.d3 * stride[3],
-                wrappedStartsIndices[4] + it.d4 * stride[4],
-                wrappedStartsIndices[5] + it.d5 * stride[5],
-                wrappedStartsIndices[6] + it.d6 * stride[6],
-                wrappedStartsIndices[7] + it.d7 * stride[7]];
-        }
+            int* starts = stackalloc int[TensorShape.MaxRank];
+            int* ends = stackalloc int[TensorShape.MaxRank];
+            int* strides = stackalloc int[TensorShape.MaxRank];
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, starts4Dor8D, starts, 0);
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, ends4Dor8D, ends, 1);
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, strides4Dor8D, strides, 1);
 
-        return O;
+            var O = NewTensor(X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides));
+
+            int* wrappedStartsIndices = ends;//reuse buffer to save a stack allocation.
+            for (int i = 0; i < TensorShape.MaxRank; ++i)
+                wrappedStartsIndices[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
+
+            Assert.AreEqual(8, TensorShape.MaxRank);
+            for (var it = new TensorIterator(O); it.IsValid(); it.Next())
+            {
+                // sample either from dim or index 0 in case of expansion
+                O[it.index] = X[
+                    wrappedStartsIndices[0] + it.d0 * strides[0],
+                    wrappedStartsIndices[1] + it.d1 * strides[1],
+                    wrappedStartsIndices[2] + it.d2 * strides[2],
+                    wrappedStartsIndices[3] + it.d3 * strides[3],
+                    wrappedStartsIndices[4] + it.d4 * strides[4],
+                    wrappedStartsIndices[5] + it.d5 * strides[5],
+                    wrappedStartsIndices[6] + it.d6 * strides[6],
+                    wrappedStartsIndices[7] + it.d7 * strides[7]];
+            }
+
+            return O;
+        }
     }
 
     /// <inheritdoc/>

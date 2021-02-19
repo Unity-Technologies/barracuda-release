@@ -1,0 +1,34 @@
+// Most often used kernels
+
+#pragma kernel Relu_Flat
+#pragma kernel Relu_FlatStrict
+#pragma kernel Relu_Loop
+#pragma kernel Relu6_Flat
+#pragma kernel Relu6_FlatStrict
+#pragma kernel Relu6_Loop
+
+#pragma kernel Tanh_Flat
+#pragma kernel Tanh_FlatStrict
+#pragma kernel Tanh_Loop
+#pragma kernel Swish_Flat
+#pragma kernel Swish_FlatStrict
+#pragma kernel Swish_Loop
+
+#pragma kernel Sigmoid_Flat
+#pragma kernel Sigmoid_FlatStrict
+#pragma kernel Sigmoid_Loop
+
+#pragma kernel LeakyRelu_Flat
+#pragma kernel LeakyRelu_FlatStrict
+#pragma kernel LeakyRelu_Loop
+
+#pragma kernel Clip_Flat
+#pragma kernel Clip_FlatStrict
+#pragma kernel Clip_Loop
+
+
+#pragma kernel PRelu_Flat
+#pragma kernel PRelu_Loop
+
+
+#include "Activation.cginc"

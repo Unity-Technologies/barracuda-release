@@ -1,56 +1,5 @@
-#pragma kernel Conv2D_NHWC CHANNELS_FIRST=0
-#pragma kernel Conv2D_NCHW CHANNELS_FIRST=1
-#pragma kernel Conv2D_RegisterBlock4x2_NHWC CHANNELS_FIRST=0
-#pragma kernel Conv2D_RegisterBlock4x2_NCHW CHANNELS_FIRST=1
-//#pragma kernel Conv2D_L1Cached64_RegisterBlock4x4_NHWC CHANNELS_FIRST=0
-//#pragma kernel Conv2D_L1Cached64_RegisterBlock4x4_NCHW CHANNELS_FIRST=1
-//#pragma kernel Conv2D_L1Cached32_RegisterBlock4x4_NHWC CHANNELS_FIRST=0
-//#pragma kernel Conv2D_L1Cached32_RegisterBlock4x4_NCHW CHANNELS_FIRST=1
-
-//R4x4_64k
-#pragma kernel Conv2DKernelKxK_T16x16_R4x4_NHWC                   CHANNELS_FIRST=0 BLOCK_SIZE=4                                                 SUFFIX=KernelKxK_T16x16_R
-#pragma kernel Conv2DKernelKxK_StrictC16K64_T16x16_R4x4_NHWC      CHANNELS_FIRST=0 BLOCK_SIZE=4                  STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC16K64_T16x16_R
-#pragma kernel Conv2DKernel1x1_StrictC16K64_T16x16_R4x4_NHWC      CHANNELS_FIRST=0 BLOCK_SIZE=4 KERNEL_1x1=1     STRICT_CHANNELS=1              SUFFIX=Kernel1x1_StrictC16K64_T16x16_R
-#pragma kernel Conv2DKernelKxK_T16x16_R4x4_NCHW                   CHANNELS_FIRST=1 BLOCK_SIZE=4                                                 SUFFIX=KernelKxK_T16x16_R
-#pragma kernel Conv2DKernelKxK_StrictC16K64_T16x16_R4x4_NCHW      CHANNELS_FIRST=1 BLOCK_SIZE=4                  STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC16K64_T16x16_R
-#pragma kernel Conv2DKernel1x1_StrictC16K64_T16x16_R4x4_NCHW      CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_1x1=1     STRICT_CHANNELS=1              SUFFIX=Kernel1x1_StrictC16K64_T16x16_R
-//R8x8_64k
-#pragma kernel Conv2DKernelKxK_StrictC16StrictK64_T8x8_R8x8_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=8 KERNEL_PER_TG=64 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC16StrictK64_T8x8_R
-#pragma kernel Conv2DKernelKxK_StrictC16StrictK64_T8x8_R8x8_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=8 KERNEL_PER_TG=64 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC16StrictK64_T8x8_R
-#pragma kernel Conv2DKernelKxK_StrictC16LaxK64_T8x8_R8x8_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=8 KERNEL_PER_TG=64 STRICT_CHANNELS=1 LAX_KERNEL=1    SUFFIX=KernelKxK_StrictC16LaxK64_T8x8_R
-#pragma kernel Conv2DKernelKxK_StrictC16LaxK64_T8x8_R8x8_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=8 KERNEL_PER_TG=64 STRICT_CHANNELS=1 LAX_KERNEL=1    SUFFIX=KernelKxK_StrictC16LaxK64_T8x8_R
-//R8x8_16k
-#pragma kernel Conv2DKernelKxK_StrictC4StrictK16_T2x32_R8x8_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=8 KERNEL_PER_TG=16 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC4StrictK16_T2x32_R
-#pragma kernel Conv2DKernelKxK_StrictC4StrictK16_T2x32_R8x8_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=8 KERNEL_PER_TG=16 STRICT_CHANNELS=1              SUFFIX=KernelKxK_StrictC4StrictK16_T2x32_R
-#pragma kernel Conv2DKernelKxK_LaxC4StrictK16_T2x32_R8x8_NHWC     CHANNELS_FIRST=0 BLOCK_SIZE=8 KERNEL_PER_TG=16                                SUFFIX=KernelKxK_LaxC4StrictK16_T2x32_R
-#pragma kernel Conv2DKernelKxK_LaxC4StrictK16_T2x32_R8x8_NCHW     CHANNELS_FIRST=1 BLOCK_SIZE=8 KERNEL_PER_TG=16                                SUFFIX=KernelKxK_LaxC4StrictK16_T2x32_R
-#pragma kernel Conv2DKernelKxK_StrictC4LaxK16_T2x32_R8x8_NHWC     CHANNELS_FIRST=0 BLOCK_SIZE=8 KERNEL_PER_TG=16 STRICT_CHANNELS=1 LAX_KERNEL=1 SUFFIX=KernelKxK_StrictC4LaxK16_T2x32_R
-#pragma kernel Conv2DKernelKxK_StrictC4LaxK16_T2x32_R8x8_NCHW     CHANNELS_FIRST=1 BLOCK_SIZE=8 KERNEL_PER_TG=16 STRICT_CHANNELS=1 LAX_KERNEL=1 SUFFIX=KernelKxK_StrictC4LaxK16_T2x32_R
-
-#pragma kernel DepthwiseConv2D_NHWC CHANNELS_FIRST=0
-#pragma kernel DepthwiseConv2D_NCHW CHANNELS_FIRST=1
-
-#pragma kernel Conv2DTrans_NHWC CHANNELS_FIRST=0
-#pragma kernel Conv2DTrans_NCHW CHANNELS_FIRST=1
-
-//Tested 2x2, 3x3 and 5x5 kernels with groupsize [8,8], [8,16], [16,16] and [16,32] (this one not in 5x5 as it does not fit in 32k)
-//k=5x5 t=[16,16] fast consistently faster or equal to other configuration both on AMDVega and RTX2080 (tested with kernel size 2x2x32x32, input size 128x128x32)
-//however this configuration is quite LDS bound performance profile might be very different on hardware without on chip LDS. This is especially true for smaller kernel
-//as a lot of LDS will be reserved but not used, reducing the amount of cache used.
-#pragma kernel Conv2DTrans_KernelCached_K5x5_T16x16_NHWC  CHANNELS_FIRST=0 MAX_KERNEL_SIZE=5 GROUP_SIZE_X=16 GROUP_SIZE_Y=16
-#pragma kernel Conv2DTrans_KernelCached_K5x5_T16x16_NCHW  CHANNELS_FIRST=1 MAX_KERNEL_SIZE=5 GROUP_SIZE_X=16 GROUP_SIZE_Y=16
-
-#pragma kernel Conv2DTransFlipKernel
-#pragma kernel Conv2DTransPadFill_NHWC CHANNELS_FIRST=0
-#pragma kernel Conv2DTransPadFill_NCHW CHANNELS_FIRST=1
-
-#pragma kernel KernelWinograd_3x3
-
-#pragma kernel Conv2DWinograd_2x2_Kernel3x3_StrictC8StrictK16_T16x16_R4x4_NCHW CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_PER_TG=16 STRICT_CHANNELS=1 SUFFIX=Kernel3x3_StrictC8StrictK16_T16x16_R
-#pragma kernel Conv2DWinograd_2x2_Kernel3x3_StrictC8LaxK16_T16x16_R4x4_NCHW CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_PER_TG=16 STRICT_CHANNELS=1 LAX_KERNEL=1 SUFFIX=Kernel3x3_StrictC8LaxK16_T16x16_R
-
-
 #include "Tensor.cginc"
+#define UNITY_SHADER_NO_UPGRADE 1
 
 TENSOR_DECL(X)
 TENSOR_DECL(K)
@@ -1625,10 +1574,10 @@ float2x2 ApplyWinnogradA(float4x4 uv)
 #if BLOCK_SIZE == 4
 #if KERNEL_PER_TG == 16
 //NCHW
-#define CACHE_DEPTH 8                     
+#define CACHE_DEPTH 8
 
-#define CACHE_WIDTH_X 16                       
-#define CACHE_WIDTH_W 16 
+#define CACHE_WIDTH_X 16
+#define CACHE_WIDTH_W 16
 
 
 groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, BLOCK_SIZE, LDS)[4576];
@@ -1938,7 +1887,7 @@ void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, BLOCK_SIZE)(uint3 groupID : SV_G
         O.FastSetWithActivation(writeIndex + (writePixelCoords.y + 1) * tg_WidthO + (writePixelCoords.x), writeValue[1][0]);
     if (canWriteChannel && (writePixelCoords.y + 1) < tg_HeightO && (writePixelCoords.x + 1) < tg_WidthO)
         O.FastSetWithActivation(writeIndex + (writePixelCoords.y + 1) * tg_WidthO + (writePixelCoords.x + 1), writeValue[1][1]);
-    
+
 
 #undef X_OFFSET
 #undef W_OFFSET

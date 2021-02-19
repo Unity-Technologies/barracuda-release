@@ -1,20 +1,3 @@
-#pragma kernel AvgPool2D_NHWC CHANNELS_FIRST=0
-#pragma kernel AvgPool2D_NCHW CHANNELS_FIRST=1
-#pragma kernel MaxPool2D_NHWC CHANNELS_FIRST=0
-#pragma kernel MaxPool2D_NCHW CHANNELS_FIRST=1
-#pragma kernel AvgPool2DReduce_NHWC CHANNELS_FIRST=0
-#pragma kernel AvgPool2DReduce_NCHW CHANNELS_FIRST=1
-#pragma kernel MaxPool2DReduce_NHWC CHANNELS_FIRST=0
-#pragma kernel MaxPool2DReduce_NCHW CHANNELS_FIRST=1
-#pragma kernel GlobalAvgPool2D_NHWC CHANNELS_FIRST=0
-#pragma kernel GlobalAvgPool2D_NCHW CHANNELS_FIRST=1
-#pragma kernel GlobalMaxPool2D_NHWC CHANNELS_FIRST=0
-#pragma kernel GlobalMaxPool2D_NCHW CHANNELS_FIRST=1
-#pragma kernel AvgVariancePool2DReduce_NHWC CHANNELS_FIRST=0
-#pragma kernel AvgVariancePool2DReduce_NCHW CHANNELS_FIRST=1
-#pragma kernel GlobalAvgVariancePool2D_NHWC CHANNELS_FIRST=0
-#pragma kernel GlobalAvgVariancePool2D_NCHW CHANNELS_FIRST=1
-
 #include "Tensor.cginc"
 
 TENSOR_DECL(X)

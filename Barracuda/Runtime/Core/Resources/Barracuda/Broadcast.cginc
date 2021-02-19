@@ -1,38 +1,3 @@
-#pragma kernel BroadcastAdd_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastAdd_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastSub_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastSub_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastMul_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastMul_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastDiv_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastDiv_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastPow_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastPow_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastMin_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastMin_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastMax_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastMax_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastMean_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastMean_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastGreater_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastGreater_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastGreaterEqual_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastGreaterEqual_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastLess_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastLess_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastLessEqual_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastLessEqual_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastEqual_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastEqual_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastLogicalOr_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastLogicalOr_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastLogicalAnd_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastLogicalAnd_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastLogicalXor_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastLogicalXor_NCHW CHANNELS_FIRST=1
-#pragma kernel BroadcastWhere_NHWC CHANNELS_FIRST=0
-#pragma kernel BroadcastWhere_NCHW CHANNELS_FIRST=1
-
 #include "Tensor.cginc"
 
 float _Alpha;

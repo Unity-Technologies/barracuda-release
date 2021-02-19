@@ -1762,7 +1762,7 @@ public class Tensor : IDisposable
     /// <returns>shallow copy of the Tensor</returns>
     public Tensor ShallowCopy(string newName = null)
     {
-        return ShallowCopy(shape, $"copy of {name}");
+        return ShallowCopy(shape, newName ?? $"shallowcopy of {name}");
     }
 
     /// <summary>

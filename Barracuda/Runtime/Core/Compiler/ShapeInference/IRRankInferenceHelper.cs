@@ -135,6 +135,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.ReduceProd:
                 case Layer.Type.ReduceSum:
                 case Layer.Type.ReduceSumSquare:
+                case Layer.Type.ArgMax:
+                case Layer.Type.ArgMin:
                 {
                     if (layer.alpha != 1.0f)
                         return inputRanks[0] - 1;

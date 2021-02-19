@@ -49,7 +49,34 @@ internal class ModelOptimizer
     public static bool IsActivationFusable(Layer.Activation activationType)
     {
         var fusedActivationType = (Layer.FusedActivation) activationType;
-        return Enum.IsDefined(typeof(Layer.FusedActivation), fusedActivationType);
+        switch (fusedActivationType)
+        {
+            case Layer.FusedActivation.None:
+            case Layer.FusedActivation.Relu:
+            case Layer.FusedActivation.Tanh:
+            case Layer.FusedActivation.Softplus:
+            case Layer.FusedActivation.Sigmoid:
+            case Layer.FusedActivation.Relu6:
+            case Layer.FusedActivation.Swish:
+            case Layer.FusedActivation.Neg:
+            case Layer.FusedActivation.Sqrt:
+            case Layer.FusedActivation.Exp:
+            case Layer.FusedActivation.Log:
+            case Layer.FusedActivation.Acos:
+            case Layer.FusedActivation.Acosh:
+            case Layer.FusedActivation.Asin:
+            case Layer.FusedActivation.Asinh:
+            case Layer.FusedActivation.Atan:
+            case Layer.FusedActivation.Atanh:
+            case Layer.FusedActivation.Cos:
+            case Layer.FusedActivation.Cosh:
+            case Layer.FusedActivation.Sin:
+            case Layer.FusedActivation.Sinh:
+            case Layer.FusedActivation.Tan:
+                return true;
+            default:
+                return false;
+        }
     }
 
     static private void FuseActivation(Model model, Layer mainLayer, Layer activationToFuse)

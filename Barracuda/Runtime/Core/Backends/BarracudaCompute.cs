@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.Assertions;
 using System;
 using System.Collections.Generic;
+using Unity.Collections;
 
 /*
 PERFORMANCE COMPARISON after the latest OPTIMIZATION pass
@@ -92,14 +93,14 @@ internal sealed class ComputeKernelLibrary
         else // FP32
         {
             entries.Add(new Entry("Dense_Tilled2x2_Cached",
-                    Int3(w/2, h/2),                                 BigO(X.flatWidth)/2,
+                    Int3(ComputeHelper.IDivC(w, 2), ComputeHelper.IDivC(h, 2)),                                 BigO(X.flatWidth)/2,
                     StrictAnd(w % 2 == 0 && h % 2 == 0 && X.flatWidth % 32 == 0),
                 (Application.platform == RuntimePlatform.Android) ||
                 (Application.platform == RuntimePlatform.IPhonePlayer) ||
                 (ComputeInfo.graphicsDeviceVendor.Contains("Intel"))
             ));
             entries.Add(new Entry("Dense_Tilled4x4_Cached",
-                    Int3(w/4, h/4),                                 BigO(X.flatWidth)/4,
+                    Int3(ComputeHelper.IDivC(w, 4), ComputeHelper.IDivC(h, 4)),                                 BigO(X.flatWidth)/4,
                     StrictAnd(w % 4 == 0 && h % 4 == 0 && X.flatWidth % 32 == 0),
                 (Application.platform == RuntimePlatform.Android) ||
                 (Application.platform == RuntimePlatform.IPhonePlayer) ||
@@ -730,7 +731,7 @@ internal struct ComputeKernel
     }
 
     const long  InvalidEntry = long.MaxValue;
-    internal static long CalculateEntryScore(ComputeShader[] kernels, ComputeKernelLibrary.Entry entry, bool verbose)
+    internal static long CalculateEntryScore(ComputeShaderContext ctx, ComputeKernelLibrary.Entry entry, bool verbose)
     {
         long work = InvalidEntry;
         try
@@ -739,7 +740,7 @@ internal struct ComputeKernel
                 return InvalidEntry;
 
             // @TODO: @OPTIMIZE: cache threadGroupSize instead of creating ComputeFunc and querying every time
-            var fn = new ComputeFunc(kernels, entry.name);
+            var fn = new ComputeFunc(ctx, entry.name);
 
             if (fn.threadGroupSizeX * fn.threadGroupSizeY * fn.threadGroupSizeZ > ComputeInfo.maxComputeWorkGroupSize)
                 return InvalidEntry;
@@ -777,14 +778,14 @@ internal struct ComputeKernel
         return work;
     }
 
-    internal static ComputeKernel BestKernel(ComputeShader[] kernels, List<ComputeKernelLibrary.Entry> entrees, bool verbose)
+    internal static ComputeKernel BestKernel(ComputeShaderContext ctx, List<ComputeKernelLibrary.Entry> entrees, bool verbose)
     {
         var bestEntry = entrees[0];
         var bestScore = InvalidEntry;
         bool foundKernelWithDevicePriority = false;
         for (int i = 0; i < entrees.Count; i++)
         {
-            var score = CalculateEntryScore(kernels, entrees[i], verbose);
+            var score = CalculateEntryScore(ctx, entrees[i], verbose);
             bool entryDevicePriority = entrees[i].devicePriority;
 
             if (score == InvalidEntry)
@@ -809,7 +810,7 @@ internal struct ComputeKernel
         if (verbose)
             D.Log(bestEntry.name);
 
-        var func = new ComputeFunc(kernels, bestEntry.name);
+        var func = new ComputeFunc(ctx, bestEntry.name);
 
         if (bestEntry.loopStride > 0)
         {
@@ -835,20 +836,16 @@ public class ComputeOps : ReferenceComputeOps
     private bool printKernels = false;
 
     // ---------------------------------------------------------------------------------
-    private ComputeShader[] m_Kernels;
     private bool m_Verbose = false;
 
     /// <summary>
     /// Create `ComputeOps`
     /// </summary>
-    /// <param name="kernels">compute kernels</param>
-    /// <param name="referenceKernel">reference compute kernels</param>
     /// <param name="allocator">allocator</param>
     /// <param name="verbose">verbose flag</param>
-    public ComputeOps(ComputeShader[] kernels, ComputeShader referenceKernel,  ITensorAllocator allocator = null, bool verbose = false)
-    : base(referenceKernel, allocator)
+    public ComputeOps(ITensorAllocator allocator = null, bool verbose = false)
+    : base(allocator)
     {
-        m_Kernels = kernels;
         m_Verbose = verbose;
     }
 
@@ -856,12 +853,12 @@ public class ComputeOps : ReferenceComputeOps
 
     internal ComputeKernel BestKernel(List<ComputeKernelLibrary.Entry> entrees)
     {
-        return ComputeKernel.BestKernel(m_Kernels, entrees, m_Verbose);
+        return ComputeKernel.BestKernel(ComputeShaderContext.Optimized, entrees, m_Verbose);
     }
 
     internal ComputeKernel CompileKernel(ComputeKernelLibrary.Entry entry)
     {
-        var func = new ComputeFunc(m_Kernels, entry.name);
+        var func = new ComputeFunc(ComputeShaderContext.Optimized, entry.name);
         if (entry.loopStride > 0)
         {
             int preferedDispatch = (int)entry.loopStride * (int)func.threadGroupSizeX;
@@ -890,7 +887,7 @@ public class ComputeOps : ReferenceComputeOps
         var Bpacked = new Tensor(B.shape, new SharedComputeTensorData(buffer, B.shape, 0));
         var Cpacked = new Tensor(Cshape, new SharedComputeTensorData(buffer, Cshape, B.shape.length));
 
-        var fn_pack = new ComputeKernel(new ComputeFunc(m_Kernels, "MatMulPackB0Bias"), (B.flatWidth, B.flatHeight, 1));
+        var fn_pack = new ComputeKernel(new ComputeFunc(ComputeShaderContext.Optimized, "MatMulPackB0Bias"), (B.flatWidth, B.flatHeight, 1));
         fn_pack.SetTensor("X", B.shape, Pin(B).buffer);
         fn_pack.SetTensor("O", Bpacked.shape, Pin(Bpacked).buffer);
 
@@ -956,7 +953,7 @@ public class ComputeOps : ReferenceComputeOps
         var Ktransformed = new Tensor(Kws, new SharedComputeTensorData(buffer, Kws, 0));
         var Bpacked = new Tensor(B.shape, new SharedComputeTensorData(buffer, B.shape, Kws.length));
 
-        var fn_wk = new ComputeKernel(new ComputeFunc(m_Kernels, "KernelWinograd_3x3"), (K.kernelCount, X.channels, B.length));
+        var fn_wk = new ComputeKernel(new ComputeFunc(ComputeShaderContext.Optimized, "KernelWinograd_3x3"), (K.kernelCount, X.channels, B.length));
 
         fn_wk.SetTensorDecl("K", K.shape, Pin(K).offset);
         fn_wk.SetTensorDecl("B", B.shape, Pin(B).offset);
@@ -1123,7 +1120,7 @@ public class ComputeOps : ReferenceComputeOps
         // outputAdjustment number of 0 at the end of X
         // regular padding will be done in Conv2D
         var XpaddedShape = new TensorShape(X.batch, stride[1] * (X.height - 1) + 1 + outputAdjustment[1], stride[0] * (X.width - 1) + 1 + outputAdjustment[0], X.channels);
-        var fn = new ComputeFunc(m_Kernels, "Conv2DTransPadFill");
+        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "Conv2DTransPadFill");
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", outputAdjustment);
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1136,7 +1133,7 @@ public class ComputeOps : ReferenceComputeOps
         var Kflipped = new Tensor(K.shape, new SharedComputeTensorData(buffer, K.shape, 0));
         var Bpacked = new Tensor(B.shape, new SharedComputeTensorData(buffer, B.shape, K.shape.length));
 
-        var fn_flip = new ComputeKernel(new ComputeFunc(m_Kernels, "Conv2DTransFlipKernel"), (K.kernelCount, X.channels, (K.kernelWidth*K.kernelHeight)));
+        var fn_flip = new ComputeKernel(new ComputeFunc(ComputeShaderContext.Optimized, "Conv2DTransFlipKernel"), (K.kernelCount, X.channels, (K.kernelWidth*K.kernelHeight)));
         fn_flip.SetTensorDecl("K", K.shape, Pin(K).offset);
         fn_flip.SetTensorDecl("B", B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(K).buffer, Pin(B).buffer);
@@ -1294,6 +1291,8 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    internal static int[] s_GlobalPool2DInputDim = new int[2];
+
     /// <summary>
     /// Generic global 2D pooling
     /// </summary>
@@ -1304,7 +1303,9 @@ public class ComputeOps : ReferenceComputeOps
     protected virtual Tensor GlobalPool2D(string smallKernelName, string globalKernelName, Tensor X)
     {
         Assert.IsTrue(X.shape.Is4D());
-        var inputDim = new [] {X.height, X.width};
+        s_GlobalPool2DInputDim[0] = X.height;
+        s_GlobalPool2DInputDim[1] = X.width;
+
         // downsample with pyramid approach
         while (X.height * X.width >= 8*8*2)
         {
@@ -1318,7 +1319,7 @@ public class ComputeOps : ReferenceComputeOps
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("O", O.shape, Pin(O).buffer);
-        fn.shader.SetInts("_Pool", inputDim);
+        fn.shader.SetInts("_Pool", s_GlobalPool2DInputDim);
 
         fn.Dispatch();
         return O;
@@ -1388,6 +1389,40 @@ public class ComputeOps : ReferenceComputeOps
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    protected override Tensor Reduce(string kernelName, Tensor X, int axis)
+    {
+        axis = X.shape.Axis(axis);
+
+        //TODO optimize when reducing not on channel.
+        bool needTranpose = axis != TensorShape.C;
+        FillReducePermute(axis);
+
+        if (needTranpose)
+            X = Transpose(X, s_ReducePermute);
+
+        var oShape = X.shape.Reduce(TensorShape.C);
+        Assert.AreEqual(oShape.channels, 1);
+
+        var O = NewTensor(oShape);
+
+        var fn = new ComputeKernel(new ComputeFunc(ComputeShaderContext.Optimized, kernelName),
+                                    (oShape.width, oShape.height, 1));
+
+        if (printKernels)
+            D.Log(fn.func.kernelName);
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+
+        fn.Dispatch();
+
+        if (needTranpose)
+            O = Transpose(O, s_ReducePermute);
 
         return O;
     }
@@ -1501,32 +1536,32 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    /// <summary>
-    /// Get input tensor strides on device
-    /// </summary>
-    /// <param name="shape">shape</param>
-    /// <param name="channelOrder">channel order</param>
-    /// <returns>strides</returns>
-    protected int[] GetInputTensorStridesOnDevice(TensorShape shape, ComputeInfo.ChannelsOrder channelOrder)
+    // Requires `output` to be allocated by the calling code to avoid unnecessary GC allocations
+    internal int[] GetInputTensorStridesOnDevice(TensorShape shape, ComputeInfo.ChannelsOrder channelOrder, int[] output)
     {
+        Assert.IsNotNull(output);
+        Assert.AreEqual(4, output.Length);
+
+        output[0] = (shape.batch == 1) ? 0 : shape.height * shape.width * shape.channels;
+
         if (channelOrder == ComputeInfo.ChannelsOrder.NHWC)
         {
-            return new int[4] {
-                (shape.batch == 1) ? 0 : shape.height * shape.width * shape.channels,
-                (shape.height == 1) ? 0 : shape.width * shape.channels,
-                (shape.width == 1) ? 0 : shape.channels,
-                (shape.channels == 1) ? 0 : 1 };
+            output[1] = (shape.height == 1) ? 0 : shape.width * shape.channels;
+            output[2] = (shape.width == 1) ? 0 : shape.channels;
+            output[3] = (shape.channels == 1) ? 0 : 1;
         }
         else
         {
-            return new int[4] {
-                (shape.batch == 1) ? 0 : shape.height * shape.width * shape.channels,
-                (shape.height == 1) ? 0 : shape.width,
-                (shape.width == 1) ? 0 : 1,
-                (shape.channels == 1) ? 0 : shape.height * shape.width };
+            output[1] = (shape.height == 1) ? 0 : shape.width;
+            output[2] = (shape.width == 1) ? 0 : 1;
+            output[3] = (shape.channels == 1) ? 0 : shape.height * shape.width;
         }
+
+        return output;
     }
 
+    internal static int[] s_XStrides = new int[4];
+    internal static int[] s_BStrides = new int[4];
     /// <inheritdoc/>
     protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
@@ -1555,8 +1590,8 @@ public class ComputeOps : ReferenceComputeOps
             fn.shader.SetFloat("_Alpha", 1.0f / (float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
-            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder));
-            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder));
+            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder, s_XStrides));
+            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder, s_BStrides));
 
             fn.Dispatch();
 
@@ -1569,6 +1604,8 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+
+    internal static int[] s_ApplyPaddingCroppedSize = new int[2];
     /// <inheritdoc/>
     protected override Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
@@ -1588,11 +1625,11 @@ public class ComputeOps : ReferenceComputeOps
             // NOTE: negative "pad" variable will crop X tensor
             int croppedWidth = X.width - Math.Max(0, -pad[2]);
             int croppedHeight = X.height - Math.Max(0, -pad[3]);
-            var croppedSize = new int[] { 0, 0 };
-            croppedSize[0] = croppedWidth;
-            croppedSize[1] = croppedHeight;
 
-            fn.shader.SetInts("_Pool", croppedSize);
+            s_ApplyPaddingCroppedSize[0] = croppedWidth;
+            s_ApplyPaddingCroppedSize[1] = croppedHeight;
+
+            fn.shader.SetInts("_Pool", s_ApplyPaddingCroppedSize);
             fn.shader.SetFloat("_Beta", constant);
         }
 
@@ -1613,6 +1650,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    internal static int[] s_SStrides = new int[4];
     /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
@@ -1627,9 +1665,9 @@ public class ComputeOps : ReferenceComputeOps
         fn.SetTensor("S", A.shape, Pin(A).buffer, Pin(A).offset);
         fn.SetTensor("B", B.shape, Pin(B).buffer, Pin(B).offset);
 
-        fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(C.shape, Pin(C).channelsOrder));
-        fn.shader.SetInts("_SStrides", GetInputTensorStridesOnDevice(A.shape, Pin(A).channelsOrder));
-        fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder));
+        fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(C.shape, Pin(C).channelsOrder, s_XStrides));
+        fn.shader.SetInts("_SStrides", GetInputTensorStridesOnDevice(A.shape, Pin(A).channelsOrder, s_SStrides));
+        fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder, s_BStrides));
 
         fn.Dispatch();
         return O;

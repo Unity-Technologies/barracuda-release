@@ -1696,30 +1696,38 @@ void Dense_Tilled2x2_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint x = dispatchThreadID.x;
     uint y = dispatchThreadID.y;
 
-    float b0 = B.FastGet(x * 2 + 0);
-    float b1 = B.FastGet(x * 2 + 1);
+    uint flatHeightO = O.GetFlatHeight();
+    uint flatWidthO  = O.GetFlatWidth();
+    uint flatWidthX = X.GetFlatWidth();
+
+    float b0 = B.FastGet(min(x * 2 + 0, flatWidthO-1));
+    float b1 = B.FastGet(min(x * 2 + 1, flatWidthO-1));
     float4 v = float4(b0, b1, b0, b1);
 
-    for (uint m = 0; m < X.GetFlatWidth() / 4; m += TILE_WIDTH)
+    for (uint m = 0; m < (flatWidthX + 4 - 1) / 4; m += TILE_WIDTH)
     {
         for (uint i = 0; i < TILE_WIDTH; ++i)
         {
             uint k = m + i;
-            float4 x0 = float4(X.Get(2 * y + 0, 4 * k + 0), X.Get(2 * y + 0, 4 * k + 1), X.Get(2 * y + 0, 4 * k + 2), X.Get(2 * y + 0, 4 * k + 3));
-            float4 x1 = float4(X.Get(2 * y + 1, 4 * k + 0), X.Get(2 * y + 1, 4 * k + 1), X.Get(2 * y + 1, 4 * k + 2), X.Get(2 * y + 1, 4 * k + 3));
+            float4 x0 = float4(X.SafeGet(2 * y + 0, 4 * k + 0), X.SafeGet(2 * y + 0, 4 * k + 1), X.SafeGet(2 * y + 0, 4 * k + 2), X.SafeGet(2 * y + 0, 4 * k + 3));
+            float4 x1 = float4(X.SafeGet(2 * y + 1, 4 * k + 0), X.SafeGet(2 * y + 1, 4 * k + 1), X.SafeGet(2 * y + 1, 4 * k + 2), X.SafeGet(2 * y + 1, 4 * k + 3));
 
-            float4 w0 = float4(W.Get(4 * k + 0, 2 * x + 0), W.Get(4 * k + 1, 2 * x + 0), W.Get(4 * k + 2, 2 * x + 0), W.Get(4 * k + 3, 2 * x + 0));
-            float4 w1 = float4(W.Get(4 * k + 0, 2 * x + 1), W.Get(4 * k + 1, 2 * x + 1), W.Get(4 * k + 2, 2 * x + 1), W.Get(4 * k + 3, 2 * x + 1));
+            float4 w0 = float4(W.SafeGet(4 * k + 0, 2 * x + 0), W.SafeGet(4 * k + 1, 2 * x + 0), W.SafeGet(4 * k + 2, 2 * x + 0), W.SafeGet(4 * k + 3, 2 * x + 0));
+            float4 w1 = float4(W.SafeGet(4 * k + 0, 2 * x + 1), W.SafeGet(4 * k + 1, 2 * x + 1), W.SafeGet(4 * k + 2, 2 * x + 1), W.SafeGet(4 * k + 3, 2 * x + 1));
 
             v += float4(dot(x0, w0), dot(x0, w1), dot(x1, w0), dot(x1, w1));
         }
         AllMemoryBarrierWithGroupSync();
     }
 
-    O.SetWithActivation(y * 2 + 0, x * 2 + 0, v.x);
-    O.SetWithActivation(y * 2 + 0, x * 2 + 1, v.y);
-    O.SetWithActivation(y * 2 + 1, x * 2 + 0, v.z);
-    O.SetWithActivation(y * 2 + 1, x * 2 + 1, v.w);
+    if ((y * 2 + 0 ) < flatHeightO && (x * 2 + 0) < flatWidthO)
+        O.SetWithActivation(y * 2 + 0, x * 2 + 0, v.x);
+    if ((y * 2 + 0) < flatHeightO && (x * 2 + 1) < flatWidthO)
+        O.SetWithActivation(y * 2 + 0, x * 2 + 1, v.y);
+    if ((y * 2 + 1) < flatHeightO && (x * 2 + 0) < flatWidthO)
+        O.SetWithActivation(y * 2 + 1, x * 2 + 0, v.z);
+    if ((y * 2 + 1) < flatHeightO && (x * 2 + 1) < flatWidthO)
+        O.SetWithActivation(y * 2 + 1, x * 2 + 1, v.w);
 }
 
 #undef TILE_WIDTH
@@ -1734,31 +1742,34 @@ void Dense_Tilled4x4_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint x = dispatchThreadID.x;
     uint y = dispatchThreadID.y;
 
-    float b0 = B.FastGet(x * 4 + 0);
-    float b1 = B.FastGet(x * 4 + 1);
-    float b2 = B.FastGet(x * 4 + 2);
-    float b3 = B.FastGet(x * 4 + 3);
+    uint flatHeightO = O.GetFlatHeight();
+    uint flatWidthO = O.GetFlatWidth();
+    uint flatWidthX = X.GetFlatWidth();
+
+    float b0 = B.FastGet(min(x * 4 + 0, flatWidthO - 1));
+    float b1 = B.FastGet(min(x * 4 + 1, flatWidthO - 1));
+    float b2 = B.FastGet(min(x * 4 + 2, flatWidthO - 1));
+    float b3 = B.FastGet(min(x * 4 + 3, flatWidthO - 1));
 
     float4 v0 = float4(b0, b1, b0, b1);
     float4 v1 = float4(b2, b3, b2, b3);
     float4 v2 = float4(b0, b1, b0, b1);
     float4 v3 = float4(b2, b3, b2, b3);
 
-    for (uint m = 0; m < X.GetFlatWidth() / 4; m += TILE_WIDTH)
+    for (uint m = 0; m < (flatWidthX + 4 - 1) / 4; m += TILE_WIDTH)
     {
         for (uint i = 0; i < TILE_WIDTH; ++i)
         {
             uint k = m + i;
-            float4 x0 = float4(X.Get(4 * y + 0, 4 * k + 0), X.Get(4 * y + 0, 4 * k + 1), X.Get(4 * y + 0, 4 * k + 2), X.Get(4 * y + 0, 4 * k + 3));
-            float4 x1 = float4(X.Get(4 * y + 1, 4 * k + 0), X.Get(4 * y + 1, 4 * k + 1), X.Get(4 * y + 1, 4 * k + 2), X.Get(4 * y + 1, 4 * k + 3));
-            float4 x2 = float4(X.Get(4 * y + 2, 4 * k + 0), X.Get(4 * y + 2, 4 * k + 1), X.Get(4 * y + 2, 4 * k + 2), X.Get(4 * y + 2, 4 * k + 3));
-            float4 x3 = float4(X.Get(4 * y + 3, 4 * k + 0), X.Get(4 * y + 3, 4 * k + 1), X.Get(4 * y + 3, 4 * k + 2), X.Get(4 * y + 3, 4 * k + 3));
+            float4 x0 = float4(X.SafeGet(4 * y + 0, 4 * k + 0), X.SafeGet(4 * y + 0, 4 * k + 1), X.SafeGet(4 * y + 0, 4 * k + 2), X.SafeGet(4 * y + 0, 4 * k + 3));
+            float4 x1 = float4(X.SafeGet(4 * y + 1, 4 * k + 0), X.SafeGet(4 * y + 1, 4 * k + 1), X.SafeGet(4 * y + 1, 4 * k + 2), X.SafeGet(4 * y + 1, 4 * k + 3));
+            float4 x2 = float4(X.SafeGet(4 * y + 2, 4 * k + 0), X.SafeGet(4 * y + 2, 4 * k + 1), X.SafeGet(4 * y + 2, 4 * k + 2), X.SafeGet(4 * y + 2, 4 * k + 3));
+            float4 x3 = float4(X.SafeGet(4 * y + 3, 4 * k + 0), X.SafeGet(4 * y + 3, 4 * k + 1), X.SafeGet(4 * y + 3, 4 * k + 2), X.SafeGet(4 * y + 3, 4 * k + 3));
 
-            float4 w0 = float4(W.Get(4 * k + 0, 4 * x + 0), W.Get(4 * k + 1, 4 * x + 0), W.Get(4 * k + 2, 4 * x + 0), W.Get(4 * k + 3, 4 * x + 0));
-            float4 w1 = float4(W.Get(4 * k + 0, 4 * x + 1), W.Get(4 * k + 1, 4 * x + 1), W.Get(4 * k + 2, 4 * x + 1), W.Get(4 * k + 3, 4 * x + 1));
-
-            float4 w2 = float4(W.Get(4 * k + 0, 4 * x + 2), W.Get(4 * k + 1, 4 * x + 2), W.Get(4 * k + 2, 4 * x + 2), W.Get(4 * k + 3, 4 * x + 2));
-            float4 w3 = float4(W.Get(4 * k + 0, 4 * x + 3), W.Get(4 * k + 1, 4 * x + 3), W.Get(4 * k + 2, 4 * x + 3), W.Get(4 * k + 3, 4 * x + 3));
+            float4 w0 = float4(W.SafeGet(4 * k + 0, 4 * x + 0), W.SafeGet(4 * k + 1, 4 * x + 0), W.SafeGet(4 * k + 2, 4 * x + 0), W.SafeGet(4 * k + 3, 4 * x + 0));
+            float4 w1 = float4(W.SafeGet(4 * k + 0, 4 * x + 1), W.SafeGet(4 * k + 1, 4 * x + 1), W.SafeGet(4 * k + 2, 4 * x + 1), W.SafeGet(4 * k + 3, 4 * x + 1));
+            float4 w2 = float4(W.SafeGet(4 * k + 0, 4 * x + 2), W.SafeGet(4 * k + 1, 4 * x + 2), W.SafeGet(4 * k + 2, 4 * x + 2), W.SafeGet(4 * k + 3, 4 * x + 2));
+            float4 w3 = float4(W.SafeGet(4 * k + 0, 4 * x + 3), W.SafeGet(4 * k + 1, 4 * x + 3), W.SafeGet(4 * k + 2, 4 * x + 3), W.SafeGet(4 * k + 3, 4 * x + 3));
 
             v0 += float4(dot(x0, w0), dot(x0, w1), dot(x1, w0), dot(x1, w1));
             v1 += float4(dot(x0, w2), dot(x0, w3), dot(x1, w2), dot(x1, w3));
@@ -1768,26 +1779,41 @@ void Dense_Tilled4x4_Cached(uint3 dispatchThreadID : SV_DispatchThreadID)
         AllMemoryBarrierWithGroupSync();
     }
 
-    O.SetWithActivation(y * 4 + 0, x * 4 + 0, v0.x);
-    O.SetWithActivation(y * 4 + 0, x * 4 + 1, v0.y);
-    O.SetWithActivation(y * 4 + 1, x * 4 + 0, v0.z);
-    O.SetWithActivation(y * 4 + 1, x * 4 + 1, v0.w);
+    if ((y * 4 + 0) < flatHeightO && (x * 4 + 0) < flatWidthO)
+        O.SetWithActivation(y * 4 + 0, x * 4 + 0, v0.x);
+    if ((y * 4 + 0) < flatHeightO && (x * 4 + 1) < flatWidthO)
+        O.SetWithActivation(y * 4 + 0, x * 4 + 1, v0.y);
+    if ((y * 4 + 1) < flatHeightO && (x * 4 + 0) < flatWidthO)
+        O.SetWithActivation(y * 4 + 1, x * 4 + 0, v0.z);
+    if ((y * 4 + 1) < flatHeightO && (x * 4 + 1) < flatWidthO)
+        O.SetWithActivation(y * 4 + 1, x * 4 + 1, v0.w);
 
-    O.SetWithActivation(y * 4 + 0, x * 4 + 2, v1.x);
-    O.SetWithActivation(y * 4 + 0, x * 4 + 3, v1.y);
-    O.SetWithActivation(y * 4 + 1, x * 4 + 2, v1.z);
-    O.SetWithActivation(y * 4 + 1, x * 4 + 3, v1.w);
+    if ((y * 4 + 0) < flatHeightO && (x * 4 + 2) < flatWidthO)
+        O.SetWithActivation(y * 4 + 0, x * 4 + 2, v1.x);
+    if ((y * 4 + 0) < flatHeightO && (x * 4 + 3) < flatWidthO)
+        O.SetWithActivation(y * 4 + 0, x * 4 + 3, v1.y);
+    if ((y * 4 + 1) < flatHeightO && (x * 4 + 2) < flatWidthO)
+        O.SetWithActivation(y * 4 + 1, x * 4 + 2, v1.z);
+    if ((y * 4 + 1) < flatHeightO && (x * 4 + 3) < flatWidthO)
+        O.SetWithActivation(y * 4 + 1, x * 4 + 3, v1.w);
 
+    if ((y * 4 + 2) < flatHeightO && (x * 4 + 0) < flatWidthO)
+        O.SetWithActivation(y * 4 + 2, x * 4 + 0, v2.x);
+    if ((y * 4 + 2) < flatHeightO && (x * 4 + 1) < flatWidthO)
+        O.SetWithActivation(y * 4 + 2, x * 4 + 1, v2.y);
+    if ((y * 4 + 3) < flatHeightO && (x * 4 + 0) < flatWidthO)
+        O.SetWithActivation(y * 4 + 3, x * 4 + 0, v2.z);
+    if ((y * 4 + 3) < flatHeightO && (x * 4 + 1) < flatWidthO)
+        O.SetWithActivation(y * 4 + 3, x * 4 + 1, v2.w);
 
-    O.SetWithActivation(y * 4 + 2, x * 4 + 0, v2.x);
-    O.SetWithActivation(y * 4 + 2, x * 4 + 1, v2.y);
-    O.SetWithActivation(y * 4 + 3, x * 4 + 0, v2.z);
-    O.SetWithActivation(y * 4 + 3, x * 4 + 1, v2.w);
-
-    O.SetWithActivation(y * 4 + 2, x * 4 + 2, v3.x);
-    O.SetWithActivation(y * 4 + 2, x * 4 + 3, v3.y);
-    O.SetWithActivation(y * 4 + 3, x * 4 + 2, v3.z);
-    O.SetWithActivation(y * 4 + 3, x * 4 + 3, v3.w);
+    if ((y * 4 + 2) < flatHeightO && (x * 4 + 2) < flatWidthO)
+        O.SetWithActivation(y * 4 + 2, x * 4 + 2, v3.x);
+    if ((y * 4 + 2) < flatHeightO && (x * 4 + 3) < flatWidthO)
+        O.SetWithActivation(y * 4 + 2, x * 4 + 3, v3.y);
+    if ((y * 4 + 3) < flatHeightO && (x * 4 + 2) < flatWidthO)
+        O.SetWithActivation(y * 4 + 3, x * 4 + 2, v3.z);
+    if ((y * 4 + 3) < flatHeightO && (x * 4 + 3) < flatWidthO)
+        O.SetWithActivation(y * 4 + 3, x * 4 + 3, v3.w);
 }
 
 

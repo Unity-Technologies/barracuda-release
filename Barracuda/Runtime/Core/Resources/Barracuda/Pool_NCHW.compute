@@ -1,0 +1,10 @@
+#pragma kernel AvgPool2D_NCHW CHANNELS_FIRST=1
+#pragma kernel MaxPool2D_NCHW CHANNELS_FIRST=1
+#pragma kernel AvgPool2DReduce_NCHW CHANNELS_FIRST=1
+#pragma kernel MaxPool2DReduce_NCHW CHANNELS_FIRST=1
+#pragma kernel GlobalAvgPool2D_NCHW CHANNELS_FIRST=1
+#pragma kernel GlobalMaxPool2D_NCHW CHANNELS_FIRST=1
+#pragma kernel AvgVariancePool2DReduce_NCHW CHANNELS_FIRST=1
+#pragma kernel GlobalAvgVariancePool2D_NCHW CHANNELS_FIRST=1
+
+#include "Pool.cginc"

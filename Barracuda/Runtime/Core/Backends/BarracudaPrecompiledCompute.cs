@@ -15,12 +15,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     /// <summary>
     /// Create `PrecompiledComputeOps`
     /// </summary>
-    /// <param name="kernels">compute kernels</param>
-    /// <param name="referenceKernel">reference compute kernels</param>
     /// <param name="allocator">allocator</param>
     /// <param name="verbose">verbose flag</param>
-    public PrecompiledComputeOps(ComputeShader[] kernels, ComputeShader referenceKernel,  ITensorAllocator allocator = null, bool verbose = false)
-    : base(kernels, referenceKernel, allocator, verbose)
+    public PrecompiledComputeOps(ITensorAllocator allocator = null, bool verbose = false)
+    : base(allocator, verbose)
     {
     }
 
@@ -906,10 +904,12 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return O;
     }
 
+
     private Tensor GlobalPool2D(Tensor X)
     {
         Assert.IsTrue(X.shape.Is4D());
-        var inputDim = new [] {X.height, X.width};
+        s_GlobalPool2DInputDim[0] = X.height;
+        s_GlobalPool2DInputDim[1] = X.width;
         for (var i = 0; i < m_Compiled.instructions.Length-1; ++i)
         {
             var pool = new[] { 8, 8 };
@@ -941,7 +941,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
         fnGlobalPool.SetTensor("O", O.shape, Pin(O).buffer);
-        fnGlobalPool.shader.SetInts("_Pool", inputDim);
+        fnGlobalPool.shader.SetInts("_Pool", s_GlobalPool2DInputDim);
 
         fnGlobalPool.Dispatch();
         return O;
@@ -1154,8 +1154,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             fn.SetTensor(_DeclB, _DataB, B.shape, Pin(B).buffer, Pin(B).offset);
             fn.shader.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
-            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder));
-            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder));
+            fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder, s_XStrides));
+            fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder, s_BStrides));
 
             fn.Dispatch();
 

@@ -67,7 +67,7 @@ public partial class BurstCPUOps
                 {
                     pinO.fence = pinX.reuse = pinY.reuse =
                         blas.ScheduleSGEMM(
-                            Dependencies(pinO.fence, pinX.fence, pinY.fence),
+                            Dependencies(pinO.reuse, pinX.fence, pinY.fence),
                             ptrX, X.flatHeight, X.flatWidth,
                             ptrY, Y.flatHeight, Y.flatWidth,
                             ptrO, O.flatHeight, O.flatWidth,
@@ -89,7 +89,117 @@ public partial class BurstCPUOps
                     job.transposeB = yTranspose;
 
                     pinO.fence = pinX.reuse = pinY.reuse =
-                        job.Schedule(Dependencies(pinO.fence, pinX.fence, pinY.fence));
+                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+            }
+        }
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor MatMul(Tensor X, int rankX, Tensor Y, int rankY)
+    {
+        if (rankX == 2 && rankY == 2)
+            return MatMul(X, false, Y, false);
+
+        if (rankX == 3 && rankY == 2)
+            return MatMul3x2(X,Y);
+        else if (rankX == 4 && rankY == 4)
+            return MatMul4x4(X,Y);
+        else
+            return base.MatMul(X, rankX, Y, rankY);
+    }
+
+    private Tensor MatMul3x2(Tensor X, Tensor Y)
+    {
+        int xb = X.batch,  xw = X.width, xh = X.channels;
+        int yw = Y.channels, yh = Y.batch;
+
+        Assert.AreEqual(xw, yh);
+        var O = NewTensor(xb, 1, yw, xh);
+
+        var pinX = Pin(X);
+        var pinY = Pin(Y);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrY = &pinY.array[pinY.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                {   // O += X * K
+                    var job = new MatrixMultiply3x2Job();
+                    job.A = ptrX;
+                    job.AB = xb;
+                    job.AN = xh;
+                    job.AM = xw;
+                    job.B = ptrY;
+                    job.BN = yh;
+                    job.BM = yw;
+                    job.C = ptrO;
+                    job.CN = xh;
+                    job.CM = yw;
+
+                    job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+                    job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+                    job.dispatchThreadZ = xb;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private Tensor MatMul4x4(Tensor X, Tensor Y)
+    {
+        int xb0 = X.batch,  xh = X.height, xw = X.width, xb1 = X.channels;
+        int yb0 = Y.batch,  yh = Y.height, yw = Y.width, yb1 = Y.channels;
+
+        Assert.AreEqual(xw, yh);
+        int ob0 = Mathf.Max(xb0, yb0); int ob1 = Mathf.Max(xb1, yb1);
+        var O = NewTensor(ob0, xh, yw, ob1);
+
+        var pinX = Pin(X);
+        var pinY = Pin(Y);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrY = &pinY.array[pinY.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                {   // O += X * K
+                    var job = new MatrixMultiply4x4Job();
+                    job.A = ptrX;
+                    job.AB0 = xb0;
+                    job.AB1 = xb1;
+                    job.AN = xh;
+                    job.AM = xw;
+                    job.B = ptrY;
+                    job.BB0 = yb0;
+                    job.BB1 = yb1;
+                    job.BN = yh;
+                    job.BM = yw;
+                    job.C = ptrO;
+                    job.CB0 = ob0;
+                    job.CB1 = ob1;
+                    job.CN = xh;
+                    job.CM = yw;
+
+                    job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+                    job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+                    job.dispatchThreadZ = ob0*ob1;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinY.fence));
                 }
             }
         }
@@ -135,7 +245,7 @@ public partial class BurstCPUOps
                 {
                     pinO.fence = pinX.reuse =
                         blas.ScheduleSGEMM(
-                            Dependencies(pinO.fence, pinX.fence),
+                            Dependencies(pinO.reuse, pinX.fence),
                             ptrX, X.flatHeight, X.flatWidth,
                             ptrW, W.flatHeight, W.flatWidth,
                             ptrO, O.flatHeight, O.flatWidth,
@@ -156,7 +266,7 @@ public partial class BurstCPUOps
                     job.transposeA = false;
                     job.transposeB = false;
 
-                    pinO.fence = pinX.reuse = job.Schedule(Dependencies(pinO.fence, pinX.fence));
+                    pinO.fence = pinX.reuse = job.Schedule(Dependencies(pinO.reuse, pinX.fence));
                 }
             }
         }
@@ -341,7 +451,7 @@ public partial class BurstCPUOps
                             job.skipFromInputRow = numberOfPixelsToSkipFromInputRow;
                             job.copyFromInputRow = numberOfPixelsToCopyFromInputRow;
 
-                            pinX.reuse = pinT.fence = job.Schedule(T.height, 16,
+                            pinO.reuse = pinX.reuse = pinT.fence = job.Schedule(T.height, 16,
                                 Dependencies(pinT.reuse, pinX.fence, pinO.fence));  // NOTE: need to fence on O here
                                                                                     // due to T being shared between multiple iterations
                                                                                     // and its use for previous iteration on O has to complete before we can start filling T again
@@ -352,7 +462,7 @@ public partial class BurstCPUOps
                         {
                             pinO.fence = pinT.reuse =
                                 blas.ScheduleSGEMM(
-                                    Dependencies(pinO.fence, pinT.fence),
+                                    Dependencies(pinO.reuse, pinT.fence),
                                         ptrT, outElements, inChannels,
                                         ptrW, inChannels,  outChannels,
                                         ptrO, outElements, outChannels,
@@ -373,7 +483,7 @@ public partial class BurstCPUOps
                             job.transposeA = false;
                             job.transposeB = false;
 
-                            pinO.fence = pinT.reuse = job.Schedule(Dependencies(pinO.fence, pinT.fence));
+                            pinO.fence = pinT.reuse = job.Schedule(Dependencies(pinO.reuse, pinT.fence));
                         }
 
                         ptrW += inChannels * outChannels;
@@ -927,7 +1037,7 @@ public partial class BurstCPUOps
                     job.X = ptrX;
                     job.O = maxValues;
                     job.inChannels = O.flatWidth;
-                    fence = job.Schedule(O.flatHeight, 1, Dependencies(pinO.reuse, pinX.fence));
+                    pinX.reuse = fence = job.Schedule(O.flatHeight, 1, pinX.fence);
                 }
 
                 { //  e_x = np.exp(X - x_max)
@@ -940,20 +1050,19 @@ public partial class BurstCPUOps
                     for (var n = 0; n < O.flatHeight; n++,
                         job.X += O.flatWidth, job.O += O.flatWidth, job.B++)
                     {
-                        combinedFence = Dependencies(
-                            job.Schedule(O.flatWidth, 64 * O.flatHeight, fence),
-                            combinedFence);
+                        combinedFence = Dependencies(job.Schedule(O.flatWidth, 64 * O.flatHeight, Dependencies(fence, pinX.fence, pinO.reuse)), combinedFence);
                     }
                     fence = combinedFence;
+                    pinX.reuse = fence;
+                    pinO.fence = fence;
                 }
-                pinX.reuse = fence;
 
                 { // e_x_sum = e_x.sum(axis=1)
                     var job = new ChannelReduceSumJob();
                     job.X = ptrO;
                     job.O = expSums;
                     job.inChannels = O.flatWidth;
-                    fence = job.Schedule(O.flatHeight, 1, fence);
+                    pinO.reuse = fence = job.Schedule(O.flatHeight, 1, pinO.fence);
                 }
 
                 { // O = e_x / e_x_sum
@@ -965,13 +1074,11 @@ public partial class BurstCPUOps
                     for (var n = 0; n < O.flatHeight; n++,
                         job.X += O.flatWidth, job.O += O.flatWidth, job.D++)
                     {
-                        combinedFence = Dependencies(
-                            job.Schedule(O.flatWidth, 512 * O.flatHeight, fence),
-                            combinedFence);
+                        combinedFence = Dependencies(job.Schedule(O.flatWidth, 512 * O.flatHeight, Dependencies(fence, pinO.reuse)), combinedFence);
                     }
                     fence = combinedFence;
+                    pinO.fence = fence;
                 }
-                pinO.fence = fence;
             }
 
             UnsafeUtility.Free(expSums, Allocator.TempJob);
@@ -2007,6 +2114,237 @@ public partial class BurstCPUOps
             }
         }
         return O;
+    }
+
+    public override Tensor Concat(Tensor[] tensors, int axis)
+    {
+        var concatShape = TensorExtensions.Concat(tensors, axis);
+        var O = NewTensor(concatShape);
+
+        unsafe
+        {
+            // product of all tensor dimensions starting from axis
+            var copyBlockLengths = stackalloc int[tensors.Length];
+            var copyBlockLengthsAcum = stackalloc int[tensors.Length];
+            int copyBlockLengthsSum = 0;
+            for (int i = 0; i < tensors.Length; ++i)
+            {
+                copyBlockLengthsAcum[i] = copyBlockLengthsSum;
+                copyBlockLengths[i] = (int)GetAggregatedDimLength(tensors[i].shape,  tensors[i].shape.Axis(axis), TensorShape.MaxRank);
+                copyBlockLengthsSum += copyBlockLengths[i];
+            }
+
+            // copy tensor data interleaved into O
+            int takes = (int)GetAggregatedDimLength(concatShape,  0, concatShape.Axis(axis));
+            var pinO = Pin(O);
+            for (int i = 0; i < tensors.Length; ++i)
+            {
+                var pinX = Pin(tensors[i]);
+                fixed (float*
+                    ptrX = &pinX.array[pinX.offset],
+                    ptrO = &pinO.array[pinO.offset])
+                {
+                    var job = new CopyStrideJob();
+                    job.O = ptrO + copyBlockLengthsAcum[i];
+                    job.OStride = copyBlockLengthsSum;
+                    job.X = ptrX;
+                    job.XStride = copyBlockLengths[i];
+                    job.length = copyBlockLengths[i];
+                    job.count = takes;
+
+                    pinO.fence = pinX.reuse = job.Schedule(Dependencies(pinO.reuse, pinX.fence));
+                }
+            }
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor StridedSlice(Tensor X, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D)
+    {
+        unsafe
+        {
+            int* starts = stackalloc int[TensorShape.MaxRank];
+            int* ends = stackalloc int[TensorShape.MaxRank];
+            int* strides = stackalloc int[TensorShape.MaxRank];
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, starts4Dor8D, starts, 0);
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, ends4Dor8D, ends, 1);
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, strides4Dor8D, strides, 1);
+
+            var O = NewTensor(X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides));
+            var pinX = Pin(X);
+            var pinO = Pin(O);
+
+            int* wrappedStartsIndices = ends; //reuse buffer to save a stack allocation.
+            for (int i = 0; i < TensorShape.MaxRank; ++i)
+                wrappedStartsIndices[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
+
+            Assert.AreEqual(8, TensorShape.MaxRank);
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                //TODO/Idea for further optimisation: Add a version using UnsafeUtility.MemCpyStride when many strides are 1 (starting from C amd going upward).
+                if (strides[TensorShape.C] == 1)
+                {
+                    var job = new GenericSliceJob();
+                    job.X = ptrX;
+                    job.O = ptrO;
+                    job.X = ptrX;
+                    job.O = ptrO;
+                    job.shapeX = X.shape;
+                    job.shapeO = O.shape;
+                    job.startS = wrappedStartsIndices[0];
+                    job.startR = wrappedStartsIndices[1];
+                    job.startN = wrappedStartsIndices[2];
+                    job.startT = wrappedStartsIndices[3];
+                    job.startD = wrappedStartsIndices[4];
+                    job.startH = wrappedStartsIndices[5];
+                    job.startW = wrappedStartsIndices[6];
+                    job.startC = wrappedStartsIndices[7];
+                    job.strideS = strides[0];
+                    job.strideR = strides[1];
+                    job.strideN = strides[2];
+                    job.strideT = strides[3];
+                    job.strideD = strides[4];
+                    job.strideH = strides[5];
+                    job.strideW = strides[6];
+                    int numCopy = O.shape.length / O.shape.channels;
+                    pinO.fence = pinX.reuse = job.Schedule(numCopy, 64, Dependencies(pinO.reuse, pinX.fence));
+                }
+                else
+                {
+                    var job = new GenericStridedSliceJob();
+                    job.X = ptrX;
+                    job.O = ptrO;
+                    job.shapeX = X.shape;
+                    job.shapeO = O.shape;
+                    job.strideS = strides[0];
+                    job.strideR = strides[1];
+                    job.strideN = strides[2];
+                    job.strideT = strides[3];
+                    job.strideD = strides[4];
+                    job.strideH = strides[5];
+                    job.strideW = strides[6];
+                    job.strideC = strides[7];
+                    job.startS = wrappedStartsIndices[0];
+                    job.startR = wrappedStartsIndices[1];
+                    job.startN = wrappedStartsIndices[2];
+                    job.startT = wrappedStartsIndices[3];
+                    job.startD = wrappedStartsIndices[4];
+                    job.startH = wrappedStartsIndices[5];
+                    job.startW = wrappedStartsIndices[6];
+                    job.startC = wrappedStartsIndices[7];
+                    pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+                }
+            }
+            return O;
+        }
+    }
+
+    //TODO refactor when adding Burst support for other padding types (edge, reflect, symmetric)
+    private Tensor ApplyBorderPadding(Tensor X, int[] pad, float constant)
+    {
+        Assert.IsTrue(X.shape.Is4D());
+        Assert.AreEqual(pad.Length, 4);
+
+        var O = NewTensor(X.shape.ApplyBorder(pad));
+
+        int prePadX = Math.Max(0, pad[0]);
+        int prePadY = Math.Max(0, pad[1]);
+        int postPadX = Math.Max(0, pad[2]);
+        int postPadY = Math.Max(0, pad[3]);
+
+        // NOTE: negative "pad" variable will crop X tensor
+        int preCropX  = Math.Max(0, -pad[0]);
+        int preCropY  = Math.Max(0, -pad[1]);
+        int postCropX = Math.Max(0, -pad[2]);
+        int postCropY = Math.Max(0, -pad[3]);
+        int croppedWidth = X.width - (preCropX + postCropX);
+        int croppedHeight = X.height - (preCropY + postCropY);
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                int numItemInARow = O.width * O.channels;
+                int numItemInABatch = O.height * numItemInARow;
+
+                for (int b = 0; b < O.batch; ++b)
+                {
+                    //PrePadY
+                    if (prePadY > 0)
+                    {
+                        int numItemToPrepadInHeight = prePadY * O.width * O.channels;
+                        int prepadOffset = numItemInABatch * b;
+                        var jobPrePadY = new SetConstantPaddingJob();
+                        jobPrePadY.O = ptrO + prepadOffset;
+                        jobPrePadY.constant = constant;
+                        pinO.fence = jobPrePadY.Schedule(numItemToPrepadInHeight, 1024, pinO.reuse);
+                    }
+
+                    //PrePadX
+                    if (prePadX > 0)
+                    {
+                        var jobPrePadX = new SetConstantPaddingWithStrideJob();
+                        jobPrePadX.O = ptrO + O.Index(b, prePadY, 0, 0);
+                        jobPrePadX.constant = constant;
+                        jobPrePadX.length = prePadX * O.channels;
+                        jobPrePadX.stride = O.width * O.channels;
+                        pinO.fence = jobPrePadX.Schedule(croppedHeight * prePadX * O.channels, 1024, pinO.reuse);
+                    }
+
+                    //Center X and Y
+                    {
+                        int srcFloatOffset = X.Index(b, preCropY, preCropX, 0);
+                        int dstFloatOffset = O.Index(b, prePadY, prePadX, 0);
+                        int numFloatToCopy = O.channels * croppedWidth;
+                        var jobCopy = new CopyStrideJob();
+                        jobCopy.X = ptrX + srcFloatOffset;
+                        jobCopy.XStride = X.width * X.channels;
+                        jobCopy.O = ptrO + dstFloatOffset;
+                        jobCopy.OStride = O.width * O.channels;
+                        jobCopy.length = numFloatToCopy;
+                        jobCopy.count = croppedHeight;
+                        pinO.fence = pinX.reuse = jobCopy.Schedule(Dependencies(pinO.reuse, pinX.fence));
+                    }
+
+                    //PostPadX
+                    if (postPadX > 0)
+                    {
+                        var jobPostPadX = new SetConstantPaddingWithStrideJob();
+                        jobPostPadX.O = ptrO + O.Index(b, prePadY, O.width - postPadX, 0);
+                        jobPostPadX.constant = constant;
+                        jobPostPadX.length = postPadX * O.channels;
+                        jobPostPadX.stride = O.width * O.channels;
+                        pinO.fence = jobPostPadX.Schedule(croppedHeight * postPadX * O.channels, 1024, pinO.reuse);
+                    }
+
+                    //PostPadY
+                    if (postPadY > 0)
+                    {
+                        int numItemToPostpadInHeight = postPadY * O.width * O.channels;
+                        int postpadOffset = O.Index(b, O.height - postPadY, 0, 0);
+                        var jobPostPadY = new SetConstantPaddingJob();
+                        jobPostPadY.O = ptrO + postpadOffset;
+                        jobPostPadY.constant = constant;
+                        pinO.fence = jobPostPadY.Schedule(numItemToPostpadInHeight, 1024, pinO.reuse);
+                    }
+                }
+            }
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Border2D(Tensor X, int[] pad, float constant)
+    {
+        return ApplyBorderPadding(X, pad, constant);
     }
 }
 

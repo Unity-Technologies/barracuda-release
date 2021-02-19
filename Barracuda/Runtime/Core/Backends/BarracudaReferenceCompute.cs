@@ -842,17 +842,13 @@ public class TextureAsTensorData : ITensorData
 /// </summary>
 public class ReferenceComputeOps : ReferenceCPUOps
 {
-    private ComputeShader[] m_Kernels;
-
     /// <summary>
     /// Create `ReferenceComputeOps`
     /// </summary>
-    /// <param name="kernels">compute kernels</param>
     /// <param name="allocator">allocator</param>
-    public ReferenceComputeOps(ComputeShader kernels, ITensorAllocator allocator = null)
+    public ReferenceComputeOps(ITensorAllocator allocator = null)
     : base(allocator)
     {
-        m_Kernels = new [] {kernels};
     }
 
     /// <summary>
@@ -904,7 +900,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
     internal ITensorData TextureToTensorData(TextureAsTensorData texData, string name)
     {
-        var fn = new ComputeFunc(ComputeShaderSingleton.Instance.texureKernels, "TextureToTensor");
+        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "TextureToTensor");
         var tensorData = new ComputeTensorData(texData.shape, name, ComputeInfo.channelsOrder, false);
 
         fn.SetTensor("O", texData.shape, tensorData.buffer);
@@ -962,7 +958,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             target.Create();
         }
 
-        var fn = new ComputeFunc(ComputeShaderSingleton.Instance.texureKernels, "TensorToTexture"+ (lut == null?"NoLUT":"3DLUT"));
+        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "TensorToTexture"+ (lut == null?"NoLUT":"3DLUT"));
         SetTensor(fn, "X", X);
         fn.SetTexture("O", target);
         fn.shader.SetVector("_Scale", scale);
@@ -1061,7 +1057,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = new TensorShape(X.flatHeight, W.flatWidth);
 
-        var fn = new ComputeFunc(m_Kernels, "Dense");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dense");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", W);
@@ -1097,7 +1093,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        var fn = new ComputeFunc(m_Kernels, "Conv2DWinograd_2x2_3x3");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2DWinograd_2x2_3x3");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1126,7 +1122,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        var fn = new ComputeFunc(m_Kernels, "Conv3D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv3D");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1161,7 +1157,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return Conv2DWinograd(X, K, B, stride, pad, fusedActivation);
         }
 
-        var fn = new ComputeFunc(m_Kernels, "Conv2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2D");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1194,7 +1190,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        var fn = new ComputeFunc(m_Kernels, "DepthwiseConv2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "DepthwiseConv2D");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1230,7 +1226,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             K.kernelWidth - pad[2] - 1, K.kernelHeight - pad[3] - 1
         };
 
-        var fn = new ComputeFunc(m_Kernels, "Conv2DTrans");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2DTrans");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1255,7 +1251,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(X.batch, X.height*scale[1], X.width*scale[0], X.channels);
 
-        var fn = new ComputeFunc(m_Kernels, bilinear ? "UpsampleBilinear2D": "Upsample2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, bilinear ? "UpsampleBilinear2D": "Upsample2D");
 
         SetTensor(fn, "X", X);
 
@@ -1275,7 +1271,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(1, 1, X.batch, 1, X.depth*scale[2], X.height*scale[1], X.width*scale[0], X.channels);
 
-        var fn = new ComputeFunc(m_Kernels, trilinear ? "UpsampleTrilinear3D": "Upsample3D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, trilinear ? "UpsampleTrilinear3D": "Upsample3D");
 
         SetTensor(fn, "X", X);
 
@@ -1295,7 +1291,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(X.batch, size[1], size[0], X.channels);
 
-        var fn = new ComputeFunc(m_Kernels, bilinear ? "ResampleBilinear2D" : "Resample2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, bilinear ? "ResampleBilinear2D" : "Resample2D");
 
         SetTensor(fn, "X", X);
 
@@ -1307,11 +1303,10 @@ public class ReferenceComputeOps : ReferenceCPUOps
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(blocksize.Length, 2);
-        Assert.AreEqual(X.channels % (blocksize[0] * blocksize[1]), 0);
 
         var O = new TensorShape(X.batch, X.height * blocksize[1], X.width * blocksize[0], X.channels / (blocksize[0] * blocksize[1]));
 
-        var fn = new ComputeFunc(m_Kernels, "DepthToSpace_" + mode);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "DepthToSpace_" + mode);
 
         SetTensor(fn, "X", X);
 
@@ -1325,11 +1320,10 @@ public class ReferenceComputeOps : ReferenceCPUOps
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(blocksize.Length, 2);
-        Assert.AreEqual(X.channels % (blocksize[0] * blocksize[1]), 0);
 
         var O = new TensorShape(X.batch, X.height / blocksize[1], X.width / blocksize[0], X.channels * (blocksize[0] * blocksize[1]));
 
-        var fn = new ComputeFunc(m_Kernels, "SpaceToDepth");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "SpaceToDepth");
 
         SetTensor(fn, "X", X);
 
@@ -1347,7 +1341,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyPool(pool, stride, pad);
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
 
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pool", pool);
@@ -1380,7 +1374,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(X.shape.Is4D());
         var O = new TensorShape(X.batch, 1, 1, X.channels);
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
 
         SetTensor(fn, "X", X);
 
@@ -1405,7 +1399,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(X.shape.Is4D());
         var O = new TensorShape(X.batch, 2, 1, X.channels);
 
-        var fn = new ComputeFunc(m_Kernels, "GlobalAvgVariancePool2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "GlobalAvgVariancePool2D");
 
         SetTensor(fn, "X", X);
 
@@ -1427,7 +1421,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyBorder(pad);
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
 
         SetTensor(fn, "X", X);
 
@@ -1465,7 +1459,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyBorder(pad);
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
 
         SetTensor(fn, "X", X);
 
@@ -1526,7 +1520,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
         var O = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "ScaleBias");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "ScaleBias");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", S);
@@ -1551,7 +1545,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             pool = X.batch;
 
         var Oshape = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "InstanceNorm");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "InstanceNorm");
         fn.shader.SetFloat("_Epsilon", epsilon);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
@@ -1571,7 +1565,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
         var O = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "LRN");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "LRN");
 
         SetTensor(fn, "X", X);
         fn.shader.SetFloat("_Alpha", alpha);
@@ -1589,11 +1583,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(alpha >= 0f && alpha <= 1f);
 
         var O = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "Dropout");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dropout");
 
         SetTensor(fn, "X", X);
+
         fn.shader.SetFloat("_Alpha", alpha);
-        fn.shader.SetFloat("_Seed", UnityEngine.Random.value);
+
+        using (var seedOverride = new Seed(ref m_DropoutSeed, 1337))
+        {
+            fn.shader.SetFloat("_Seed", UnityEngine.Random.value);
+        }
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
     }
@@ -1609,7 +1608,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     protected virtual Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
     {
         var O = X.shape;
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
 
         SetTensor(fn, "X", X);
         fn.shader.SetFloat("_Alpha", alpha);
@@ -1630,7 +1629,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         var O = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "PRelu");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "PRelu");
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", S);
@@ -1646,7 +1645,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape;
 
-        var fn = new ComputeFunc(m_Kernels, "Softmax");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Softmax");
 
         SetTensor(fn, "X", X);
 
@@ -1661,7 +1660,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape;
 
-        var fn = new ComputeFunc(m_Kernels, "LogSoftmax");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "LogSoftmax");
 
         SetTensor(fn, "X", X);
 
@@ -1854,11 +1853,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(newShape.width == X.width || X.width == 1);
         Assert.IsTrue(newShape.channels == X.channels || X.channels == 1);
 
-        var fn = new ComputeFunc(m_Kernels, "Expand");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Expand");
         SetTensor(fn, "X", X);
 
         return Dispatch(fn, newShape, newShape.channels, newShape.width, newShape.height);
     }
+
+    internal static Tensor[] s_ElementwiseBroadcastTensors = new Tensor[2];
 
     /// <summary>
     /// Elementwise broadcast for specified kernel
@@ -1874,7 +1875,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(tensors.Length > 0);
         var X = tensors[0];
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
         bool isFirstDispatch = true;
         for (int t = 1; t < tensors.Length; ++t)
         {
@@ -1947,6 +1948,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return ElementwiseWithBroadcast("BroadcastMean", tensors);
     }
 
+    internal static int[] s_ReducePermute = new int[8];
+
+    internal static void FillReducePermute(int axis)
+    {
+        for (var idx = 0; idx < s_ReducePermute.Length; idx++)
+            s_ReducePermute[idx] = idx;
+        s_ReducePermute[7] = axis;
+        s_ReducePermute[axis] = 7;
+    }
+
     /// <summary>
     /// Reduce with specified kernel
     /// </summary>
@@ -1960,22 +1971,21 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         //TODO optimize when reducing not on channel.
         bool needTranpose = axis != TensorShape.C;
-        var permuteTargetAxisAndC = new int[] {0,1,2,3,4,5,6,axis};
-        permuteTargetAxisAndC[axis] = 7;
+        FillReducePermute(axis);
 
         if (needTranpose)
-            X = Transpose(X, permuteTargetAxisAndC);
+            X = Transpose(X, s_ReducePermute);
 
         var oShape = X.shape.Reduce(TensorShape.C);
         Assert.AreEqual(oShape.channels, 1);
 
-        var fn = new ComputeFunc(m_Kernels, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
         SetTensor(fn, "X", X);
 
         var O = Dispatch(fn, oShape, oShape.width, oShape.height, 1);
 
         if (needTranpose)
-            O = Transpose(O, permuteTargetAxisAndC);
+            O = Transpose(O, s_ReducePermute);
 
         return O;
     }
@@ -2025,49 +2035,65 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Greater(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastGreater", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastGreater", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor GreaterEqual(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastGreaterEqual", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastGreaterEqual", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor Less(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastLess", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastLess", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor LessEqual(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastLessEqual", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastLessEqual", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor Equal(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastEqual", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastEqual", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalOr(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastLogicalOr", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastLogicalOr", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalAnd(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastLogicalAnd", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastLogicalAnd", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
     public override Tensor LogicalXor(Tensor A, Tensor B)
     {
-        return ElementwiseWithBroadcast("BroadcastLogicalXor", new Tensor[] { A, B });
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("BroadcastLogicalXor", s_ElementwiseBroadcastTensors);
     }
 
     /// <inheritdoc/>
@@ -2079,7 +2105,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        var fn = new ComputeFunc(m_Kernels, "BroadcastWhere");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "BroadcastWhere");
 
         SetTensor(fn, "X", C);
         SetTensor(fn, "W", A);
@@ -2103,14 +2129,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         if (X.shape.Is4D() && newShape.Is4D())
         {
-            var fn = new ComputeFunc(m_Kernels, "ReshapeFromNHWCModel_NCHW");
+            var fn = new ComputeFunc(ComputeShaderContext.Reference, "ReshapeFromNHWCModel_NCHW");
             SetTensor(fn, "X", X);
             SetTensor(fn, "O", O);
             fn.Dispatch( O.width, O.height, O.channels);
         }
         else
         {
-            var fn = new ComputeFunc(m_Kernels, "Reshape8DFromChannelFirstModel_NCHW");
+            var fn = new ComputeFunc(ComputeShaderContext.Reference, "Reshape8DFromChannelFirstModel_NCHW");
             SetTensor(fn, "X", X);
             SetTensor(fn, "O", O);
             var xD  = new[] {X.shape[0], X.shape[1],X.shape[3],X.shape[4]};
@@ -2139,7 +2165,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
         var O = NewTensor(newShape, "O");
-        var fn = new ComputeFunc(m_Kernels, isNHWCCopy?"Copy":"Copy8D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, isNHWCCopy?"Copy":"Copy8D");
         SetTensor(fn, "X", X);
         var copyShape = X.shape;
         fn.SetTensor("O", copyShape, Pin(O).buffer);
@@ -2188,7 +2214,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(X.dimensions <= 2);
         var O = new TensorShape(X.flatWidth, X.flatHeight);
 
-        var fn = new ComputeFunc(m_Kernels, "Transpose2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose2D");
         SetTensor(fn, "X", X);
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
@@ -2265,7 +2291,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var outStride0_3 = new[] {outStride[0],outStride[1],outStride[2],outStride[3]};
         var outStride4_7 = new[] {outStride[4],outStride[5],outStride[6],outStride[7]};
 
-        var fn = new ComputeFunc(m_Kernels, "Transpose8D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose8D");
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pad", d0_3);
         fn.shader.SetInts("_Pool", d4_7);
@@ -2289,7 +2315,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.Permute(permutations);
 
-        var fn = new ComputeFunc(m_Kernels, "Transpose");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose");
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pool", permutations);
         return Dispatch(fn, O, X.channels, X.width, X.height);
@@ -2300,7 +2326,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             throw new NotImplementedException();
 
         var O = X.shape;
-        var fn = new ComputeFunc(m_Kernels, "TransposeToNCHW");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToNCHW");
         SetTensor(fn, "X", X);
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
@@ -2321,7 +2347,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         axis = O.Axis(axis);
         var axisNCHW = TensorExtensions.Convert8DAxisTo4D(axis);
 
-        var fn = new ComputeFunc(m_Kernels, "Copy");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy");
         var result = NewTensor(fn, "O", O);
         foreach (var X in tensors)
         {
@@ -2349,40 +2375,60 @@ public class ReferenceComputeOps : ReferenceCPUOps
         secondSplit[3] = srcValues[TensorShape.D];
     }
 
+    private unsafe void Set8DParamsForShader(int* srcValues, int[] firstSplit, int[] secondSplit)
+    {
+        Assert.IsTrue(firstSplit.Length == 4);
+        Assert.IsTrue(secondSplit.Length == 4);
+        firstSplit[0] =   srcValues[TensorShape.DataBatch];
+        firstSplit[1] =   srcValues[TensorShape.H];
+        firstSplit[2] =   srcValues[TensorShape.W];
+        firstSplit[3] =   srcValues[TensorShape.C];
+        secondSplit[0] = srcValues[TensorShape.SequenceLength];
+        secondSplit[1] = srcValues[TensorShape.NumberOfDirections];
+        secondSplit[2] = srcValues[TensorShape.DataFeature3];
+        secondSplit[3] = srcValues[TensorShape.D];
+    }
+
     static private int[] s_StridedSliceStart = new int[4];
     static private int[] s_StridedSliceStart8D = new int[4];
     static private int[] s_StridedSliceStride = new int[4];
     static private int[] s_StridedSliceStride8D = new int[4];
     /// <inheritdoc/>
-    public override Tensor StridedSlice(Tensor X, int[] starts, int[] ends, int[] stride)
+    public override Tensor StridedSlice(Tensor X, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D)
     {
-        starts = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, starts, 0);
-        ends = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, ends, 1);
-        stride = TensorExtensions.Get8DParametersFrom4DParametersAndShape(X.shape, stride, 1);
+        unsafe
+        {
+            int* starts = stackalloc int[TensorShape.MaxRank];
+            int* ends = stackalloc int[TensorShape.MaxRank];
+            int* strides = stackalloc int[TensorShape.MaxRank];
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, starts4Dor8D, starts, 0);
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, ends4Dor8D, ends, 1);
+            TensorExtensions.Get8DParametersNoAlloc(X.shape, strides4Dor8D, strides, 1);
 
-        var O = X.shape.ApplyStridedSlice(starts, ends, stride);
+            var O = X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides);
 
-        for (int i = 0; i < TensorShape.MaxRank; ++i)
-            starts[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
+            for (int i = 0; i < TensorShape.MaxRank; ++i)
+                starts[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
 
-        Set8DParamsForShader(stride, s_StridedSliceStride, s_StridedSliceStride8D);
-        Set8DParamsForShader(starts, s_StridedSliceStart, s_StridedSliceStart8D);
+            Set8DParamsForShader(strides, s_StridedSliceStride, s_StridedSliceStride8D);
+            Set8DParamsForShader(starts, s_StridedSliceStart, s_StridedSliceStart8D);
 
-        var fn = new ComputeFunc(m_Kernels, "StridedSlice");
-        SetTensor(fn, "X", X);
-        fn.shader.SetInts("_Stride", s_StridedSliceStride);
-        fn.shader.SetInts("_ChannelWriteMask", s_StridedSliceStride8D);
-        fn.shader.SetInts("_Pad", s_StridedSliceStart);
-        fn.shader.SetInts("_Pool", s_StridedSliceStart8D);
+            var fn = new ComputeFunc(ComputeShaderContext.Reference, "StridedSlice");
+            SetTensor(fn, "X", X);
+            fn.shader.SetInts("_Stride", s_StridedSliceStride);
+            fn.shader.SetInts("_ChannelWriteMask", s_StridedSliceStride8D);
+            fn.shader.SetInts("_Pad", s_StridedSliceStart);
+            fn.shader.SetInts("_Pool", s_StridedSliceStart8D);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+            return Dispatch(fn, O, O.channels, O.width, O.height);
+        }
     }
 
     /// <inheritdoc/>
     public override Tensor Tile(Tensor X, int[] repeats)
     {
         var O = X.shape.Scale(repeats);
-        var fn = new ComputeFunc(m_Kernels, "Tile");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Tile");
         SetTensor(fn, "X", X);
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
@@ -2397,7 +2443,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var outputShape = X.shape;
         outputShape[axis] = indices.length;
 
-        var fn = new ComputeFunc(m_Kernels, "Gather");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Gather");
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", indices);
         fn.shader.SetInt("_Axis", axis);
@@ -2496,34 +2542,31 @@ internal struct ComputeFunc
 
     // ---------------------------------------------------------------------------------
 
-    public ComputeFunc(ComputeShader cs, string[] kns, int x, int y = 1, int z = 1)
-        : this(cs, FindBestKernelMatchingDimensions(new [] { cs }, kns, x, y, z))
+
+
+
+    public ComputeFunc(ComputeShaderContext ctx, string[] kns, int x, int y = 1, int z = 1)
+        : this(ctx, FindBestKernelMatchingDimensions(ctx, kns, x, y, z))
     {
     }
 
-    public ComputeFunc(ComputeShader cs, string kn)
-        : this(new [] { cs }, kn)
-    {
-    }
-
-    public ComputeFunc(ComputeShader[] cs, string[] kns, int x, int y = 1, int z = 1)
-        : this(cs, FindBestKernelMatchingDimensions(cs, kns, x, y, z))
-    {
-    }
-
-    public ComputeFunc(ComputeShader[] cs, string kn)
+    public ComputeFunc(ComputeShaderContext ctx, string kn)
     {
         string kernelNameWithChannelsOrder = s_StringCache.Lookup(kn,
                             (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC) ? "_NHWC" : "_NCHW");
-        foreach (ComputeShader s in cs)
-            if (s != null && (s.HasKernel(kernelNameWithChannelsOrder) || s.HasKernel(kn)))
-            {
-                shader = s;
-                kernelName = s.HasKernel(kernelNameWithChannelsOrder)?kernelNameWithChannelsOrder:kn;
-                kernelIndex = shader.FindKernel(kernelName);
-                shader.GetKernelThreadGroupSizes(kernelIndex, out threadGroupSizeX, out threadGroupSizeY, out threadGroupSizeZ);
-                return;
-            }
+
+        var s = ComputeShaderSingleton.Instance.FindComputeShader(ctx, kernelNameWithChannelsOrder) ??
+                                ComputeShaderSingleton.Instance.FindComputeShader(ctx, kn);
+
+        if (s != null && (s.HasKernel(kernelNameWithChannelsOrder) || s.HasKernel(kn)))
+        {
+            shader = s;
+            kernelName = s.HasKernel(kernelNameWithChannelsOrder)?kernelNameWithChannelsOrder:kn;
+            kernelIndex = shader.FindKernel(kernelName);
+            shader.GetKernelThreadGroupSizes(kernelIndex, out threadGroupSizeX, out threadGroupSizeY, out threadGroupSizeZ);
+            return;
+        }
+
         throw new ArgumentException($"Kernel {kn} and {kernelNameWithChannelsOrder} are both missing");
     }
 
@@ -2638,23 +2681,22 @@ internal struct ComputeFunc
         return (v + div - 1) / div;
     }
 
-    static public string FindBestKernelMatchingDimensions(ComputeShader[] cs, string[] kns, int x, int y = 1, int z = 1)
+    static public string FindBestKernelMatchingDimensions(ComputeShaderContext ctx, string[] kns, int x, int y = 1, int z = 1)
     {
         Assert.IsTrue(kns.Length > 0);
 
         foreach (var kernelName in kns)
         {
-            foreach (var shader in cs)
-            {
-                int kernelIndex = shader.FindKernel(kernelName);
-                uint threadGroupSizeX, threadGroupSizeY, threadGroupSizeZ;
-                shader.GetKernelThreadGroupSizes(kernelIndex, out threadGroupSizeX, out threadGroupSizeY, out threadGroupSizeZ);
+            var shader = ComputeShaderSingleton.Instance.FindComputeShader(ctx, kernelName);
 
-                if (x % threadGroupSizeX == 0 &&
-                    y % threadGroupSizeY == 0 &&
-                    z % threadGroupSizeZ == 0)
-                    return kernelName;
-            }
+            int kernelIndex = shader.FindKernel(kernelName);
+            uint threadGroupSizeX, threadGroupSizeY, threadGroupSizeZ;
+            shader.GetKernelThreadGroupSizes(kernelIndex, out threadGroupSizeX, out threadGroupSizeY, out threadGroupSizeZ);
+
+            if (x % threadGroupSizeX == 0 &&
+                y % threadGroupSizeY == 0 &&
+                z % threadGroupSizeZ == 0)
+                return kernelName;
         }
         // pick the last one
         return kns[kns.Length - 1];

@@ -1,0 +1,145 @@
+#pragma kernel ReduceMin_NHWC CHANNELS_FIRST=0
+#pragma kernel ReduceMin_NCHW CHANNELS_FIRST=1
+#pragma kernel ReduceMax_NHWC CHANNELS_FIRST=0
+#pragma kernel ReduceMax_NCHW CHANNELS_FIRST=1
+#pragma kernel ReduceSum_NHWC CHANNELS_FIRST=0
+#pragma kernel ReduceSum_NCHW CHANNELS_FIRST=1
+#pragma kernel ReduceMean_NHWC CHANNELS_FIRST=0
+#pragma kernel ReduceMean_NCHW CHANNELS_FIRST=1
+#pragma kernel ReduceProd_NHWC CHANNELS_FIRST=0
+#pragma kernel ReduceProd_NCHW CHANNELS_FIRST=1
+#pragma kernel ArgMax_NHWC CHANNELS_FIRST=0
+#pragma kernel ArgMax_NCHW CHANNELS_FIRST=1
+#pragma kernel ArgMin_NHWC CHANNELS_FIRST=0
+#pragma kernel ArgMin_NCHW CHANNELS_FIRST=1
+
+
+#include "Tensor.cginc"
+#include "Random.cginc"
+
+#if CHANNELS_FIRST
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX) KERNEL##SUFFIX##_NCHW
+#else
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX) KERNEL##SUFFIX##_NHWC
+#endif
+#define FUNC_NAME(KERNEL, SUFFIX) FUNC_NAME_CALL(KERNEL, SUFFIX)
+
+TENSOR_DECL(X)
+TENSOR_DECL(W)
+TENSOR_DECL(K)
+TENSOR_DECL(B)
+TENSOR_DECL_RW(O)
+
+#define REDUCE(name, op_name, defaultValue, shouldNormalize) \
+[numthreads(4,4,1)] \
+void KERNEL_FUNC(name)(uint3 dispatchThreadID : SV_DispatchThreadID)\
+{\
+    TENSOR_ARGS3_8D(X, B, O);\
+\
+    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;\
+    if (w >= O.width) return;       if (h >= O.height) return;\
+\
+    for (uint s = 0; s < O.sequenceLength;     ++s)\
+    for (uint r = 0; r < O.numberOfDirections; ++r)\
+    for (uint n = 0; n < O.batch;              ++n)\
+    for (uint t = 0; t < O.extraDimension;     ++t)\
+    for (uint d = 0; d < O.depth;              ++d)\
+    {\
+        float v = defaultValue;\
+        for (uint c = 0; c < X.channels; ++c)\
+            v = op_name (v, X.Get8D(s,r,n,t,d,h,w,c) );\
+\
+        if (shouldNormalize)\
+            v /= X.channels;\
+        O.Set8D(s,r,n,t,d,h,w,0,v);\
+    }\
+}
+
+float ReduceMinOp(float v, float x)
+{
+    v = min(v, x);
+    return v;
+}
+REDUCE(ReduceMin, ReduceMinOp, FLT_MAX, 0);
+
+float ReduceMaxOp(float v, float x)
+{
+    v = max(v, x);
+    return v;
+}
+REDUCE(ReduceMax, ReduceMaxOp, -FLT_MAX, 0);
+
+float ReduceSumOp(float v, float x)
+{
+    v += x;
+    return v;
+}
+REDUCE(ReduceSum, ReduceSumOp, 0, 0);
+REDUCE(ReduceMean, ReduceSumOp, 0, 1);
+
+float ReduceProdOp(float v, float x)
+{
+    v *= x;
+    return v;
+}
+REDUCE(ReduceProd, ReduceProdOp, 1, 0);
+
+[numthreads(4,4,1)]
+void KERNEL_FUNC(ArgMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.width, O.height, 1);
+    TENSOR_ARGS3_8D(X, B, O);
+
+    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;
+    if (w >= O.width) return;       if (h >= O.height) return;
+
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+        for (uint r = 0; r < O.numberOfDirections; ++r)
+            for (uint n = 0; n < O.batch;              ++n)
+                for (uint t = 0; t < O.extraDimension;     ++t)
+                    for (uint d = 0; d < O.depth;              ++d)
+                    {
+                        int maxIdx = 0;
+                        float maxV = X.Get8D(s,r,n,t,d,h,w,0);
+                        for (uint c = 1; c < X.channels; ++c)
+                        {
+                            float v = X.Get8D(s,r,n,t,d,h,w,c);
+                            if (v > maxV)
+                            {
+                                maxV = v;
+                                maxIdx = c;
+                            }
+                        }
+                        O.Set8D(s,r,n,t,d,h,w,0,maxIdx);
+                    }
+}
+
+[numthreads(4,4,1)]
+void KERNEL_FUNC(ArgMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.width, O.height, 1);
+    TENSOR_ARGS3_8D(X, B, O);
+
+    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;
+    if (w >= O.width) return;       if (h >= O.height) return;
+
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+        for (uint r = 0; r < O.numberOfDirections; ++r)
+            for (uint n = 0; n < O.batch;              ++n)
+                for (uint t = 0; t < O.extraDimension;     ++t)
+                    for (uint d = 0; d < O.depth;              ++d)
+                    {
+                        int minIdx = 0;
+                        float minV = X.Get8D(s,r,n,t,d,h,w,0);
+                        for (uint c = 1; c < X.channels; ++c)
+                        {
+                            float v = X.Get8D(s,r,n,t,d,h,w,c);
+                            if (v < minV)
+                            {
+                                minV = v;
+                                minIdx = c;
+                            }
+                        }
+                        O.Set8D(s,r,n,t,d,h,w,0,minIdx);
+                    }
+}

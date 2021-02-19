@@ -328,9 +328,7 @@ namespace Unity.Barracuda.Compiler.Passes
                     var shape = Array.ConvertAll(input.ToReadOnlyArray(), x => (int)x);
                     var tensorShape = IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(shape);
 
-
                     layer.type = Layer.Type.Load;
-
 
                     layer.axis = input.dimensions; // TODO real rank
                     layer.datasets = new Layer.DataSet[1];
@@ -346,6 +344,33 @@ namespace Unity.Barracuda.Compiler.Passes
                     tensor.ToReadOnlyArray().CopyTo(layer.weights, 0);
 
                     layer.inputs = new string[0];
+                    return;
+                }
+                case Layer.Type.Activation:
+                {
+                    if (layer.activation == Layer.Activation.None)
+                    {
+                        if (layer.inputs.Length < 1 || !IsLayerKnown(layer.inputs[0], knownLayersValue))
+                            return;
+
+                        Tensor input = knownLayersValue[layer.inputs[0]];
+                        var tensorShape = input.shape;
+
+                        layer.type = Layer.Type.Load;
+
+                        layer.axis = input.dimensions; // TODO real rank
+                        layer.datasets = new Layer.DataSet[1];
+                        layer.datasets[0].name = layer.name;
+                        layer.datasets[0].shape = tensorShape;
+                        layer.datasets[0].itemSizeInBytes = 4;
+                        layer.datasets[0].length = tensorShape.length;
+                        layer.datasets[0].offset = 0;
+                        layer.weights = new float[tensorShape.length];
+
+                        input.ToReadOnlyArray().CopyTo(layer.weights, 0);
+
+                        layer.inputs = new string[0];
+                    }
 
                     return;
                 }

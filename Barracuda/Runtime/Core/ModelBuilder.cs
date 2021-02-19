@@ -1747,7 +1747,7 @@ namespace Unity.Barracuda
             return layer;
         }
 
-        private Layer Pad(Layer.Type type, string name, object input, Int32[] pad, float constantValue = 0.0f)
+        internal Layer Pad(Layer.Type type, string name, object input, Int32[] pad, float constantValue = 0.0f)
         {
             Layer layer = new Layer(name, type);
             layer.inputs = new[] { ResolveInput(input) };

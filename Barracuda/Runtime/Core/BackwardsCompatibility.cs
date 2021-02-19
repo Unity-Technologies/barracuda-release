@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Assertions;
 
@@ -23,7 +24,13 @@ public static class DeprecatedTensorExtensions
     [ObsoleteAttribute("Use AdjustPadToPool version with pool as an array instead.", false)]
     public static int[] AdjustPadToPool(this Tensor tensor, ValueTuple<int,int> pool, int[] stride, int[] pad)
     {
-        return tensor.shape.AdjustPadToPool(new int[] {pool.Item1, pool.Item2}, stride, pad);
+        unsafe
+        {
+            int* pPool = stackalloc int[2];
+            pPool[0] = pool.Item1;
+            pPool[1] = pool.Item2;
+            return tensor.shape.AdjustPadToPool(pPool, stride, pad);
+        }
     }
 
     /// <summary>
@@ -37,7 +44,14 @@ public static class DeprecatedTensorExtensions
     [ObsoleteAttribute("Use AdjustPadToPool version with pool as an array instead.", false)]
     public static int[] AdjustPadToPool(this TensorShape shape, ValueTuple<int,int> pool, int[] stride, int[] pad)
     {
-        return shape.AdjustPadToPool(new int[] {pool.Item1, pool.Item2}, stride, pad);
+        unsafe
+        {
+            int* pPool = stackalloc int[2];
+            pPool[0] = pool.Item1;
+            pPool[1] = pool.Item2;
+
+            return shape.AdjustPadToPool(pPool, stride, pad);
+        }
     }
 
     /// <summary>

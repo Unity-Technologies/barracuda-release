@@ -1,0 +1,9 @@
+#pragma kernel Reciprocal_Flat
+#pragma kernel Reciprocal_FlatStrict
+#pragma kernel Reciprocal_Loop
+
+#pragma kernel Sqrt_Flat
+#pragma kernel Sqrt_FlatStrict
+#pragma kernel Sqrt_Loop
+
+#include "Activation.cginc"
