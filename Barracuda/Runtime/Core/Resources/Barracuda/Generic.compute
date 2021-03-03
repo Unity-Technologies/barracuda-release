@@ -24,6 +24,7 @@
 #pragma kernel Copy_NCHW CHANNELS_FIRST=1
 #pragma kernel ReshapeFromNHWCModel_Flat_NCHW CHANNELS_FIRST=1
 #pragma kernel ReshapeFromNHWCModel_Loop_NCHW CHANNELS_FIRST=1
+#pragma kernel TransposeToChannelFirst
 
 #include "Tensor.cginc"
 
@@ -412,5 +413,26 @@ void ReshapeFromNHWCModel_Loop_NCHW(uint3 dispatchThreadID : SV_DispatchThreadID
         O.Set(n, y, x, c, v);
 
         i += _LoopStride;
+    }
+}
+
+NUMTHREADS((4,8,8), (4,8,4), (4,4,4))
+void TransposeToChannelFirst(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH_ARGS(X.channels, X.width, X.height);
+    TENSOR_ARGS2_8D(X, O);
+
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
+
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
+    {
+        float v = X.Get8D(s,r,n,t,d,h,w,c);
+        uint index = X.IndexSRNCTDHW(s,r,n,t,d,h,w,c);
+        O.FastSet(index, v);
     }
 }

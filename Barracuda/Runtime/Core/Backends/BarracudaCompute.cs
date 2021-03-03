@@ -583,7 +583,6 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
-
     private static List<Entry> s_CopyEntries = new List<Entry>(1);
     internal static List<Entry> Copy(TensorShape X, TensorShape O)
     {
@@ -592,6 +591,19 @@ internal sealed class ComputeKernelLibrary
 
         entries.Add( // NOTE: dispatched over X (not O)
             new Entry("Copy",
+                Int3(X.channels, X.width, X.height), BigO(O.batch)));
+
+        return entries;
+    }
+
+    private static List<Entry> s_TransposeToChannelFirst = new List<Entry>(1);
+    internal static List<Entry> TransposeToChannelFirst(TensorShape X, TensorShape O)
+    {
+        var entries = s_TransposeToChannelFirst;
+        entries.Clear();
+
+        entries.Add( // NOTE: dispatched over X (not O)
+            new Entry("TransposeToChannelFirst",
                 Int3(X.channels, X.width, X.height), BigO(O.batch)));
 
         return entries;
@@ -1506,6 +1518,18 @@ public class ComputeOps : ReferenceComputeOps
     // @TODO: implement Dropout in terms of RandomUniform by preparing random values on CPU upfront and multiplying result on GPU later on
     // public override Tensor Dropout(Tensor X, float alpha)
 
+    protected override Tensor TransposeToChannelFirst(Tensor X)
+    {
+        var O = NewTensor(X.shape);
+        var fn = BestKernel(ComputeKernelLibrary.TransposeToChannelFirst(X.shape, O.shape));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+
+        fn.Dispatch();
+        return O;
+    }
+
     /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
@@ -1519,8 +1543,12 @@ public class ComputeOps : ReferenceComputeOps
         axis = O.shape.Axis(axis);
         var axisNHWC = TensorExtensions.Convert8DAxisTo4D(axis);
 
-        foreach (var X in tensors)
+        foreach (var inputTensor in tensors)
         {
+            // input can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
+            // => permute if there is a layout mismatch
+            var X = GetTensorInCurrentMemoryLayout(inputTensor);
+
             var fn = BestKernel(ComputeKernelLibrary.Copy(X.shape, O.shape));
 
             fn.SetTensor("X", X.shape, Pin(X).buffer);

@@ -1016,12 +1016,11 @@ public class ReferenceComputeOps : ReferenceCPUOps
     {
         // N.B: Current implementation is inefficient as it introduces Transposes/Slice and Concat.
         // => consider refactoring dense to support batch
+
         // X and Y can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
         // => permute them if there is a layout mismatch
-        if (Pin(X).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
-            X = TransposeToChannelFirst(X);
-        if (Pin(Y).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
-            Y = TransposeToChannelFirst(Y);
+        X = GetTensorInCurrentMemoryLayout(X);
+        Y = GetTensorInCurrentMemoryLayout(Y);
 
         // V-Table magic, ReferenceCPU.MaMul is calls MatMul2D, Concat & Slice all which are overloaded by all respective IOps, so will call the correct backend
         return base.MatMul(X, rankX, Y, rankY);
@@ -1883,10 +1882,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
             // B and X can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
             // => permute them if there is a layout mismatch
-            if (Pin(X).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
-                X = TransposeToChannelFirst(X);
-            if (Pin(B).channelsOrder == ComputeInfo.ChannelsOrder.NHWC && ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
-                B = TransposeToChannelFirst(B);
+            X = GetTensorInCurrentMemoryLayout(X);
+            B = GetTensorInCurrentMemoryLayout(B);
 
             SetTensor(fn, "X", X);
             SetTensor(fn, "B", B);
@@ -2320,13 +2317,24 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pool", permutations);
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
-    Tensor TransposeToChannelFirst(Tensor X)
-    {
-        if (!X.shape.Is4D())
-            throw new NotImplementedException();
 
+    protected Tensor GetTensorInCurrentMemoryLayout(Tensor tensor)
+    {
+        //Return a tensor in the current memory layout from ComputeInfo.channelsOrder.
+        //Noop in the general case it will transpose constant tensor when ComputeInfo.channelsOrder == NCHW
+        //as those tensor are always in channel last layout.
+        //This is needed for kernel that can accept both input and constant tensor in the same argument.
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW &&
+            Pin(tensor).channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+            return TransposeToChannelFirst(tensor);
+        else
+            return tensor;
+    }
+
+    protected virtual Tensor TransposeToChannelFirst(Tensor X)
+    {
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToNCHW");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToChannelFirst");
         SetTensor(fn, "X", X);
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
@@ -2349,8 +2357,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy");
         var result = NewTensor(fn, "O", O);
-        foreach (var X in tensors)
+        foreach (var inputTensor in tensors)
         {
+            // input can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
+            // => permute if there is a layout mismatch
+            var X = GetTensorInCurrentMemoryLayout(inputTensor);
+
             SetTensor(fn, "X", X);
             fn.shader.SetInts("_Pad", offsets);
             fn.Dispatch(X.channels, X.width, X.height);

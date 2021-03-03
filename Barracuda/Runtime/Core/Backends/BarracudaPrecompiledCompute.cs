@@ -1176,11 +1176,20 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         if (m_Compiled.instructions == null)
             return base.Concat(tensors, axis);
+
+        bool canUsePrecompiledBackend = true;
         foreach (var i in m_Compiled.instructions)
         {
-            if (i.kernel.shader == null)
-                return base.Concat(tensors, axis);
+            canUsePrecompiledBackend &= (i.kernel.shader != null);
         }
+        foreach (var inputTensor  in tensors)
+        {
+            //input tensor is not in current memory layout, we need an extra transpose/dispatch
+            if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW && Pin(inputTensor).channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
+                canUsePrecompiledBackend = false;
+        }
+        if (!canUsePrecompiledBackend)
+            return base.Concat(tensors, axis);
 
         var O = NewTensor(m_Compiled.shape);
 

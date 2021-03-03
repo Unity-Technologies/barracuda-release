@@ -5,6 +5,7 @@ using Unity.Collections.LowLevel.Unsafe;
 using Unity.Burst;
 using Unity.Jobs;
 using Unity.Jobs.LowLevel.Unsafe;
+using Unity.Mathematics;
 
 namespace Unity.Barracuda {
 
@@ -14,7 +15,7 @@ namespace Unity.Barracuda {
 
 public partial class BurstCPUOps
 {
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct MatrixMultiplyJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -36,21 +37,21 @@ public partial class BurstCPUOps
         {
             if (transposeA)
             {
-                var tmp = AN; AN = AM; AM = tmp;
+                int tmp = AN; AN = AM; AM = tmp;
             }
             if (transposeB)
             {
-                var tmp = BN; BN = BM; BM = tmp;
+                int tmp = BN; BN = BM; BM = tmp;
             }
 
-            var n = Math.Max(AN, BM);
-            var workElements = (n + blockSize - 1) / blockSize;
+            int n = math.max(AN, BM);
+            int workElements = (n + blockSize - 1) / blockSize;
             return IJobParallelForExtensions.Schedule(this, workElements, blocksBatchCount, dependsOn);
         }
 
         public void Execute(int i)
         {
-            var bs = blockSize;
+            int bs = blockSize;
             unsafe
             {
                 float* blockTempA = null;
@@ -61,11 +62,11 @@ public partial class BurstCPUOps
                 // need to pick the remaining (shorter) axis
                 for (int j = 0; j < Math.Min(AN, BM); j += bs)
                 {
-                    var rowA = (AN > BM) ? i * bs: j;
-                    var colB = (AN > BM) ? j     : i * bs;
+                    int rowA = (AN > BM) ? i * bs: j;
+                    int colB = (AN > BM) ? j     : i * bs;
 
                     float* blockC = C + rowA * CM + colB;
-                    var strideC = CM;
+                    int strideC = CM;
 
                     if (rowA + bs > CN || colB + bs > CM) // copy remainder of C into zero-padded block
                     {
@@ -80,8 +81,8 @@ public partial class BurstCPUOps
                     {
                         float* blockA = A + rowA * AM +    l;
                         float* blockB = B +    l * BM + colB;
-                        var strideA = AM;
-                        var strideB = BM;
+                        int strideA = AM;
+                        int strideB = BM;
 
                         if (rowA + bs > AN || l + bs > AM || transposeA) // copy remainder of A or transposed A into zero-padded block
                         {
@@ -194,7 +195,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct MatrixMultiply3x2Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -219,7 +220,7 @@ public partial class BurstCPUOps
 
         public void Execute(int threadID)
         {
-            var dispatchThreadXY = dispatchThreadX * dispatchThreadY;
+            int dispatchThreadXY = dispatchThreadX * dispatchThreadY;
 
             int batch = (threadID / dispatchThreadXY);
             int i = (threadID % dispatchThreadXY) % dispatchThreadX;
@@ -338,7 +339,7 @@ public partial class BurstCPUOps
                 for (int l = 0; l < blockSize; l++)
                 {
                     float A = *(Ap + i + Astride * l);
-           
+
                     float B0 = *(Bp + l * Bstride + 0);
                     float B1 = *(Bp + l * Bstride + 1);
                     float B2 = *(Bp + l * Bstride + 2);
@@ -396,7 +397,7 @@ public partial class BurstCPUOps
     }
 
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct MatrixMultiply4x4Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -421,7 +422,7 @@ public partial class BurstCPUOps
 
         public void Execute(int threadID)
         {
-            var dispatchThreadXY = dispatchThreadX * dispatchThreadY;
+            int dispatchThreadXY = dispatchThreadX * dispatchThreadY;
 
             int batch1 = (threadID % CB1);
             int batch0 = (threadID / CB1) / dispatchThreadXY;
@@ -455,7 +456,7 @@ public partial class BurstCPUOps
                 for (int y = 0; y < blockSize; y++)
                     for (int x = 0; x < blockSize; x++)
                         blockC[(x + strideC * y) * strideBatchC] = 0.0f;
-                            
+
                 for (int l = 0; l < AM; l += blockSize) // inner-loop
                 {
                     float* blockA = A + (rowA * AM + l)*AB1 + batchOffSetA;
@@ -471,25 +472,25 @@ public partial class BurstCPUOps
                             blockTempA = AllocBlock();
                         strideA = blockSize;
                         strideBatchA = 1;
-                                                      
+
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
                                 blockTempA[x + blockSize * y] = ((rowA + y) < AN && (l + x < AM)) ? blockA[(x + AM * y)*AB1] : 0.0f;
 
                         blockA = blockTempA;
                     }
-                    
+
                     if (colB + blockSize > BM || l + blockSize > BN) // copy remainder of A into zero-padded block
                     {
                         if (blockTempB == null)
                             blockTempB = AllocBlock();
                         strideB = blockSize;
                         strideBatchB = 1;
-                    
+
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
                                 blockTempB[x + blockSize * y] = ((colB + x) < BM && (l + y < BN)) ? blockB[(x + BM * y)*BB1] : 0.0f;
-                            
+
                         blockB = blockTempB;
                     }
 
@@ -548,7 +549,7 @@ public partial class BurstCPUOps
                 for (int l = 0; l < blockSize; l++)
                 {
                     float A = *(Ap + (i * Astride + l)*ABatchStride);
-           
+
                     float B0 = *(Bp + (l * Bstride + 0 )*BBatchStride);
                     float B1 = *(Bp + (l * Bstride + 1 )*BBatchStride);
                     float B2 = *(Bp + (l * Bstride + 2 )*BBatchStride);
@@ -604,7 +605,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct Im2ColSliceJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -616,11 +617,11 @@ public partial class BurstCPUOps
                                                     [ReadOnly] public int padLeft, padRight, skipFromInputRow, copyFromInputRow;
         public void Execute(int y)
         {
-            for (var n = 0; n < inOutBatch; ++n)
+            for (int n = 0; n < inOutBatch; ++n)
             {
-                var readY = strideY * y + offsetY;
-                var from = X + n *  inStrideN + readY *  inStrideH + skipFromInputRow * inStrideW;
-                var to   = O + n * outStrideN +     y * outStrideH;
+                int readY = strideY * y + offsetY;
+                float* from = X + n *  inStrideN + readY *  inStrideH + skipFromInputRow * inStrideW;
+                float* to   = O + n * outStrideN +     y * outStrideH;
 
                 if (readY < 0 ||
                     readY >= inHeight)
@@ -663,7 +664,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct MaxPool2DJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -675,10 +676,10 @@ public partial class BurstCPUOps
         const int unrollSize = 16;
         public void Execute(int y)
         {
-            var accumulatorMemSize = inChannels * sizeof(float);
+            int accumulatorMemSize = inChannels * sizeof(float);
             float* outputAccumulators = (float*)UnsafeUtility.Malloc(accumulatorMemSize, JobsUtility.CacheLineSize, Allocator.TempJob);
-            for (var n = 0; n < outBatch; ++n)
-            for (var x = 0; x < outWidth; ++x)
+            for (int n = 0; n < outBatch; ++n)
+            for (int x = 0; x < outWidth; ++x)
             {
                 bool firstNotRejectedPixelInKernel = true;
                 // gather max results in accumulators
@@ -697,11 +698,11 @@ public partial class BurstCPUOps
                         float* dst    = outputAccumulators;
                         float* src    = X + n * inStrideN + readY * inStrideH     + readX * inStrideW;
 
-                        var k = 0;
+                        int k = 0;
                         if (firstNotRejectedPixelInKernel) // first pass, write-through
                         {
                             for (; k < inChannels - unrollSize + 1; k += unrollSize) // unroll of inChannels loop
-                                for (var q = 0; q < unrollSize; q++, src++, dst++)
+                                for (int q = 0; q < unrollSize; q++, src++, dst++)
                                     *dst = *src;
                             for (; k < inChannels; k++, src++, dst++) // remainder of inChannels loop
                                 *dst = *src;
@@ -709,7 +710,7 @@ public partial class BurstCPUOps
                         else
                         {
                             for (; k < inChannels - unrollSize + 1; k += unrollSize) // unroll of inChannels loop
-                                for (var q = 0; q < unrollSize; q++, src++, dst++)
+                                for (int q = 0; q < unrollSize; q++, src++, dst++)
                                     *dst = (*dst) > (*src) ? (*dst) : (*src);
                             for (; k < inChannels; k++, src++, dst++) // remainder of inChannels loop
                                 *dst = (*dst) > (*src) ? (*dst) : (*src);
@@ -724,11 +725,11 @@ public partial class BurstCPUOps
                     UnsafeUtility.MemClear(outputAccumulators, accumulatorMemSize);
 
                 { // write accumulators to memory
-                    var k = 0;
+                    int k = 0;
                     float* src  = outputAccumulators;
                     float* dst  = O + n * outStrideN + y * outStrideH + x * outStrideW;
                     for (; k < inChannels - unrollSize + 1; k += unrollSize)  // unroll of inChannels loop
-                        for (var q = 0; q < unrollSize; q++, src++, dst++)
+                        for (int q = 0; q < unrollSize; q++, src++, dst++)
                             *dst = *src;
                     for (; k < inChannels; k++, src++, dst++) // remainder of inChannels loop
                         *dst = *src;
@@ -739,7 +740,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AvgPool2DJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -752,11 +753,11 @@ public partial class BurstCPUOps
         const int unrollSize = 16;
         public void Execute(int y)
         {
-            var accumulatorMemSize = inChannels * sizeof(float);
+            int accumulatorMemSize = inChannels * sizeof(float);
             float* outputAccumulators = (float*)UnsafeUtility.Malloc(accumulatorMemSize, JobsUtility.CacheLineSize, Allocator.TempJob);
 
-            for (var n = 0; n < outBatch; ++n)
-            for (var x = 0; x < outWidth; ++x)
+            for (int n = 0; n < outBatch; ++n)
+            for (int x = 0; x < outWidth; ++x)
             {
                 // reset accumulators & counter
                 int counter = 0;
@@ -778,9 +779,9 @@ public partial class BurstCPUOps
                         float* dst    = outputAccumulators;
                         float* src    = X + n * inStrideN + readY * inStrideH     + readX * inStrideW;
 
-                        var k = 0;
+                        int k = 0;
                         for (; k < inChannels - unrollSize + 1; k += unrollSize) // unroll of inChannels loop
-                            for (var q = 0; q < unrollSize; q++, src++, dst++)
+                            for (int q = 0; q < unrollSize; q++, src++, dst++)
                                 *dst += *src;
                         for (; k < inChannels; k++, src++, dst++) // remainder of inChannels loop
                             *dst += *src;
@@ -789,15 +790,15 @@ public partial class BurstCPUOps
                 }
 
                 // safety net, if kernel was completely outside of X
-                counter = Math.Max(1, counter);
+                counter = math.max(1, counter);
 
                 { // write accumulators to memory
-                    var k = 0;
+                    int k = 0;
                     float invCounter = 1f / (float)counter;
                     float* src  = outputAccumulators;
                     float* dst  = O + n * outStrideN + y * outStrideH + x * outStrideW;
                     for (; k < inChannels - unrollSize + 1; k += unrollSize)  // unroll of inChannels loop
-                        for (var q = 0; q < unrollSize; q++, src++, dst++)
+                        for (int q = 0; q < unrollSize; q++, src++, dst++)
                             *dst = *src * invCounter;
                     for (; k < inChannels; k++, src++, dst++) // remainder of inChannels loop
                         *dst = *src * invCounter;
@@ -808,7 +809,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct DepthwiseConv2DJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -822,10 +823,10 @@ public partial class BurstCPUOps
         const int unrollSize = 16;
         public void Execute(int y)
         {
-            var accumulatorMemSize = kernelCount * sizeof(float);
+            int accumulatorMemSize = kernelCount * sizeof(float);
             float* outputAccumulators = (float*)UnsafeUtility.Malloc(accumulatorMemSize, JobsUtility.CacheLineSize, Allocator.TempJob);
-            for (var n = 0; n < outBatch; ++n)
-            for (var x = 0; x < outWidth; ++x)
+            for (int n = 0; n < outBatch; ++n)
+            for (int x = 0; x < outWidth; ++x)
             {
                 // reset accumulators to 0
                 UnsafeUtility.MemClear(outputAccumulators, accumulatorMemSize);
@@ -847,9 +848,9 @@ public partial class BurstCPUOps
                         float* src    = X + n * inStrideN + readY * inStrideH     + readX * inStrideW;
                         float* kernel = K                 +    dy * kernelStrideH +    dx * kernelStrideW;
 
-                        var k = 0;
+                        int k = 0;
                         for (; k < kernelCount - unrollSize + 1; k += unrollSize) // unroll of kernelCount loop
-                            for (var q = 0; q < unrollSize; q++, src++, dst++, kernel++)
+                            for (int q = 0; q < unrollSize; q++, src++, dst++, kernel++)
                                 *dst += (*src) * (*kernel);
                         for (; k < kernelCount; k++, src++, dst++, kernel++) // remainder of kernelCount loop
                             *dst += (*src) * (*kernel);
@@ -857,12 +858,12 @@ public partial class BurstCPUOps
                 }
 
                 { // write accumulators to memory and add bias
-                    var k = 0;
+                    int k = 0;
                     float* src  = outputAccumulators;
                     float* dst  = O + n * outStrideN + y * outStrideH + x * outStrideW;
                     float* bias = B;
                     for (; k < kernelCount - unrollSize + 1; k += unrollSize)  // unroll of kernelCount loop
-                        for (var q = 0; q < unrollSize; q++, src++, dst++, bias++)
+                        for (int q = 0; q < unrollSize; q++, src++, dst++, bias++)
                             *dst = (*src) + (*bias);
                     for (; k < kernelCount; k++, src++, dst++, bias++) // remainder of kernelCount loop
                         *dst = (*src) + (*bias);
@@ -873,7 +874,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct PReluJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -888,9 +889,9 @@ public partial class BurstCPUOps
             float* dst   = O + i * inOutChannels;
             float* gamma = S + i * inOutChannels;
 
-            var j = 0;
+            int j = 0;
             for (; j < inOutChannels - unrollSize + 1; j += unrollSize) // unroll of inOutChannels loop
-                for (var q = 0; q < unrollSize; q++, src++, dst++, gamma++)
+                for (int q = 0; q < unrollSize; q++, src++, dst++, gamma++)
                     *dst = PRelu(*src, *gamma);
             for (; j < inOutChannels; j++, src++, dst++, gamma++) // remainder of inOutChannels loop
                 *dst = PRelu(*src, *gamma);
@@ -902,29 +903,29 @@ public partial class BurstCPUOps
             // from Theano impl
             // https://github.com/Theano/theano/blob/d395439aec5a6ddde8ef5c266fd976412a5c5695/theano/tensor/nnet/nnet.py#L2209-L2251
             // @TODO: precompute f1 and f2 for all S before this job
-            var f1 = 0.5f * (1f + gamma);
-            var f2 = 0.5f * (1f - gamma);
+            float f1 = 0.5f * (1f + gamma);
+            float f2 = 0.5f * (1f - gamma);
             // NOTE: burst-1.2.3 has troubles with Math.Min/Max generating poorly vectorized and branch code
             // Instead Math.Abs based code is used instead. (Math.Abs just flips 1 bit)
-            return f1 * v + f2 * Math.Abs(v);
+            return f1 * v + f2 * math.abs(v);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ReluJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            var v = X[i];
+            float v = X[i];
             // NOTE: burst-1.2.3 has troubles with Math.Min/Max generating poorly vectorized and branch code
             // Instead Math.Abs based code is used instead. (Math.Abs just flips 1 bit)
-            O[i] = 0.5f * (v + Math.Abs(v));
+            O[i] = 0.5f * (v + math.abs(v));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct Relu6Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -934,15 +935,15 @@ public partial class BurstCPUOps
             // f(x) = min(max(x, 0), 6)
             // "Convolutional Deep Belief Networks on CIFAR-10", A Krizhevsky, 2010
             // http://www.cs.utoronto.ca/~kriz/conv-cifar10-aug2010.pdf
-            var v = X[i];
+            float v = X[i];
 
             // NOTE: burst-1.2.3 has troubles with Math.Min/Max generating poorly vectorized and branch code
             // Instead Math.Abs based code is used instead. (Math.Abs just flips 1 bit)
-            O[i] = 0.5f * (-Math.Abs(v - 6f) + Math.Abs(v) + 6f);
+            O[i] = 0.5f * (-math.abs(v - 6f) + math.abs(v) + 6f);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct LeakyReluJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -957,47 +958,47 @@ public partial class BurstCPUOps
         } }
         public void Execute(int i)
         {
-            var v = X[i];
+            float v = X[i];
             // NOTE: burst-1.2.3 has troubles with Math.Min/Max generating poorly vectorized and branch code
             // Instead Math.Abs based code is used instead. (Math.Abs just flips 1 bit)
-            O[i] = f1 * v + f2 * Math.Abs(v);
+            O[i] = f1 * v + f2 * math.abs(v);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct TanhJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = MathfEx.Tanh(X[i]);
+            O[i] = math.tanh(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SoftplusJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Log(Mathf.Exp(X[i]) + 1f);
+            O[i] = math.log(math.exp(X[i]) + 1f);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SigmoidJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = 1f / (1f + Mathf.Exp(-X[i]));
+            O[i] = 1f / (1f + math.exp(-X[i]));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct EluJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1008,14 +1009,14 @@ public partial class BurstCPUOps
             // f(x) = alpha * (exp(x) - 1.) for x < 0, f(x) = x for x >= 0
             // "Fast and Accurate Deep Network Learning by Exponential Linear Units (ELUs)", DA Clevert, 2015
             // https://arxiv.org/abs/1511.07289
-            var v = X[i];
+            float v = X[i];
             if (v <= 0)
-                v = alpha * (Mathf.Exp(v) - 1f);
+                v = alpha * (math.exp(v) - 1f);
             O[i] = v;
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SeluJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1024,16 +1025,16 @@ public partial class BurstCPUOps
         public void Execute(int i)
         {
             // f(x) = gamma * (alpha * e^x - alpha) for x <= 0, f(x) = gamma * x for x > 0
-            var v = X[i];
+            float v = X[i];
             if (v <= 0)
-                v = gamma * (alpha * Mathf.Exp(v) - alpha);
+                v = gamma * (alpha * math.exp(v) - alpha);
             else
                 v = gamma * v;
             O[i] = v;
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SwishJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1043,59 +1044,59 @@ public partial class BurstCPUOps
             // f(x) = sigmoid(x) * x = x / (1 + exp(-x))
             // "Searching for Activation Functions". P Ramachandran, 2017
             // https://arxiv.org/abs/1710.05941
-            var v = X[i];
-            v = v / (1f + Mathf.Exp(-v));
+            float v = X[i];
+            v = v / (1f + math.exp(-v));
             O[i] = v;
         }
     }
 
-    // @TODO: retest with stable burst-1.3.0
-    // [BurstCompile] burst-1.3.0-preview produces incorrect results in Mathf.Exp below, if compiled with Burst
-    unsafe struct SoftmaxJob : IJobParallelFor
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ExpBiasReduceJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public int flatWidth;
-                                                    [ReadOnly] public bool logistic;
-
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
+                                                    [ReadOnly] public int inChannels;
         public void Execute(int y)
         {
-            //e_x = np.exp(X - X.max(axis=1, keepdims=True))
-            //X = e_x / e_x.sum(axis=1, keepdims=True)
-
-            float maxV = float.MinValue;
-            {
-                float* src = X + y * flatWidth;
-                for (var i = 0; i < flatWidth; ++i, ++src)
-                    if (*src > maxV)
-                        maxV = *src;
-            }
-
-            float sum = 0f;
-            {
-                float* src = X + y * flatWidth;
-                for (var i = 0; i < flatWidth; ++i, ++src)
-                    sum += Mathf.Exp(*src - maxV);
-            }
-
-            {
-                float* src = X + y * flatWidth;
-                float* dst = O + y * flatWidth;
-
-                if (logistic)
-                    for (var i = 0; i < flatWidth; ++i, ++src, ++dst)
-                        // Improved precision: log(exp(x)/sum_i(exp(xi)) =
-                        //                     log(exp(x)) - log(sum_i(exp(xi))) =
-                        //                     x - log(sum_i(exp(xi)))
-                        *dst = *src - maxV - Mathf.Log(sum);
-                else
-                    for (var i = 0; i < flatWidth; ++i, ++src, ++dst)
-                        *dst = Mathf.Exp(*src - maxV) / sum;
-            }
+            float accum = 0f;
+            for (int i = 0; i < inChannels; ++i)
+                accum += math.exp(X[y * inChannels + i] - B[y]);
+            O[y] = accum;
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct SoftmaxEndJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* S;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+                                                    [ReadOnly] public int inChannels;
+        public void Execute(int i)
+        {
+            int n = (i / inChannels);
+            O[i] = math.exp(X[i] - B[n]) / S[n];
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct LogSoftmaxEndJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* S;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+                                                    [ReadOnly] public int inChannels;
+        public void Execute(int i)
+        {
+            int n = (i / inChannels);
+            O[i] = (X[i] - B[n]) - math.log(S[n]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AbsJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1106,7 +1107,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct NegJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1117,18 +1118,18 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct CeilJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Ceil(X[i]);
+            O[i] = math.ceil(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ClipJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1136,22 +1137,22 @@ public partial class BurstCPUOps
                                                     [ReadOnly] public float min, max;
         public void Execute(int i)
         {
-            O[i] = Mathf.Clamp(X[i], min, max);
+            O[i] = math.clamp(X[i], min, max);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct FloorJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Floor(X[i]);
+            O[i] = math.floor(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ReciprocalJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1162,7 +1163,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct PowJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1170,238 +1171,304 @@ public partial class BurstCPUOps
                                                     [ReadOnly] public float alpha;
         public void Execute(int i)
         {
-            O[i] = Mathf.Pow(X[i], alpha);
+            O[i] = math.pow(X[i], alpha);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ExpJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Exp(X[i]);
+            O[i] = math.exp(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct LogJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Log(X[i]);
+            O[i] = math.log(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SqrtJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Sqrt(X[i]);
+            O[i] = math.sqrt(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AcosJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Acos(X[i]);
+            O[i] = math.acos(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AcoshJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Log(X[i] + Mathf.Sqrt(X[i]*X[i] - 1.0f));
+            O[i] = math.log(X[i] + math.sqrt(X[i]*X[i] - 1.0f));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AsinJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Asin(X[i]);
+            O[i] = math.asin(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AsinhJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Log(X[i] + Mathf.Sqrt(X[i]*X[i] + 1.0f));
+            O[i] = math.log(X[i] + math.sqrt(X[i]*X[i] + 1.0f));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AtanJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Atan(X[i]);
+            O[i] = math.atan(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct AtanhJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = 0.5f * Mathf.Log((1.0f + X[i])/(1.0f - X[i]));
+            O[i] = 0.5f * math.log((1.0f + X[i])/(1.0f - X[i]));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct CosJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Cos(X[i]);
+            O[i] = math.cos(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct CoshJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = 0.5f * (Mathf.Exp(X[i]) + Mathf.Exp(-X[i]));
+            O[i] = 0.5f * (math.exp(X[i]) + math.exp(-X[i]));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SinJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Sin(X[i]);
+            O[i] = math.sin(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SinhJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = 0.5f * (Mathf.Exp(X[i]) - Mathf.Exp(-X[i]));
+            O[i] = 0.5f * (math.exp(X[i]) - math.exp(-X[i]));
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct TanJob : IJobParallelFor
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
         [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
         public void Execute(int i)
         {
-            O[i] = Mathf.Tan(X[i]);
+            O[i] = math.tan(X[i]);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ElementwiseAddJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public float alpha;
+
+        [ReadOnly] public TensorShape shapeO;
+        [ReadOnly] public fixed int stridesX[8];
+        [ReadOnly] public fixed int stridesY[8];
+        [ReadOnly] public float alpha;
+
         public void Execute(int i)
         {
-            O[i] = X[i] + B[i] * alpha;
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeO.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            float x = X[stridesX[0] * s + stridesX[1] * r + stridesX[2] * n + stridesX[3] * t + stridesX[4] * d + stridesX[5] * h + stridesX[6] * w + stridesX[7] * c];
+            float y = Y[stridesY[0] * s + stridesY[1] * r + stridesY[2] * n + stridesY[3] * t + stridesY[4] * d + stridesY[5] * h + stridesY[6] * w + stridesY[7] * c];
+
+            O[i] = alpha * y + x;
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ElementwiseMulJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* S;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+
+        [ReadOnly] public TensorShape shapeO;
+        [ReadOnly] public fixed int stridesX[8];
+        [ReadOnly] public fixed int stridesY[8];
+
         public void Execute(int i)
         {
-            O[i] = X[i] * S[i];
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeO.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            float x = X[stridesX[0] * s + stridesX[1] * r + stridesX[2] * n + stridesX[3] * t + stridesX[4] * d + stridesX[5] * h + stridesX[6] * w + stridesX[7] * c];
+            float y = Y[stridesY[0] * s + stridesY[1] * r + stridesY[2] * n + stridesY[3] * t + stridesY[4] * d + stridesY[5] * h + stridesY[6] * w + stridesY[7] * c];
+
+            O[i] = x * y;
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ElementwiseDivJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* D;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+
+        [ReadOnly] public TensorShape shapeO;
+        [ReadOnly] public fixed int stridesX[8];
+        [ReadOnly] public fixed int stridesY[8];
+
         public void Execute(int i)
         {
-            O[i] = X[i] / D[i];
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeO.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            float x = X[stridesX[0] * s + stridesX[1] * r + stridesX[2] * n + stridesX[3] * t + stridesX[4] * d + stridesX[5] * h + stridesX[6] * w + stridesX[7] * c];
+            float y = Y[stridesY[0] * s + stridesY[1] * r + stridesY[2] * n + stridesY[3] * t + stridesY[4] * d + stridesY[5] * h + stridesY[6] * w + stridesY[7] * c];
+
+            O[i] = x/y;
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ElementwisePowJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* E;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+
+        [ReadOnly] public TensorShape shapeO;
+        [ReadOnly] public fixed int stridesX[8];
+        [ReadOnly] public fixed int stridesY[8];
+
         public void Execute(int i)
         {
-            O[i] = Mathf.Pow(X[i], E[i]);
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeO.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            float x = X[stridesX[0] * s + stridesX[1] * r + stridesX[2] * n + stridesX[3] * t + stridesX[4] * d + stridesX[5] * h + stridesX[6] * w + stridesX[7] * c];
+            float y = Y[stridesY[0] * s + stridesY[1] * r + stridesY[2] * n + stridesY[3] * t + stridesY[4] * d + stridesY[5] * h + stridesY[6] * w + stridesY[7] * c];
+
+            O[i] = math.pow(x, y);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ElementwiseMaxJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+
+        [ReadOnly] public TensorShape shapeO;
+        [ReadOnly] public fixed int stridesX[8];
+        [ReadOnly] public fixed int stridesY[8];
+
         public void Execute(int i)
         {
-            O[i] = Mathf.Max(X[i], Y[i]);
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeO.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            float x = X[stridesX[0] * s + stridesX[1] * r + stridesX[2] * n + stridesX[3] * t + stridesX[4] * d + stridesX[5] * h + stridesX[6] * w + stridesX[7] * c];
+            float y = Y[stridesY[0] * s + stridesY[1] * r + stridesY[2] * n + stridesY[3] * t + stridesY[4] * d + stridesY[5] * h + stridesY[6] * w + stridesY[7] * c];
+
+            O[i] = math.max(x , y);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ElementwiseMinJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+
+        [ReadOnly] public TensorShape shapeO;
+        [ReadOnly] public fixed int stridesX[8];
+        [ReadOnly] public fixed int stridesY[8];
+
         public void Execute(int i)
         {
-            O[i] = Mathf.Min(X[i], Y[i]);
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeO.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            float x = X[stridesX[0] * s + stridesX[1] * r + stridesX[2] * n + stridesX[3] * t + stridesX[4] * d + stridesX[5] * h + stridesX[6] * w + stridesX[7] * c];
+            float y = Y[stridesY[0] * s + stridesY[1] * r + stridesY[2] * n + stridesY[3] * t + stridesY[4] * d + stridesY[5] * h + stridesY[6] * w + stridesY[7] * c];
+
+            O[i] = math.min(x, y);
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SetConstantPaddingJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
@@ -1412,7 +1479,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct SetConstantPaddingWithStrideJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
@@ -1427,7 +1494,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ZeroBroadcastJob : IJob
     {
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
@@ -1438,7 +1505,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct CopyJob : IJob
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1450,7 +1517,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct CopyStrideJob : IJob
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1465,7 +1532,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct VectorBroadcastJob : IJob
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1481,7 +1548,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct GenericSliceJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1511,7 +1578,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct GenericStridedSliceJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1539,129 +1606,169 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ScalarBroadcastAddJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
                                                     [ReadOnly] public float alpha;
         public void Execute(int i)
         {
-            O[i] = X[i] + B[0] * alpha;
+            O[i] = Y[0] * alpha + X[i];
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct BroadcastAddJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+                                                    [ReadOnly] public float alpha;
+        public void Execute(int i)
+        {
+            O[i] = Y[i] * alpha + X[i];
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ScalarBroadcastMulJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* S;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = X[i] * S[0];
+            O[i] = X[i] * Y[0];
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct BroadcastMulJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+        public void Execute(int i)
+        {
+            O[i] = X[i] * Y[i];
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct ScalarBroadcastDivJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* D;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
         public void Execute(int i)
         {
-            O[i] = X[i] / D[0];
+            O[i] = X[i] / Y[0];
         }
     }
 
-    [BurstCompile]
-    unsafe struct ScalarBroadcastBiasedExpJob : IJobParallelFor
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct BroadcastDivJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* Y;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public float alpha;
         public void Execute(int i)
         {
-            O[i] = Mathf.Exp(X[i] + B[0] * alpha);
+            O[i] = X[i] / Y[i];
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ScalarBroadcastMinJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* Y;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = math.min(X[i], Y[0]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct BroadcastMinJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* Y;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = math.min(X[i], Y[i]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ScalarBroadcastMaxJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* Y;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = math.max(X[i], Y[0]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct BroadcastMaxJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* Y;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = math.max(X[i], Y[i]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ScalarBroadcastPowJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* Y;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = math.pow(X[i], Y[0]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct BroadcastPowJob : IJobParallelFor
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* X;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] [ReadOnly] public float* Y;
+        [NoAlias] [NativeDisableUnsafePtrRestriction] public float* O;
+        public void Execute(int i)
+        {
+            O[i] = math.pow(X[i], Y[i]);
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct GenericBroadcastJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
                                                     [ReadOnly] public TensorShape shapeO;
-                                                    [ReadOnly] public int strideBatchX;
-                                                    [ReadOnly] public int strideHeightX;
-                                                    [ReadOnly] public int strideWidthX;
-                                                    [ReadOnly] public int strideChannelsX;
+                                                    [ReadOnly] public fixed int stridesX[4];
         public void Execute(int i)
         {
             int n = 0, h = 0, w = 0, c = 0;
             shapeO.GetPositionsFromIndex(i, ref n, ref h, ref w, ref c);
-            int indexX = n * strideBatchX + h * strideHeightX + w * strideWidthX + c * strideChannelsX;
+            int indexX = stridesX[0] * n + stridesX[1] * h + stridesX[2] * w + stridesX[3] * c;
             O[i] = X[indexX];
         }
     }
 
-    [BurstCompile]
-    unsafe struct GenericBroadcastAddJob : IJobParallelFor
-    {
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* B;
-        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public TensorShape shapeO;
-                                                    [ReadOnly] public int strideBatchX;
-                                                    [ReadOnly] public int strideHeightX;
-                                                    [ReadOnly] public int strideWidthX;
-                                                    [ReadOnly] public int strideChannelsX;
-                                                    [ReadOnly] public int strideBatchB;
-                                                    [ReadOnly] public int strideHeightB;
-                                                    [ReadOnly] public int strideWidthB;
-                                                    [ReadOnly] public int strideChannelsB;
-                                                    [ReadOnly] public float alpha;
-        public void Execute(int i)
-        {
-            int n = 0, h = 0, w = 0, c = 0;
-            shapeO.GetPositionsFromIndex(i, ref n, ref h, ref w, ref c);
-
-            int indexX = n * strideBatchX + h * strideHeightX + w * strideWidthX + c * strideChannelsX;
-            int indexB = n * strideBatchB + h * strideHeightB + w * strideWidthB + c * strideChannelsB;
-            O[i] = X[indexX] + B[indexB] * alpha;
-        }
-    }
-
-    [BurstCompile]
-    unsafe struct GenericBroadcastMulJob : IJobParallelFor
-    {
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* S;
-        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public TensorShape shapeO;
-                                                    [ReadOnly] public int strideBatchX;
-                                                    [ReadOnly] public int strideHeightX;
-                                                    [ReadOnly] public int strideWidthX;
-                                                    [ReadOnly] public int strideChannelsX;
-                                                    [ReadOnly] public int strideBatchS;
-                                                    [ReadOnly] public int strideHeightS;
-                                                    [ReadOnly] public int strideWidthS;
-                                                    [ReadOnly] public int strideChannelsS;
-        public void Execute(int i)
-        {
-            int n = 0, h = 0, w = 0, c = 0;
-            shapeO.GetPositionsFromIndex(i, ref n, ref h, ref w, ref c);
-
-            int indexX = n * strideBatchX + h * strideHeightX + w * strideWidthX + c * strideChannelsX;
-            int indexS = n * strideBatchS + h * strideHeightS + w * strideWidthS + c * strideChannelsS;
-            O[i] = X[indexX] * S[indexS];
-        }
-    }
-
-    [BurstCompile]
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
     unsafe struct VectorBroadcastScaleBiasJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
@@ -1679,11 +1786,11 @@ public partial class BurstCPUOps
             float* gamma = optionalS;
             float* beta  = optionalB;
 
-            var j = 0;
+            int j = 0;
             if (gamma == null)
             {
                 for (; j < inOutChannels - unrollSize + 1; j += unrollSize) // unroll of inOutChannels loop
-                    for (var q = 0; q < unrollSize; q++, src++, dst++, beta++)
+                    for (int q = 0; q < unrollSize; q++, src++, dst++, beta++)
                         *dst = (*src) + (*beta) * alpha;
                 for (; j < inOutChannels; j++, src++, dst++, beta++) // remainder of inOutChannels loop
                     *dst = (*src) + (*beta) * alpha;
@@ -1692,7 +1799,7 @@ public partial class BurstCPUOps
             else if (beta == null)
             {
                 for (; j < inOutChannels - unrollSize + 1; j += unrollSize) // unroll of inOutChannels loop
-                    for (var q = 0; q < unrollSize; q++, src++, dst++, gamma++)
+                    for (int q = 0; q < unrollSize; q++, src++, dst++, gamma++)
                         *dst = (*src) * (*gamma);
                 for (; j < inOutChannels; j++, src++, dst++, gamma++) // remainder of inOutChannels loop
                     *dst = (*src) * (*gamma);
@@ -1701,7 +1808,7 @@ public partial class BurstCPUOps
             else
             {
                 for (; j < inOutChannels - unrollSize + 1; j += unrollSize) // unroll of inOutChannels loop
-                    for (var q = 0; q < unrollSize; q++, src++, dst++, gamma++, beta++)
+                    for (int q = 0; q < unrollSize; q++, src++, dst++, gamma++, beta++)
                         *dst = (*src) * (*gamma) + (*beta) * alpha;
                 for (; j < inOutChannels; j++, src++, dst++, gamma++, beta++) // remainder of inOutChannels loop
                     *dst = (*src) * (*gamma) + (*beta) * alpha;
@@ -1709,38 +1816,105 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile]
-    unsafe struct ChannelReduceMaxJob : IJobParallelFor
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ReduceMeanJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public int inChannels;
-        public void Execute(int y)
+                                                    [ReadOnly] public int offsetReduce;
+                                                    [ReadOnly] public int reduceDim;
+        public void Execute(int i)
         {
-            float* src = X + y * inChannels;
-
-            float maxV = float.MinValue;
-            for (var i = 0; i < inChannels; ++i, ++src)
-                if (*src > maxV)
-                    maxV = *src;
-            O[y] = maxV;
+            int x = i % offsetReduce;
+            int y = i / offsetReduce;
+            
+            float meanV = 0;
+            for (int z = 0; z < reduceDim; ++z)
+            {
+                float v = X[y * offsetReduce * reduceDim + z * offsetReduce + x];
+                meanV += v;
+            }
+            O[y * offsetReduce + x] = meanV / (float)reduceDim;
         }
     }
 
-    [BurstCompile]
-    unsafe struct ChannelReduceSumJob : IJobParallelFor
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ReduceSumJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
-                                                    [ReadOnly] public int inChannels;
-        public void Execute(int y)
+                                                    [ReadOnly] public int offsetReduce;
+                                                    [ReadOnly] public int reduceDim;
+        public void Execute(int i)
         {
-            float* src = X + y * inChannels;
+            int x = i % offsetReduce;
+            int y = i / offsetReduce;
+           
+            float meanV = 0;
+            for (int z = 0; z < reduceDim; ++z)
+            {
+                float v = X[y * offsetReduce * reduceDim + z * offsetReduce + x];
+                meanV += v;
+            }
+            O[y * offsetReduce + x] = meanV;
+        }
+    }
 
-            float accum = 0f;
-            for (var i = 0; i < inChannels; ++i, ++src)
-                accum += *src;
-            O[y] = accum;
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct ReduceMaxJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+                                                    [ReadOnly] public int offsetReduce;
+                                                    [ReadOnly] public int reduceDim;
+        public void Execute(int i)
+        {
+            int x = i % offsetReduce;
+            int y = i / offsetReduce;
+           
+            float maxV = float.MinValue;
+            for (int z = 0; z < reduceDim; ++z)
+            {
+                float v = X[y * offsetReduce * reduceDim + z * offsetReduce + x];
+                maxV = math.max(maxV, v);
+            }
+            O[y * offsetReduce + x] = maxV;
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct TransposeJob : IJobParallelFor
+    {
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public float* X;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* O;
+                                                    [ReadOnly] public TensorShape shapeO;
+                                                    [ReadOnly] public TensorShape shapeX;
+                                                    [ReadOnly] public fixed int permutations[8];
+        public void Execute(int i)
+        {
+            int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, c = 0;
+            shapeX.GetPositionsFromIndex(i, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref c);
+
+            int* index = stackalloc int[8];
+            index[0] = s; index[1] = r; index[2] = n; index[3] = t; index[4] = d; index[5] = h; index[6] = w; index[7] = c;
+
+            int indexO = shapeO.Index(index[permutations[0]], index[permutations[1]], index[permutations[2]], index[permutations[3]], index[permutations[4]], index[permutations[5]], index[permutations[6]], index[permutations[7]]);
+            O[indexO] = X[i];
+        }
+    }
+
+    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    unsafe struct MemFreeJob : IJob
+    {
+        [NoAlias] [NativeDisableUnsafePtrRestriction]           public float* buffer0;
+        [NoAlias] [NativeDisableUnsafePtrRestriction]           public float* buffer1;
+                                                     [ReadOnly] public Allocator allocator;
+        public void Execute()
+        {
+            if (buffer0 != null)
+                UnsafeUtility.Free(buffer0, allocator);
+            if (buffer1 != null)
+                UnsafeUtility.Free(buffer1, allocator);
         }
     }
 }

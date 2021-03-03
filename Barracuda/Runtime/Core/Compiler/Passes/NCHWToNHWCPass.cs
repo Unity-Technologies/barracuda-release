@@ -30,6 +30,10 @@ namespace Unity.Barracuda.Compiler.Passes
             var shapeGatherContractionPass = new ShapeGatherContractionPass();
             shapeGatherContractionPass.Run(ref model);
 
+            // Remove shape-gather-reshape pattern when they map a transpose to NHWC operation
+            var shapeGatherReshapeToNHWCRemovePass = new ShapeGatherReshapeToNHWCRemovePass();
+            shapeGatherReshapeToNHWCRemovePass.Run(ref model);
+
             Rewrite(ref model);
 
             // Preserve any new layers that must be preserved (e.g. new LSTM outputs)
@@ -114,7 +118,7 @@ namespace Unity.Barracuda.Compiler.Passes
             var rewriters = InstantiateRewriterNCHWToNHWC();
             // NHWC -> Barracuda NHWC rewriter (axis and constant padding padding)
             var rewritersNHWC = InstantiateRewriterNHWCToNHWC();
-            
+
 
             foreach (var l in model.layers)
             {

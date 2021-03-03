@@ -188,7 +188,7 @@
 #pragma kernel Transpose_NHWC CHANNELS_FIRST=0
 #pragma kernel Transpose_NCHW CHANNELS_FIRST=1
 #pragma kernel Transpose8D
-#pragma kernel TransposeToNCHW
+#pragma kernel TransposeToChannelFirst
 #pragma kernel Expand_NHWC CHANNELS_FIRST=0
 #pragma kernel Expand_NCHW CHANNELS_FIRST=1
 #pragma kernel LRN_NHWC CHANNELS_FIRST=0
@@ -2473,27 +2473,22 @@ void KERNEL_FUNC(Transpose)(uint3 dispatchThreadID : SV_DispatchThreadID)
 }
 
 [numthreads(4, 4, 4)]
-void TransposeToNCHW(uint3 dispatchThreadID : SV_DispatchThreadID)
+void TransposeToChannelFirst(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH_ARGS(X.channels, X.width, X.height);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS2_8D(X, O);
 
-    uint c = dispatchThreadID.x;
-    uint x = dispatchThreadID.y;
-    uint y = dispatchThreadID.z;
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    if (c >= X.channels) return;
-    if (x >= X.width) return;
-    if (y >= X.height) return;
-
-    for (uint b = 0; b < X.batch; ++b)
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
     {
-        float v = X.Get(b, y, x, c);
-        int index =
-            b * X.channels * X.height * X.width +
-            c * X.height * X.width +
-            y * X.width +
-            x;
+        float v = X.Get8D(s,r,n,t,d,h,w,c);
+        uint index = X.IndexSRNCTDHW(s,r,n,t,d,h,w,c);
         O.FastSet(index, v);
     }
 }

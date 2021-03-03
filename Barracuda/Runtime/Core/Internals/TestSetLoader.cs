@@ -478,7 +478,7 @@ public class TestSetLoader
             var rawTestSet = new RawTestSet();
             rawTestSet.input = LoadFloatArray(file);
             rawTestSet.labels = LoadFloatArray(file);
-            return new TestSet(rawTestSet);;
+            return new TestSet(rawTestSet);
         }
     }
 

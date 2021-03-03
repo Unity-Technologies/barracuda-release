@@ -22,6 +22,10 @@ public partial class BurstCPUOps
     {
         return JobHandle.CombineDependencies(job, job2, job3);
     }
+    JobHandle Dependencies(JobHandle job, JobHandle job2, JobHandle job3, JobHandle job4)
+    {
+        return JobHandle.CombineDependencies(job, JobHandle.CombineDependencies(job2, job3, job4));
+    }
 
     /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
@@ -237,15 +241,15 @@ public partial class BurstCPUOps
                     job.O = ptrO;
                     job.channels = O.flatWidth;
                     job.repeat = O.flatHeight;
-                    pinO.fence = job.Schedule(pinO.reuse);
+                    pinO.fence = pinB.reuse = job.Schedule(Dependencies(pinO.reuse, pinB.fence));
                 }
 
                 // O += X * K
                 if (m_UseBlas)
                 {
-                    pinO.fence = pinX.reuse =
+                    pinO.fence = pinX.reuse = pinW.reuse =
                         blas.ScheduleSGEMM(
-                            Dependencies(pinO.reuse, pinX.fence),
+                            Dependencies(pinO.reuse, pinX.fence, pinW.fence),
                             ptrX, X.flatHeight, X.flatWidth,
                             ptrW, W.flatHeight, W.flatWidth,
                             ptrO, O.flatHeight, O.flatWidth,
@@ -266,7 +270,7 @@ public partial class BurstCPUOps
                     job.transposeA = false;
                     job.transposeB = false;
 
-                    pinO.fence = pinX.reuse = job.Schedule(Dependencies(pinO.reuse, pinX.fence));
+                    pinO.fence = pinX.reuse = pinW.reuse = job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence));
                 }
             }
         }
@@ -337,7 +341,7 @@ public partial class BurstCPUOps
                     job.O = ptrO;
                     job.channels = outChannels;
                     job.repeat = outElements;
-                    pinO.fence = job.Schedule(pinO.reuse);
+                    pinO.fence = pinB.reuse = job.Schedule(Dependencies(pinO.reuse, pinB.fence));
                 }
 
                 // We can solve convolution by iteratively accumulating
@@ -451,8 +455,8 @@ public partial class BurstCPUOps
                             job.skipFromInputRow = numberOfPixelsToSkipFromInputRow;
                             job.copyFromInputRow = numberOfPixelsToCopyFromInputRow;
 
-                            pinO.reuse = pinX.reuse = pinT.fence = job.Schedule(T.height, 16,
-                                Dependencies(pinT.reuse, pinX.fence, pinO.fence));  // NOTE: need to fence on O here
+                            pinT.fence = pinX.reuse = job.Schedule(T.height, 16,
+                                Dependencies(pinT.reuse, pinX.fence));  // NOTE: need to fence on O here
                                                                                     // due to T being shared between multiple iterations
                                                                                     // and its use for previous iteration on O has to complete before we can start filling T again
                         }
@@ -460,9 +464,9 @@ public partial class BurstCPUOps
                         // O += slice(im2col(X)) * slice(K)
                         if (m_UseBlas)
                         {
-                            pinO.fence = pinT.reuse =
+                            pinO.fence = pinT.reuse = pinK.reuse =
                                 blas.ScheduleSGEMM(
-                                    Dependencies(pinO.reuse, pinT.fence),
+                                    Dependencies(pinO.reuse, pinT.fence, pinK.fence),
                                         ptrT, outElements, inChannels,
                                         ptrW, inChannels,  outChannels,
                                         ptrO, outElements, outChannels,
@@ -483,7 +487,7 @@ public partial class BurstCPUOps
                             job.transposeA = false;
                             job.transposeB = false;
 
-                            pinO.fence = pinT.reuse = job.Schedule(Dependencies(pinO.reuse, pinT.fence));
+                            pinO.fence = pinT.reuse = pinK.reuse = job.Schedule(Dependencies(pinO.reuse, pinT.fence, pinK.fence));
                         }
 
                         ptrW += inChannels * outChannels;
@@ -709,8 +713,8 @@ public partial class BurstCPUOps
                 job.O = ptrO;
                 job.inOutChannels = O.channels;
                 job.alpha = 1f;
-                pinO.fence = pinX.reuse = job.Schedule(
-                    O.length / O.channels, Math.Max(16, 1024 / O.channels), Dependencies(pinO.reuse, pinX.fence));
+                pinO.fence = pinX.reuse = pinS.reuse = pinB.reuse = job.Schedule(
+                    O.length / O.channels, Math.Max(16, 1024 / O.channels), Dependencies(pinO.reuse, pinX.fence, pinS.fence, pinB.fence));
             }
         }
         return O;
@@ -977,32 +981,6 @@ public partial class BurstCPUOps
         return O;
     }
 
-    // public override Tensor Softmax(Tensor X)
-    // {
-    //     var O = NewTensor(X.shape.Flatten());
-    //     Assert.AreEqual(O.length, X.length);
-    //     Assert.AreEqual(O.flatWidth, X.flatWidth);
-
-    //     var pinX = Pin(X);
-    //     var pinO = Pin(O);
-
-    //     unsafe
-    //     {
-    //         fixed (float*
-    //             ptrX = &pinX.array[pinX.offset],
-    //             ptrO = &pinO.array[pinO.offset])
-    //         {
-    //             var job = new SoftmaxJob();
-    //             job.X = ptrX;
-    //             job.O = ptrO;
-    //             job.flatWidth = O.flatWidth;
-    //             job.logistic = false;
-    //             pinO.fence = pinX.reuse = job.Schedule(O.flatHeight, 1, Dependencies(pinO.reuse, pinX.fence));
-    //         }
-    //     }
-    //     return O;
-    // }
-
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
@@ -1019,70 +997,53 @@ public partial class BurstCPUOps
         unsafe
         {
             var reduceOpMemSize = O.flatHeight * sizeof(float);
-            float* maxValues = (float*)UnsafeUtility.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, Allocator.TempJob);
-            float* expSums   = (float*)UnsafeUtility.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, Allocator.TempJob);
+
+            //Allocate memory
+            Allocator memoryAllocator = Allocator.TempJob;
+            float* maxValues = (float*)UnsafeUtility.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
+            float* expSums   = (float*)UnsafeUtility.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
 
             fixed (float*
                 ptrX = &pinX.array[pinX.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                // numpy implementation:
-                //  x_max = X.max(axis=1)
-                //  e_x = np.exp(X - x_max)
-                //  X = e_x / e_x.sum(axis=1)
-
                 JobHandle fence;
                 { // x_max = X.max(axis=1)
-                    var job = new ChannelReduceMaxJob();
+                    var job = new ReduceMaxJob();
                     job.X = ptrX;
                     job.O = maxValues;
-                    job.inChannels = O.flatWidth;
-                    pinX.reuse = fence = job.Schedule(O.flatHeight, 1, pinX.fence);
+                    job.offsetReduce = 1;
+                    job.reduceDim = O.flatWidth;
+                    pinX.reuse = fence = job.Schedule(O.flatHeight, 1024, pinX.fence);
                 }
 
-                { //  e_x = np.exp(X - x_max)
-                    var combinedFence = new JobHandle();
-                    var job = new ScalarBroadcastBiasedExpJob();
+                { // e_x_sum = Sum[exp(x[:,c] - x_max[:]), c]
+                    var job = new ExpBiasReduceJob();
                     job.X = ptrX;
                     job.B = maxValues;
-                    job.O = ptrO;
-                    job.alpha = -1f;
-                    for (var n = 0; n < O.flatHeight; n++,
-                        job.X += O.flatWidth, job.O += O.flatWidth, job.B++)
-                    {
-                        combinedFence = Dependencies(job.Schedule(O.flatWidth, 64 * O.flatHeight, Dependencies(fence, pinX.fence, pinO.reuse)), combinedFence);
-                    }
-                    fence = combinedFence;
-                    pinX.reuse = fence;
-                    pinO.fence = fence;
-                }
-
-                { // e_x_sum = e_x.sum(axis=1)
-                    var job = new ChannelReduceSumJob();
-                    job.X = ptrO;
                     job.O = expSums;
                     job.inChannels = O.flatWidth;
-                    pinO.reuse = fence = job.Schedule(O.flatHeight, 1, pinO.fence);
+                    pinX.reuse = fence = job.Schedule(O.flatHeight, 1024, Dependencies(fence, pinX.fence));
                 }
 
-                { // O = e_x / e_x_sum
-                    var combinedFence = new JobHandle();
-                    var job = new ScalarBroadcastDivJob();
-                    job.X = ptrO;
-                    job.D = expSums;
+                { // exp(x[n,c] - x_max[n]) / e_x_sum[n]
+                    var job = new SoftmaxEndJob();
+                    job.X = ptrX;
+                    job.S = expSums;
+                    job.B = maxValues;
                     job.O = ptrO;
-                    for (var n = 0; n < O.flatHeight; n++,
-                        job.X += O.flatWidth, job.O += O.flatWidth, job.D++)
-                    {
-                        combinedFence = Dependencies(job.Schedule(O.flatWidth, 512 * O.flatHeight, Dependencies(fence, pinO.reuse)), combinedFence);
-                    }
-                    fence = combinedFence;
-                    pinO.fence = fence;
+                    job.inChannels = O.flatWidth;
+                    pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(fence, pinO.reuse, pinX.fence));
+                }
+
+                { // free memory
+                    var job = new MemFreeJob();
+                    job.allocator = memoryAllocator;
+                    job.buffer0 = expSums;
+                    job.buffer1 = maxValues;
+                    job.Schedule(pinO.fence);
                 }
             }
-
-            UnsafeUtility.Free(expSums, Allocator.TempJob);
-            UnsafeUtility.Free(maxValues, Allocator.TempJob);
         }
 
         return O;
@@ -1103,18 +1064,56 @@ public partial class BurstCPUOps
 
         unsafe
         {
+            var reduceOpMemSize = O.flatHeight * sizeof(float);
+
+            //Allocate memory
+            Allocator memoryAllocator = Allocator.TempJob;
+            float* maxValues = (float*)UnsafeUtility.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
+            float* expSums   = (float*)UnsafeUtility.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
+
             fixed (float*
                 ptrX = &pinX.array[pinX.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                var job = new SoftmaxJob();
-                job.X = ptrX;
-                job.O = ptrO;
-                job.flatWidth = O.flatWidth;
-                job.logistic = true;
-                pinO.fence = pinX.reuse = job.Schedule(O.flatHeight, 1, Dependencies(pinO.reuse, pinX.fence));
+                JobHandle fence;
+                { // x_max = X.max(axis=1)
+                    var job = new ReduceMaxJob();
+                    job.X = ptrX;
+                    job.O = maxValues;
+                    job.offsetReduce = 1;
+                    job.reduceDim = O.flatWidth;
+                    pinX.reuse = fence = job.Schedule(O.flatHeight, 1024, pinX.fence);
+                }
+
+                { // e_x_sum = Sum[exp(x[:,c] - x_max[:]), c]
+                    var job = new ExpBiasReduceJob();
+                    job.X = ptrX;
+                    job.B = maxValues;
+                    job.O = expSums;
+                    job.inChannels = O.flatWidth;
+                    pinX.reuse = fence = job.Schedule(O.flatHeight, 1024, Dependencies(fence, pinX.fence));
+                }
+
+                { // (x[n,c] - x_max[n]) - log(e_x_sum[n])
+                    var job = new LogSoftmaxEndJob();
+                    job.X = ptrX;
+                    job.S = expSums;
+                    job.B = maxValues;
+                    job.O = ptrO;
+                    job.inChannels = O.flatWidth;
+                    pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(fence, pinO.reuse, pinX.fence));
+                }
+
+                { // free memory
+                    var job = new MemFreeJob();
+                    job.allocator = memoryAllocator;
+                    job.buffer0 = expSums;
+                    job.buffer1 = maxValues;
+                    job.Schedule(pinO.fence);
+                }
             }
         }
+
         return O;
     }
 
@@ -1625,6 +1624,25 @@ public partial class BurstCPUOps
         return O;
     }
 
+    private unsafe void AssignTensorStrides8D(Tensor X, int* strides)
+    {
+        strides[0] = (X.sequenceLength == 1)     ? 0 : X.numberOfDirections * X.batch * X.extraDimension * X.depth * X.height * X.width * X.channels;
+        strides[1] = (X.numberOfDirections == 1) ? 0 : X.batch * X.extraDimension * X.depth * X.height * X.width * X.channels;
+        strides[2] = (X.batch == 1)              ? 0 : X.extraDimension * X.depth * X.height * X.width * X.channels;
+        strides[3] = (X.extraDimension == 1)     ? 0 : X.depth * X.height * X.width * X.channels;
+        strides[4] = (X.depth == 1)              ? 0 : X.height * X.width * X.channels;
+        strides[5] = (X.height == 1)             ? 0 : X.width * X.channels;
+        strides[6] = (X.width == 1)              ? 0 : X.channels;
+        strides[7] = (X.channels == 1)           ? 0 : 1;
+    }
+    private unsafe void AssignTensorStrides4D(Tensor X, int* strides)
+    {
+        strides[0] = (X.batch == 1)              ? 0 : X.height * X.width * X.channels;
+        strides[1] = (X.height == 1)             ? 0 : X.width * X.channels;
+        strides[2] = (X.width == 1)              ? 0 : X.channels;
+        strides[3] = (X.channels == 1)           ? 0 : 1;
+    }
+
     /// <summary>
     /// Generic broadcast
     /// </summary>
@@ -1664,10 +1682,7 @@ public partial class BurstCPUOps
                     job.X = ptrX;
                     job.O = ptrO;
                     job.shapeO = O.shape;
-                    job.strideBatchX = (X.batch == 1) ? 0 : X.height * X.width * X.channels;
-                    job.strideHeightX = (X.height == 1) ? 0 : X.width * X.channels;
-                    job.strideWidthX = (X.width == 1) ? 0 : X.channels;
-                    job.strideChannelsX = (X.channels == 1) ? 0 : 1;
+                    AssignTensorStrides4D(X, job.stridesX);
                     fence = job.Schedule(O.length, 1024, dependsOn);
                 }
                 pinO.fence = pinX.reuse = fence;
@@ -1682,11 +1697,6 @@ public partial class BurstCPUOps
         var pinY = Pin(Y);
         var pinO = Pin(O);
 
-        bool inOutShapesMatch = O.shape == X.shape;
-        bool allShapesMatch = X.shape == Y.shape && inOutShapesMatch;
-        bool isVectorOp = X.channels == Y.channels && Y.channels == Y.length && inOutShapesMatch;
-        bool isScalarOp = Y.length == 1 && inOutShapesMatch;
-
         unsafe
         {
             fixed (float*
@@ -1694,57 +1704,42 @@ public partial class BurstCPUOps
                 ptrY = &pinY.array[pinY.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                JobHandle fence;
-                var dependsOn = Dependencies(pinO.reuse, pinX.fence, pinY.fence);
-                if (allShapesMatch)
-                {
-                    var job = new ElementwiseAddJob();
-                    job.X = ptrX;
-                    job.B = ptrY;
-                    job.O = ptrO;
-                    job.alpha = alpha;
-                    fence = job.Schedule(O.length, 1024, dependsOn);
-                }
-                else if (isScalarOp)
+                if(X.shape == O.shape && Y.length == 1)
                 {
                     var job = new ScalarBroadcastAddJob();
                     job.X = ptrX;
-                    job.B = ptrY;
+                    job.Y = ptrY;
                     job.O = ptrO;
                     job.alpha = alpha;
-                    fence = job.Schedule(O.length, 1024, dependsOn);
-                }
-                else if (isVectorOp)
-                {
-                    var job = new VectorBroadcastScaleBiasJob();
-                    job.X = ptrX;
-                    job.optionalS = null;
-                    job.optionalB = ptrY;
-                    job.O = ptrO;
-                    job.inOutChannels = O.channels;
-                    job.alpha = alpha;
-                    fence = job.Schedule(O.length / O.channels, Math.Max(16, 1024 / O.channels), dependsOn);
-                }
-                else // generic broadcast
-                {
-                    var job = new GenericBroadcastAddJob();
-                    job.X = ptrX;
-                    job.B = ptrY;
-                    job.O = ptrO;
-                    job.shapeO = O.shape;
-                    job.strideBatchX = (X.batch == 1) ? 0 : X.height * X.width * X.channels;
-                    job.strideHeightX = (X.height == 1) ? 0 : X.width * X.channels;
-                    job.strideWidthX = (X.width == 1) ? 0 : X.channels;
-                    job.strideChannelsX = (X.channels == 1) ? 0 : 1;
-                    job.strideBatchB = (Y.batch == 1) ? 0 : Y.height * Y.width * Y.channels;
-                    job.strideHeightB = (Y.height == 1) ? 0 : Y.width * Y.channels;
-                    job.strideWidthB = (Y.width == 1) ? 0 : Y.channels;
-                    job.strideChannelsB = (Y.channels == 1) ? 0 : 1;
-                    job.alpha = alpha;
-                    fence = job.Schedule(O.length, 1024, dependsOn);
-                }
 
-                pinO.fence = pinX.reuse = pinY.reuse = fence;
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else if (X.shape == O.shape && Y.shape == O.shape)
+                {
+                    var job = new BroadcastAddJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+                    job.alpha = alpha;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else
+                {
+                    var job = new ElementwiseAddJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+                    job.alpha = alpha;
+                    job.shapeO = O.shape;
+                    AssignTensorStrides8D(X, job.stridesX);
+                    AssignTensorStrides8D(Y, job.stridesY);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
             }
         }
     }
@@ -1760,11 +1755,6 @@ public partial class BurstCPUOps
         var pinY = Pin(Y);
         var pinO = Pin(O);
 
-        bool inOutShapesMatch = O.shape == X.shape;
-        bool allShapesMatch = X.shape == Y.shape && inOutShapesMatch;
-        bool isVectorOp = X.channels == Y.channels && Y.channels == Y.length && inOutShapesMatch;
-        bool isScalarOp = Y.length == 1 && inOutShapesMatch;
-
         unsafe
         {
             fixed (float*
@@ -1772,64 +1762,47 @@ public partial class BurstCPUOps
                 ptrY = &pinY.array[pinY.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                JobHandle fence;
-                var dependsOn = Dependencies(pinO.reuse, pinX.fence, pinY.fence);
-                if (allShapesMatch)
-                {
-                    var job = new ElementwiseMulJob();
-                    job.X = ptrX;
-                    job.S = ptrY;
-                    job.O = ptrO;
-                    fence = job.Schedule(O.length, 1024, dependsOn);
-                }
-                else if (isScalarOp)
+                if(X.shape == O.shape && Y.length == 1)
                 {
                     var job = new ScalarBroadcastMulJob();
                     job.X = ptrX;
-                    job.S = ptrY;
+                    job.Y = ptrY;
                     job.O = ptrO;
-                    fence = job.Schedule(O.length, 1024, dependsOn);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
                 }
-                else if (isVectorOp)
+                else if (X.shape == O.shape && Y.shape == O.shape)
                 {
-                    var job = new VectorBroadcastScaleBiasJob();
+                    var job = new BroadcastMulJob();
                     job.X = ptrX;
-                    job.optionalS = ptrY;
-                    job.optionalB = null;
+                    job.Y = ptrY;
                     job.O = ptrO;
-                    job.inOutChannels = O.channels;
-                    fence = job.Schedule(O.length / O.channels, Math.Max(16, 1024 / O.channels), dependsOn);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
                 }
-                else // generic broadcast
+                else
                 {
-                    var job = new GenericBroadcastMulJob();
+                    var job = new ElementwiseMulJob();
                     job.X = ptrX;
-                    job.S = ptrY;
+                    job.Y = ptrY;
                     job.O = ptrO;
                     job.shapeO = O.shape;
-                    job.strideBatchX = (X.batch == 1) ? 0 : X.height * X.width * X.channels;
-                    job.strideHeightX = (X.height == 1) ? 0 : X.width * X.channels;
-                    job.strideWidthX = (X.width == 1) ? 0 : X.channels;
-                    job.strideChannelsX = (X.channels == 1) ? 0 : 1;
-                    job.strideBatchS = (Y.batch == 1) ? 0 : Y.height * Y.width * Y.channels;
-                    job.strideHeightS = (Y.height == 1) ? 0 : Y.width * Y.channels;
-                    job.strideWidthS = (Y.width == 1) ? 0 : Y.channels;
-                    job.strideChannelsS = (Y.channels == 1) ? 0 : 1;
-                    fence = job.Schedule(O.length, 1024, dependsOn);
-                }
+                    AssignTensorStrides8D(X, job.stridesX);
+                    AssignTensorStrides8D(Y, job.stridesY);
 
-                pinO.fence = pinX.reuse = pinY.reuse = fence;
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
             }
         }
     }
 
     private void BroadcastDiv(ref Tensor O, Tensor X, Tensor Y)
     {
-        var T = (X.shape != O.shape) ? GenericBroadcast(X, O.shape): X;
-        var U = (Y.shape != O.shape) ? GenericBroadcast(Y, O.shape): Y;
-
-        var pinX = Pin(T);
-        var pinY = Pin(U);
+        var pinX = Pin(X);
+        var pinY = Pin(Y);
         var pinO = Pin(O);
 
         unsafe
@@ -1839,26 +1812,47 @@ public partial class BurstCPUOps
                 ptrY = &pinY.array[pinY.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                var job = new ElementwiseDivJob();
-                job.X = ptrX;
-                job.D = ptrY;
-                job.O = ptrO;
-                pinO.fence = pinX.reuse = pinY.reuse =
-                    job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                if(X.shape == O.shape && Y.length == 1)
+                {
+                    var job = new ScalarBroadcastDivJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else if (X.shape == O.shape && Y.shape == O.shape)
+                {
+                    var job = new BroadcastDivJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else
+                {
+                    var job = new ElementwiseDivJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+                    job.shapeO = O.shape;
+                    AssignTensorStrides8D(X, job.stridesX);
+                    AssignTensorStrides8D(Y, job.stridesY);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
             }
         }
-
-        if (T != X) T.Dispose();
-        if (U != Y) U.Dispose();
     }
 
     private void BroadcastPow(ref Tensor O, Tensor X, Tensor Y)
     {
-        var T = (X.shape != O.shape) ? GenericBroadcast(X, O.shape): X;
-        var U = (Y.shape != O.shape) ? GenericBroadcast(Y, O.shape): Y;
-
-        var pinX = Pin(T);
-        var pinY = Pin(U);
+        var pinX = Pin(X);
+        var pinY = Pin(Y);
         var pinO = Pin(O);
 
         unsafe
@@ -1868,26 +1862,47 @@ public partial class BurstCPUOps
                 ptrY = &pinY.array[pinY.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                var job = new ElementwisePowJob();
-                job.X = ptrX;
-                job.E = ptrY;
-                job.O = ptrO;
-                pinO.fence = pinX.reuse = pinY.reuse =
-                    job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                if (X.shape == O.shape && Y.length == 1)
+                {
+                    var job = new ScalarBroadcastPowJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else if (X.shape == O.shape && Y.shape == O.shape)
+                {
+                    var job = new BroadcastPowJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else
+                {
+                    var job = new ElementwisePowJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+                    job.shapeO = O.shape;
+                    AssignTensorStrides8D(X, job.stridesX);
+                    AssignTensorStrides8D(Y, job.stridesY);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
             }
         }
-
-        if (T != X) T.Dispose();
-        if (U != Y) U.Dispose();
     }
 
     private void BroadcastMin(ref Tensor O, Tensor X, Tensor Y)
     {
-        var T = (X.shape != O.shape) ? GenericBroadcast(X, O.shape): X;
-        var U = (Y.shape != O.shape) ? GenericBroadcast(Y, O.shape): Y;
-
-        var pinX = Pin(T);
-        var pinY = Pin(U);
+        var pinX = Pin(X);
+        var pinY = Pin(Y);
         var pinO = Pin(O);
 
         unsafe
@@ -1897,26 +1912,47 @@ public partial class BurstCPUOps
                 ptrY = &pinY.array[pinY.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                var job = new ElementwiseMinJob();
-                job.X = ptrX;
-                job.Y = ptrY;
-                job.O = ptrO;
-                pinO.fence = pinX.reuse = pinY.reuse =
-                    job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                if(X.shape == O.shape && Y.length == 1)
+                {
+                    var job = new ScalarBroadcastMinJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else if (X.shape == O.shape && Y.shape == O.shape)
+                {
+                    var job = new BroadcastMinJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else
+                {
+                    var job = new ElementwiseMinJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+                    job.shapeO = O.shape;
+                    AssignTensorStrides8D(X, job.stridesX);
+                    AssignTensorStrides8D(Y, job.stridesY);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
             }
         }
-
-        if (T != X) T.Dispose();
-        if (U != Y) U.Dispose();
     }
 
     private void BroadcastMax(ref Tensor O, Tensor X, Tensor Y)
     {
-        var T = (X.shape != O.shape) ? GenericBroadcast(X, O.shape): X;
-        var U = (Y.shape != O.shape) ? GenericBroadcast(Y, O.shape): Y;
-
-        var pinX = Pin(T);
-        var pinY = Pin(U);
+        var pinX = Pin(X);
+        var pinY = Pin(Y);
         var pinO = Pin(O);
 
         unsafe
@@ -1926,17 +1962,41 @@ public partial class BurstCPUOps
                 ptrY = &pinY.array[pinY.offset],
                 ptrO = &pinO.array[pinO.offset])
             {
-                var job = new ElementwiseMaxJob();
-                job.X = ptrX;
-                job.Y = ptrY;
-                job.O = ptrO;
-                pinO.fence = pinX.reuse = pinY.reuse =
-                    job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                if(X.shape == O.shape && Y.length == 1)
+                {
+                    var job = new ScalarBroadcastMaxJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else if (X.shape == O.shape && Y.shape == O.shape)
+                {
+                    var job = new BroadcastMaxJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
+                else
+                {
+                    var job = new ElementwiseMaxJob();
+                    job.X = ptrX;
+                    job.Y = ptrY;
+                    job.O = ptrO;
+                    job.shapeO = O.shape;
+                    AssignTensorStrides8D(X, job.stridesX);
+                    AssignTensorStrides8D(Y, job.stridesY);
+
+                    pinO.fence = pinX.reuse = pinY.reuse =
+                        job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence, pinY.fence));
+                }
             }
         }
-
-        if (T != X) T.Dispose();
-        if (U != Y) U.Dispose();
     }
 
     /// <inheritdoc/>
@@ -1944,7 +2004,7 @@ public partial class BurstCPUOps
     public override Tensor Add(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Add(tensors);
+            return base.Add(tensors);
 
         var O = NewTensorLike(tensors);
         var X = tensors[0];
@@ -1962,7 +2022,7 @@ public partial class BurstCPUOps
     public override Tensor Sub(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Sub(tensors);
+            return base.Sub(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -1981,7 +2041,7 @@ public partial class BurstCPUOps
     public override Tensor Mul(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Mul(tensors);
+            return base.Mul(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -2000,7 +2060,7 @@ public partial class BurstCPUOps
     public override Tensor Div(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Div(tensors);
+            return base.Div(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -2019,7 +2079,7 @@ public partial class BurstCPUOps
     public override Tensor Pow(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Pow(tensors);
+            return base.Pow(tensors);
 
 
         var O = NewTensorLike(tensors);
@@ -2038,7 +2098,7 @@ public partial class BurstCPUOps
     public override Tensor Min(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Min(tensors);
+            return base.Min(tensors);
 
         var O = NewTensorLike(tensors);
         var X = tensors[0];
@@ -2056,7 +2116,7 @@ public partial class BurstCPUOps
     public override Tensor Max(Tensor[] tensors)
     {
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
-            base.Max(tensors);
+            return base.Max(tensors);
 
         var O = NewTensorLike(tensors);
         var X = tensors[0];
@@ -2137,6 +2197,7 @@ public partial class BurstCPUOps
             // copy tensor data interleaved into O
             int takes = (int)GetAggregatedDimLength(concatShape,  0, concatShape.Axis(axis));
             var pinO = Pin(O);
+            var combinedReadFenceO = new JobHandle();
             for (int i = 0; i < tensors.Length; ++i)
             {
                 var pinX = Pin(tensors[i]);
@@ -2152,9 +2213,11 @@ public partial class BurstCPUOps
                     job.length = copyBlockLengths[i];
                     job.count = takes;
 
-                    pinO.fence = pinX.reuse = job.Schedule(Dependencies(pinO.reuse, pinX.fence));
+                    pinX.reuse = job.Schedule(Dependencies(pinO.reuse, pinX.fence));
+                    combinedReadFenceO = JobHandle.CombineDependencies(combinedReadFenceO, pinX.reuse);
                 }
             }
+            pinO.fence = combinedReadFenceO;
         }
         return O;
     }
@@ -2188,8 +2251,6 @@ public partial class BurstCPUOps
                 if (strides[TensorShape.C] == 1)
                 {
                     var job = new GenericSliceJob();
-                    job.X = ptrX;
-                    job.O = ptrO;
                     job.X = ptrX;
                     job.O = ptrO;
                     job.shapeX = X.shape;
@@ -2274,6 +2335,7 @@ public partial class BurstCPUOps
             {
                 int numItemInARow = O.width * O.channels;
                 int numItemInABatch = O.height * numItemInARow;
+                var combinedReadFenceO = new JobHandle();
 
                 for (int b = 0; b < O.batch; ++b)
                 {
@@ -2285,7 +2347,7 @@ public partial class BurstCPUOps
                         var jobPrePadY = new SetConstantPaddingJob();
                         jobPrePadY.O = ptrO + prepadOffset;
                         jobPrePadY.constant = constant;
-                        pinO.fence = jobPrePadY.Schedule(numItemToPrepadInHeight, 1024, pinO.reuse);
+                        combinedReadFenceO = JobHandle.CombineDependencies(combinedReadFenceO, jobPrePadY.Schedule(numItemToPrepadInHeight, 1024, pinO.reuse));
                     }
 
                     //PrePadX
@@ -2296,7 +2358,7 @@ public partial class BurstCPUOps
                         jobPrePadX.constant = constant;
                         jobPrePadX.length = prePadX * O.channels;
                         jobPrePadX.stride = O.width * O.channels;
-                        pinO.fence = jobPrePadX.Schedule(croppedHeight * prePadX * O.channels, 1024, pinO.reuse);
+                        combinedReadFenceO = JobHandle.CombineDependencies(combinedReadFenceO, jobPrePadX.Schedule(croppedHeight * prePadX * O.channels, 1024, pinO.reuse));
                     }
 
                     //Center X and Y
@@ -2311,7 +2373,7 @@ public partial class BurstCPUOps
                         jobCopy.OStride = O.width * O.channels;
                         jobCopy.length = numFloatToCopy;
                         jobCopy.count = croppedHeight;
-                        pinO.fence = pinX.reuse = jobCopy.Schedule(Dependencies(pinO.reuse, pinX.fence));
+                        combinedReadFenceO = JobHandle.CombineDependencies(combinedReadFenceO, jobCopy.Schedule(Dependencies(pinO.reuse, pinX.fence)));
                     }
 
                     //PostPadX
@@ -2322,7 +2384,7 @@ public partial class BurstCPUOps
                         jobPostPadX.constant = constant;
                         jobPostPadX.length = postPadX * O.channels;
                         jobPostPadX.stride = O.width * O.channels;
-                        pinO.fence = jobPostPadX.Schedule(croppedHeight * postPadX * O.channels, 1024, pinO.reuse);
+                        combinedReadFenceO = JobHandle.CombineDependencies(combinedReadFenceO, jobPostPadX.Schedule(croppedHeight * postPadX * O.channels, 1024, pinO.reuse));
                     }
 
                     //PostPadY
@@ -2333,9 +2395,10 @@ public partial class BurstCPUOps
                         var jobPostPadY = new SetConstantPaddingJob();
                         jobPostPadY.O = ptrO + postpadOffset;
                         jobPostPadY.constant = constant;
-                        pinO.fence = jobPostPadY.Schedule(numItemToPostpadInHeight, 1024, pinO.reuse);
+                        combinedReadFenceO = JobHandle.CombineDependencies(combinedReadFenceO, jobPostPadY.Schedule(numItemToPostpadInHeight, 1024, pinO.reuse));
                     }
                 }
+                pinO.fence = pinX.reuse = combinedReadFenceO;
             }
         }
         return O;
@@ -2345,6 +2408,101 @@ public partial class BurstCPUOps
     public override Tensor Border2D(Tensor X, int[] pad, float constant)
     {
         return ApplyBorderPadding(X, pad, constant);
+    }
+
+    public override Tensor Transpose(Tensor X, int[] permutations)
+    {
+        permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
+        var O = NewTensor(X.shape.Permute(permutations));
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new TransposeJob();
+                job.X = ptrX;
+                job.shapeX = X.shape;
+                job.O = ptrO;
+                job.shapeO = O.shape;
+                job.permutations[0] = permutations[0];
+                job.permutations[1] = permutations[1];
+                job.permutations[2] = permutations[2];
+                job.permutations[3] = permutations[3];
+                job.permutations[4] = permutations[4];
+                job.permutations[5] = permutations[5];
+                job.permutations[6] = permutations[6];
+                job.permutations[7] = permutations[7];
+
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+
+        return O;
+    }
+
+    public override Tensor ReduceMean(Tensor X, int axis)
+    {
+        axis = X.shape.Axis(axis);
+        var O = NewTensor(X.shape.Reduce(axis));
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        int offsetReduce = 1;
+        for (int i = 7; i >= axis; i--)
+            offsetReduce *= O.shape[i];
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new ReduceMeanJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                job.offsetReduce = offsetReduce;
+                job.reduceDim = X.shape[axis];
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+
+        return O;
+    }
+
+    public override Tensor ReduceSum(Tensor X, int axis)
+    {
+        axis = X.shape.Axis(axis);
+        var O = NewTensor(X.shape.Reduce(axis));
+
+        var pinX = Pin(X);
+        var pinO = Pin(O);
+
+        int offsetReduce = 1;
+        for (int i = 7; i >= axis; i--)
+            offsetReduce *= O.shape[i];
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrO = &pinO.array[pinO.offset])
+            {
+                var job = new ReduceSumJob();
+                job.X = ptrX;
+                job.O = ptrO;
+                job.offsetReduce = offsetReduce;
+                job.reduceDim = X.shape[axis];
+                pinO.fence = pinX.reuse = job.Schedule(O.length, 1024, Dependencies(pinO.reuse, pinX.fence));
+            }
+        }
+
+        return O;
     }
 }
 

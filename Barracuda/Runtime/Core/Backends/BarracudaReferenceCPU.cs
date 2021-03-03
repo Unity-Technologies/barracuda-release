@@ -2932,8 +2932,15 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Reshape(Tensor X, TensorShape newShape)
     {
-        // shallow copy and patch the shape, if already managed by allocator
-        if (X.allocator != null)
+        // if already managed by allocator, can do a shallow copy
+        bool canDoShallowCopy = X.allocator != null;
+
+        // however if tensor is on GPU and in channel first memory layout we can't (reshape is actually a transpose in that case)
+        var onDeviceComputeTensorData = X.tensorOnDevice as ComputeTensorData;
+        canDoShallowCopy &= onDeviceComputeTensorData == null ||
+                            onDeviceComputeTensorData.channelsOrder == ComputeInfo.ChannelsOrder.NHWC;
+
+        if (canDoShallowCopy)
             return X.Reshape(newShape, m_StringCache.Lookup("Reshape of", X.name));
 
         // otherwise deep copy

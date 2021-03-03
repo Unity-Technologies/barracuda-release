@@ -2714,7 +2714,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     {
         Assert.AreEqual(X.length, shape.length);
         var O = NewTensor(shape);
-        Buffer.BlockCopy(Pin(X).array, Pin(X).offset, Pin(O).array, Pin(O).offset, X.length * sizeof(float));
+        Buffer.BlockCopy(Pin(X).array, Pin(X).offset * sizeof(float), Pin(O).array, Pin(O).offset * sizeof(float), X.length * sizeof(float));
         return O;
     }
 

@@ -1,5 +1,10 @@
 # Release notes
 
+## [1.3.2] - 2021-02-22
+- Fix: numerous small fixes in `CSharpBurst` fences and memory handling.
+- Fix: small fixes for GPU NCHW path.
+- Performance: numerous performance fixes in `CSharpBurst` backend. Transformer like architectures should run faster with this backend.
+
 ## [1.3.1] - 2021-01-31
 - Performance: Improved Transformer (MatMul rank-3 / rank-4) performance on `CSharpBurst` backend.
 - Performance: Reduced compute shader loading times for most popular networks.

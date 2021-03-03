@@ -169,7 +169,7 @@ namespace Unity.Barracuda
                     "InstanceNormTail_Loop_NHWC", "InstanceNormTail_Loop_NCHW", "Upsample2D_NHWC", "Upsample2D_NCHW",
                     "UpsampleBilinear2D_NHWC", "UpsampleBilinear2D_NCHW", "UpsampleBilinear2D_2x2_NHWC",
                     "UpsampleBilinear2D_2x2_NCHW", "Copy_NHWC", "Copy_NCHW", "ReshapeFromNHWCModel_Flat_NCHW",
-                    "ReshapeFromNHWCModel_Loop_NCHW"
+                    "ReshapeFromNHWCModel_Loop_NCHW", "TransposeToChannelFirst"
                 });
 
             RegisterKernels("Barracuda/Pad",
