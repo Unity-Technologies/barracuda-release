@@ -6,6 +6,8 @@ You can get Barracuda from:
 
 ## Unity Package Manager
 
+Installation via the package manager is only supported on Unity versions before 2020.3. For versions after 2020.3, use the GitHub method.
+
 In the Unity Editor, open the [Package Manager window](https://docs.unity3d.com/Manual/upm-ui.html), select Barracuda and install it:
 
 ![Install packages](images/InstallPackages.png)
