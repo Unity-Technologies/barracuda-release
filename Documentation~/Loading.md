@@ -6,9 +6,9 @@ Before you import a trained model, you must have [exported your model to the ONN
 
 When you have a valid ONNX model, import it into your project; to do this, add the `.onnx` file to your project's `Assets` folder. Unity imports the model as an `NNModel` asset:
 
-![Assets](images/Assets.png) 
+![Assets](images/assets.png)
 
-![Assets](images/Inspector.png)
+![Assets](images/inspector.png)
 
 
 You can then reference this asset directly in your script as follows:

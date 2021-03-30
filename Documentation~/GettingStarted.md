@@ -19,9 +19,9 @@ Loading a trained model is divided into two steps:
 
 To load an ONNX model, add its .onnx file to your project's `Asset` folder. The model is imported and shows up as an asset of type `NNModel`.
 
-![Assets](images/Assets.png) 
+![Assets](images/assets.png) 
 
-![Inspector](images/Inspector.png)
+![Inspector](images/inspector.png)
 
 
 You can then reference this asset directly in your script as follows:
