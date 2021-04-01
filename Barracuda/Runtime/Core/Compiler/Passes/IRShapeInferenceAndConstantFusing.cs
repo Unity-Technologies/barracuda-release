@@ -44,7 +44,7 @@ namespace Unity.Barracuda.Compiler.Passes
             }
         }
 
-        public void FuseShapesIntoConstants(ref Model model, IDictionary<string, TensorShape?> shapesByName, IDictionary<string, int?> ranksByName)
+        private void FuseShapesIntoConstants(ref Model model, IDictionary<string, TensorShape?> shapesByName, IDictionary<string, int?> ranksByName)
         {
             var toRunnableNCHW = new IntermediateToRunnableNCHWPass();
 
@@ -60,7 +60,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 // NN is a directed graph, if we just fused constants + shapes, update following nodes
                 // re-evaluate shapes
-                FuseInputsIntoLayer(ref layer, knownLayersValue);
+                FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName);
                 // TODO optimization, pass in index, or add shape
                 IRShapeInferenceHelper.RankInference.UpdateKnownTensorRanks(model, ranksByName);
                 IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
@@ -104,8 +104,26 @@ namespace Unity.Barracuda.Compiler.Passes
                     opsModel.inputs.Add(input);
                     layerInputs[input.name] = knownLayersValue[input.name];
                 }
-                opsModel.layers.Add(layer);
-                opsModel.outputs.Add(layer.name);
+                Layer newLayer = new Layer(layer.name.ToString(), layer.activation);
+                newLayer.type = layer.type;
+                newLayer.activation = layer.activation;
+                newLayer.pad = layer.pad.ToArray();
+                newLayer.stride = layer.stride.ToArray();
+                newLayer.pool = layer.pool.ToArray();
+                newLayer.axis = layer.axis;
+                newLayer.alpha = layer.alpha;
+                newLayer.beta = layer.beta;
+                newLayer.inputs = layer.inputs.ToArray();
+                newLayer.datasets = layer.datasets;
+                newLayer.weights = layer.weights;
+                if(layer.outputs != null)
+                    newLayer.outputs = layer.outputs.ToArray();
+                if (layer.axes != null)
+                    newLayer.axes = layer.axes.ToArray();
+
+
+                opsModel.layers.Add(newLayer);
+                opsModel.outputs.Add(newLayer.name);
 
                 toRunnableNCHW.Run(ref opsModel);
 
@@ -113,7 +131,6 @@ namespace Unity.Barracuda.Compiler.Passes
                 var useCPUforBaking = WorkerFactory.Device.CPU;
                 using (var worker = WorkerFactory.CreateWorker(opsModel, useCPUforBaking))
                 {
-                    // TODO use ModelIR2RunnableNCHWPass
                     var bakedConstant = worker.Execute(layerInputs).PeekOutput();
                     bakedConstant.TakeOwnership();
                     knownLayersValue[layer.name] = bakedConstant;
@@ -157,18 +174,24 @@ namespace Unity.Barracuda.Compiler.Passes
             removeUnusedLayersPass.Run(ref model);
         }
 
+        // TODO: refactor with FuseShapesIntoConstants
         public void InferAllShapes(Model model, ref IDictionary<string, TensorShape?> shapesByName, ref IDictionary<string, int?> ranksByName)
         {
+            var toRunnableNCHW = new IntermediateToRunnableNCHWPass();
+
             var knownLayersValue = new Dictionary<string, Tensor>();
             var newKnownLayers = new HashSet<string>();
+            var keepLayers = new HashSet<string>();
 
             for (int l = 0; l < model.layers.Count; ++l)
             {
                 var layer = model.layers[l];
+                if (layer.flags == Layer.Flags.Preserve)
+                    keepLayers.Add(layer.name);
 
                 // NN is a directed graph, if we just fused constants + shapes, update following nodes
                 // re-evaluate shapes
-                FuseInputsIntoLayer(ref layer, knownLayersValue);
+                FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName);
                 // TODO optimization, pass in index, or add shape
                 IRShapeInferenceHelper.RankInference.UpdateKnownTensorRanks(model, ranksByName);
                 IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
@@ -187,6 +210,7 @@ namespace Unity.Barracuda.Compiler.Passes
                         var rank = ranksByName[input].Value;
                         knownLayersValue[layer.name] = ShapeToNCHWTensor(shape, rank);
                         newKnownLayers.Add(layer.name);
+                        continue;
                     }
                 }
 
@@ -200,6 +224,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 var layerInputs = new Dictionary<string, Tensor>();
                 var opsModel = new Model();
+                opsModel.layout = "iNCHW";
                 for (int i = 0; i < layer.inputs.Length; i++)
                 {
                     Model.Input input;
@@ -210,14 +235,35 @@ namespace Unity.Barracuda.Compiler.Passes
                     opsModel.inputs.Add(input);
                     layerInputs[input.name] = knownLayersValue[input.name];
                 }
-                opsModel.layers.Add(layer);
-                opsModel.outputs.Add(layer.name);
+                Layer newLayer = new Layer(layer.name.ToString(), layer.activation);
+                newLayer.type = layer.type;
+                newLayer.activation = layer.activation;
+                newLayer.pad = layer.pad.ToArray();
+                newLayer.stride = layer.stride.ToArray();
+                newLayer.pool = layer.pool.ToArray();
+                newLayer.axis = layer.axis;
+                newLayer.alpha = layer.alpha;
+                newLayer.beta = layer.beta;
+                newLayer.inputs = layer.inputs.ToArray();
+                newLayer.datasets = layer.datasets;
+                newLayer.weights = layer.weights;
+                if (layer.outputs != null)
+                    newLayer.outputs = layer.outputs.ToArray();
+                if (layer.axes != null)
+                    newLayer.axes = layer.axes.ToArray();
+
+
+                opsModel.layers.Add(newLayer);
+                opsModel.outputs.Add(newLayer.name);
+
+                toRunnableNCHW.Run(ref opsModel);
+
+                toRunnableNCHW.Run(ref opsModel);
 
                 // bake
                 var useCPUforBaking = WorkerFactory.Device.CPU;
                 using (var worker = WorkerFactory.CreateWorker(opsModel, useCPUforBaking))
                 {
-                    // TODO use ModelIR2RunnableNCHWPass
                     var bakedConstant = worker.Execute(layerInputs).PeekOutput();
                     bakedConstant.TakeOwnership();
                     knownLayersValue[layer.name] = bakedConstant;
@@ -239,7 +285,7 @@ namespace Unity.Barracuda.Compiler.Passes
             return knownLayersValue.ContainsKey(name) && (name != null);
         }
 
-        public void FuseInputsIntoLayer(ref Layer layer, Dictionary<string, Tensor> knownLayersValue)
+        public void FuseInputsIntoLayer(ref Layer layer, Dictionary<string, Tensor> knownLayersValue, IDictionary<string, int?> ranksByName)
         {
             switch (layer.type)
             {
@@ -291,18 +337,54 @@ namespace Unity.Barracuda.Compiler.Passes
                     layer.inputs = new[] { layer.inputs[0] };
                     return;
                 }
+                case Layer.Type.MatMul:
+                {
+                    var input0 = layer.inputs[0]; var input1 = layer.inputs[1];
+                    if (!ranksByName.ContainsKey(input0) || !ranksByName[input0].HasValue)
+                        return;
+                    if (!ranksByName.ContainsKey(input1) || !ranksByName[input1].HasValue)
+                        return;
+                    int rank0 = ranksByName[input0].Value;
+                    int rank1 = ranksByName[input1].Value;
+
+                    if(rank0 > 2 || rank1 > 2)
+                        return;
+
+                    if (!IsLayerKnown(input1, knownLayersValue))
+                        return;
+
+                    layer.type = Layer.Type.Dense;
+
+                    var weight = knownLayersValue[input1];
+                        weight = weight.Reshape(new TensorShape(weight.batch, weight.height));
+                    var biasShape = new TensorShape(1, 1, 1, weight.shape.channels);
+
+                    layer.inputs = new [] { input0 };
+                    layer.datasets = new Layer.DataSet[2];
+                    layer.datasets[0].name            = $"{layer.name}/W";
+                    layer.datasets[0].shape           = weight.shape;
+                    layer.datasets[0].itemSizeInBytes = 4;
+                    layer.datasets[0].length          = weight.shape.length;
+                    layer.datasets[0].offset          = 0;
+                    layer.datasets[1].name            = $"{layer.name}/B";
+                    layer.datasets[1].shape           = biasShape;
+                    layer.datasets[1].itemSizeInBytes = 4;
+                    layer.datasets[1].length          = biasShape.length;
+                    layer.datasets[1].offset          = weight.shape.length;
+                    layer.weights                     = new float[weight.shape.length + biasShape.length];
+
+                    weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
+                    return;
+                }
                 case Layer.Type.Tile:
                 {
                     if (layer.inputs.Length <= 1 || !IsLayerKnown(layer.inputs[1], knownLayersValue))
                         return;
 
-                    float[] repeats = knownLayersValue[layer.inputs[1]].ToReadOnlyArray();
-                    layer.inputs = new[] { layer.inputs[0] };
-                    var shape = new int[4]; // Must be rank 4
-                    for (int i = 0; i < shape.Length; i++)
-                        shape[i] = i < repeats.Length ? (int)repeats[i] : 1;
-
+                    var shape = Array.ConvertAll(knownLayersValue[layer.inputs[1]].ToReadOnlyArray(), x => (int)x);
                     layer.pool = shape;
+
+                    layer.inputs = new[] { layer.inputs[0] };
                     return;
                 }
                 case Layer.Type.Reshape:
@@ -328,9 +410,11 @@ namespace Unity.Barracuda.Compiler.Passes
                     var shape = Array.ConvertAll(input.ToReadOnlyArray(), x => (int)x);
                     var tensorShape = IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(shape);
 
+
                     layer.type = Layer.Type.Load;
 
-                    layer.axis = input.dimensions; // TODO real rank
+
+                    layer.axis = shape.Length;
                     layer.datasets = new Layer.DataSet[1];
                     layer.datasets[0].name = layer.name;
                     layer.datasets[0].shape = tensorShape;
@@ -344,6 +428,29 @@ namespace Unity.Barracuda.Compiler.Passes
                     tensor.ToReadOnlyArray().CopyTo(layer.weights, 0);
 
                     layer.inputs = new string[0];
+                    return;
+                }
+                case Layer.Type.LSTM:
+                {
+                    if (layer.inputs.Length <= 3 || !knownLayersValue.TryGetValue(layer.inputs[1], out Tensor W)
+                        || !knownLayersValue.TryGetValue(layer.inputs[2], out Tensor R)
+                        || !knownLayersValue.TryGetValue(layer.inputs[3], out Tensor B))
+                        return;
+
+                    var ops = new ReferenceCPUOps();
+                    using (var td = new TensorScope())
+                    {
+                        TensorScope.F _ = td._;
+
+                        W = _(ops.Transpose(W, new[] { 2, 0, 3, 1 }));
+                        R = _(ops.Transpose(R, new[] { 2, 0, 3, 1 }));
+                        B = _(ops.Transpose(B, new[] { 0, 2, 3, 1 }));
+
+                        OpsUtils.BakeConstantWRBIntoLSTMLayer(layer, W, R, B);
+                    }
+
+                    layer.inputs = new[] { layer.inputs[0], layer.inputs[4], layer.inputs[5] };
+
                     return;
                 }
                 case Layer.Type.Activation:
@@ -371,6 +478,31 @@ namespace Unity.Barracuda.Compiler.Passes
 
                         layer.inputs = new string[0];
                     }
+
+                    return;
+                }
+                case Layer.Type.StridedSlice:
+                {
+                    if (layer.inputs.Length <= 1 ||
+                        !IsLayerKnown(layer.inputs[1], knownLayersValue) || !IsLayerKnown(layer.inputs[2], knownLayersValue) || !IsLayerKnown(layer.inputs[3], knownLayersValue) || !IsLayerKnown(layer.inputs[4], knownLayersValue))
+                            return;
+
+                    var starts = Array.ConvertAll(knownLayersValue[layer.inputs[1]].ToReadOnlyArray(), x => x <= (float)int.MinValue ? int.MinValue : x >= (float)int.MaxValue ? int.MaxValue : (int)x);
+                    var ends = Array.ConvertAll(knownLayersValue[layer.inputs[2]].ToReadOnlyArray(), x => x <= (float)int.MinValue ? int.MinValue : x >= (float)int.MaxValue ? int.MaxValue : (int)x);
+
+                    var strides = Enumerable.Repeat(1, starts.Length).Select(v => (int)v).ToArray();
+                    if (layer.inputs.Length >= 4)
+                        strides = Array.ConvertAll(knownLayersValue[layer.inputs[3]].ToReadOnlyArray(), x => (int)x);
+                    var axes = Enumerable.Range(0, starts.Length).Select(v => (int)v).ToArray();
+                    if (layer.inputs.Length == 5)
+                        axes = Array.ConvertAll(knownLayersValue[layer.inputs[4]].ToReadOnlyArray(), x => (int)x);
+
+                    layer.pad = starts;
+                    layer.pool = ends;
+                    layer.stride = strides;
+                    layer.axes = axes;
+
+                    layer.inputs = new[] { layer.inputs[0] };
 
                     return;
                 }

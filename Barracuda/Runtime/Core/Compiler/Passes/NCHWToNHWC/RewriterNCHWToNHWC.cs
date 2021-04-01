@@ -79,7 +79,31 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 return false;
             });
-            rewriters.Add(Layer.Type.Expand, ConvertShape);
+            rewriters.Add(Layer.Type.Expand, (layer, net) =>
+            {
+                string input0 = layer.inputs[0];
+                if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                    throw new Exception($"Must have input rank for {input0} in order to convert Reshape to NHWC");
+
+                int rank0 = input0Rank.Value;
+                var size = layer.pool.ToList();
+          
+                if (rank0 >= size.Count)
+                {
+                    for (int i = 0; i < rank0 - size.Count; i++)
+                        size.Insert(0, 1);
+                    layer.pool = size.ToArray();
+                    return ConvertShape(layer, net);
+                }
+
+                // inputShape needs to be unsqueezed
+                var transpose = RankChangePermutationBarracuda(rank0, size.Count);
+                net.Transpose(layer.name, input0, transpose);
+
+                ConvertShape(layer, net);
+
+                return false;
+            });
             rewriters.Add(Layer.Type.Shape, (layer, net) =>
             {
                 if (layer.axis >= 0)
@@ -89,8 +113,6 @@ namespace Unity.Barracuda.Compiler.Passes
             });
             rewriters.Add(Layer.Type.Transpose, (layer, net) =>
             {
-                int[] permutations = layer.pool;
-
                 int rank = layer.pool.Length;
                 int[] onnxTranspose = layer.pool;
 
@@ -246,7 +268,12 @@ namespace Unity.Barracuda.Compiler.Passes
             rewriters.Add(Layer.Type.Tile, (layer, net) =>
             {
                 if (layer.inputs.Length == 1)
-                    layer.pool = TensorExtensions.Permute(layer.pool, k_FromNCHWtoNHWC);
+                {
+                    int rank = 4;
+                    if (m_RanksByName.ContainsKey(layer.name) && m_RanksByName[layer.name] != null)
+                        rank = m_RanksByName[layer.name].Value;
+                    layer.pool = PermuteToBarracuda(layer.pool, rank, 1);// TensorExtensions.Permute(layer.pool, k_FromNCHWtoNHWC);
+                }
 
                 return true;
             });
@@ -254,7 +281,6 @@ namespace Unity.Barracuda.Compiler.Passes
             rewriters.Add(Layer.Type.Gather, ConvertAxis);
             rewriters.Add(Layer.Type.TopKIndices, ConvertAxis);
             rewriters.Add(Layer.Type.TopKValues, ConvertAxis);
-            rewriters.Add(Layer.Type.LSTM, (layer, net) => ExpandOpsPass.ConvertLSTM(layer, net, m_Ops));
 
             rewriters.Add(Layer.Type.RandomNormal, ConvertNormal);
             rewriters.Add(Layer.Type.RandomUniform, ConvertNormal);
@@ -620,7 +646,7 @@ namespace Unity.Barracuda.Compiler.Passes
             else if (onnxRank == 0)
                 return identity;
             else
-                throw new InvalidOperationException($"Not supported UnSqueeze opperation with rank {onnxRank}");
+                throw new InvalidOperationException($"Not supported UnSqueeze operation with rank {onnxRank}");
         }
 
         static int[] SqueezeAxisPermutationForMappingNCHWLayoutToBarracuda(int onnxRank, int onnxAxis)
@@ -684,7 +710,7 @@ namespace Unity.Barracuda.Compiler.Passes
             else if (onnxRank == 1)
                 return identity;
             else
-                throw new InvalidOperationException($"Not supported Squeeze opperation with rank {onnxRank}");
+                throw new InvalidOperationException($"Not supported Squeeze operation with rank {onnxRank}");
         }
 
         private static int[] GetPermutationToMatchReduceWithDroppedDimensionsFromONNX(int[] droppedONNXAxis, int rank)
@@ -783,6 +809,62 @@ namespace Unity.Barracuda.Compiler.Passes
                 permutation[idTarget] = "NHWC".IndexOf(semantic); ;
             }
             return permutation;
+        }
+
+        private static int[] RankChangePermutationBarracuda(int rank0, int rank1)
+        {
+            var identity = new[] { 0, 1, 2, 3 };
+            if (rank0 == 0)
+                return identity;
+            else if (rank0 == 1)
+            {
+                // ONNX:
+                // 8 -> 1,8
+                // 8 -> 1,1,8
+                // 8 -> 1,1,1,8
+                // barracuda
+                // 8,_,_,_ => 1,_,_,8
+                // 8,_,_,_ => 1,_8,1
+                // 8,_,_,_ => 1,1,8,1
+                if (rank1 == 0 || rank1 == 1)
+                    return identity;
+                else if (rank1 == 2)
+                    return new[] { 1, 2, 3, 0 };
+                else if (rank1 == 3)
+                    return new[] { 1, 2, 0, 3 };
+                else if (rank1 == 4)
+                    return new[] { 1, 2, 0, 3 };
+                else
+                    throw new ArgumentException($"Unsupported rank permutation change {rank0} to {rank1}");
+            }
+            else if (rank0 == 2)
+            {
+                // ONNX:
+                // 28 -> 1,2,8
+                // 28 -> 1,1,2,8
+                // barracuda
+                // 2__8 => 1,_8,2
+                // 2__8 => 1,2,8,1
+                if (rank1 == 3)
+                    return new[] { 1, 2, 3, 0 };
+                else if (rank1 == 4)
+                    return new[] { 1, 0, 3, 2 };
+                else
+                    throw new ArgumentException($"Unsupported rank permutation change {rank0} to {rank1}");
+            }
+            else if (rank0 == 3)
+            {
+                // ONNX:
+                // 5,2,8 -> 1,5,2,8
+                // barracuda
+                // 5,_,8,2 => 1,2,8,5
+                if (rank1 == 4)
+                    return new[] { 1, 3, 2, 0 };
+                else
+                    throw new ArgumentException($"Unsupported rank permutation change {rank0} to {rank1}");
+            }
+            else
+                throw new ArgumentException($"Unsupported rank permutation change {rank0} to {rank1}");
         }
 
     }

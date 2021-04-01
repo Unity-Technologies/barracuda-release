@@ -1,0 +1,113 @@
+#pragma kernel Transpose2D_NHWC CHANNELS_FIRST=0
+#pragma kernel Transpose2D_NCHW CHANNELS_FIRST=1
+#pragma kernel Transpose_NHWC CHANNELS_FIRST=0
+#pragma kernel Transpose_NCHW CHANNELS_FIRST=1
+#pragma kernel Transpose8D
+
+#include "Tensor.cginc"
+
+TENSOR_DECL(X)
+TENSOR_DECL_RW(O)
+
+uint4 _Pool;
+uint4 _Stride;
+uint4 _Pad;
+uint4 _ChannelWriteMask;
+
+[numthreads(4, 4, 4)]
+void KERNEL_FUNC(Transpose2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
+    TENSOR_ARGS2(X, O);
+
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
+
+    if (x >= O.GetFlatWidth()) return;
+    if (y >= O.GetFlatHeight()) return;
+
+    uint readX = y;
+    uint readY = x;
+
+    float v = X.Get(readY, readX); // transposed
+    O.Set(y, x, v);
+}
+
+[numthreads(4, 4, 4)]
+void Transpose8D(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH_ARGS(X.channels, X.width, X.height); in ChannelLast aka  SRNTDHWC
+    //DISPATCH_ARGS(X.width, X.height, X.depth);    in ChannelFirst aka SRNCTDHW
+    TENSOR_ARGS2(X, O);
+
+    uint d0_size = _Pad.x;
+    uint d1_size = _Pad.y;
+    uint d2_size = _Pad.z;
+    uint d3_size = _Pad.w;
+    uint d4_size = _Pool.x;
+    uint d5_size = _Pool.y;
+    uint d6_size = _Pool.z;
+    uint d7_size = _Pool.w;
+
+    uint outputStrides[8];
+    outputStrides[0] = _Stride.x;
+    outputStrides[1] = _Stride.y;
+    outputStrides[2] = _Stride.z;
+    outputStrides[3] = _Stride.w;
+    outputStrides[4] = _ChannelWriteMask.x;
+    outputStrides[5] = _ChannelWriteMask.y;
+    outputStrides[6] = _ChannelWriteMask.z;
+    outputStrides[7] = _ChannelWriteMask.w;
+
+    uint d7 = dispatchThreadID.x;
+    uint d6 = dispatchThreadID.y;
+    uint d5 = dispatchThreadID.z;
+    if (d7 >= d7_size) return;
+    if (d6 >= d6_size) return;
+    if (d5 >= d5_size) return;
+
+    uint d5_7offset = d5 * d6_size * d7_size + d6 * d7_size + d7;
+    uint d0_4stride = d5_size * d6_size * d7_size;
+    uint d0_4offset = 0;
+
+    for (uint d0 = 0; d0 < d0_size; ++d0)
+    for (uint d1 = 0; d1 < d1_size; ++d1)
+    for (uint d2 = 0; d2 < d2_size; ++d2)
+    for (uint d3 = 0; d3 < d3_size; ++d3)
+    for (uint d4 = 0; d4 < d4_size; ++d4)
+    {
+        float value = X.FastGet(d0_4offset + d5_7offset);
+        O.FastSet(d0 * outputStrides[0] +
+            d1 * outputStrides[1] +
+            d2 * outputStrides[2] +
+            d3 * outputStrides[3] +
+            d4 * outputStrides[4] +
+            d5 * outputStrides[5] +
+            d6 * outputStrides[6] +
+            d7 * outputStrides[7], value);
+
+        d0_4offset += d0_4stride;
+    }
+}
+
+[numthreads(4, 4, 4)]
+void KERNEL_FUNC(Transpose)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH_ARGS(X.channels, X.width, X.height);
+    TENSOR_ARGS2(X, O);
+
+    uint c = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (c >= X.channels) return;
+    if (x >= X.width) return;
+    if (y >= X.height) return;
+
+    for (uint b = 0; b < X.batch; ++b)
+    {
+        float v = X.Get(b, y, x, c);
+        uint4 index = uint4(b, y, x, c);
+        O.Set(index[_Pool.x], index[_Pool.y], index[_Pool.z], index[_Pool.w], v);
+    }
+}

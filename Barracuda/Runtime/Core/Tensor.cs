@@ -1040,6 +1040,8 @@ public class Tensor : IDisposable
     private bool m_CacheIsDirty;
     private bool m_Disposed = false;
 
+    public static event Action<Tensor> tensorDisposed;
+
     #region Debug
     /// <summary>
     /// Return this tensor name.
@@ -1857,6 +1859,8 @@ public class Tensor : IDisposable
         m_TensorAllocator = null;
         m_Disposing = false;
         m_Disposed = true;
+
+        tensorDisposed?.Invoke(this);
     }
 
 

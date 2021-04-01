@@ -33,6 +33,11 @@ public class Layer
         MatMul = 2,
 
         /// <summary>
+        /// Rank-3 Dense Layer
+        /// </summary>
+        Dense3 = 3,
+
+        /// <summary>
         /// 2D Convolution layer
         /// </summary>
         Conv2D = 20,
@@ -318,6 +323,11 @@ public class Layer
         Where = 149,
 
         /// <summary>
+        /// Logic operation: Sign layer
+        /// </summary>
+        Sign = 150,
+
+        /// <summary>
         /// Reflection padding layer
         /// </summary>
         Pad2DReflect = 160,
@@ -425,7 +435,7 @@ public class Layer
         /// <summary>
         /// LSTM
         /// </summary>
-        LSTM = 215,                // TODO: NOT IMPLEMENTED - Expanded via ExpandOpsPass
+        LSTM = 215,
 
         /// <summary>
         /// Constant load layer (for internal use)
@@ -661,9 +671,9 @@ public class Layer
         Floor = 104,
 
         /// <summary>
-        /// Round (not yet implemented)
+        /// Round
         /// </summary>
-        Round = 105,                // TODO: NOT IMPLEMENTED
+        Round = 105,
 
         /// <summary>
         /// Reciprocal
@@ -1128,22 +1138,6 @@ public class Model
     }
     #endregion
 
-    [Flags]
-    internal enum Flags
-    {
-        /// <summary>
-        /// No flags defined
-        /// </summary>
-        None     =      0,
-
-        /// <summary>
-        /// Requires compilation (i.e. for ops that must be expanded)
-        /// </summary>
-        NeedsCompilation = 1 << 1,
-    }
-
-    internal Flags flags;
-
     /// <summary>
     /// Build shallow copy of the model
     /// </summary>
@@ -1180,24 +1174,6 @@ public class Model
             $"outputs: [{string.Join(", ", outputs)}] " +
             $"\n{layers.Count} layers, {totalUniqueWeights:n0} weights: \n{string.Join("\n", layers.Select(i => $"{i.type} ({i})"))}";
     }
-
-    internal void Compile()
-    {
-        var expandOpsPass = new ExpandOpsPass();
-        var model = this;
-        expandOpsPass.Run(ref model);
-
-        var validatePass = new ValidateNHWCPass();
-        var warnings = new List<Model.ImporterWarning>();
-        validatePass.Run(this, ref warnings);
-
-        foreach (var warning in warnings)
-            Debug.LogWarning(warning);
-
-        // Clear flag
-        flags &= ~Flags.NeedsCompilation;
-    }
-
 }
 
 /// <summary>

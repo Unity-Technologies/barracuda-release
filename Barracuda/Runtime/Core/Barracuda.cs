@@ -322,16 +322,29 @@ public interface ITensorData : IDisposable
     int maxCapacity { get; }
 }
 
-/// <summary>
-/// Interface for device dependent representation of Tensor data that provides a read fence for scheduling data consumer job.
-/// </summary>
-public interface IDependableTensorData : ITensorData
+public interface IDependableMemoryResource
 {
     /// <summary>
+    /// Read fence
     /// Returns job handle that can be used as `dependsOn` argument when scheduling data consumer job.
     /// Consumer job will start execution once Tensor data is ready for read access.
     /// </summary>
-    Unity.Jobs.JobHandle fence { get; }
+    Unity.Jobs.JobHandle fence { get; set; }
+
+    /// <summary>
+    /// Write fence
+    /// Write fence
+    /// Returns job handle that can be used as `dependsOn` argument when scheduling data producer job.
+    /// Producer job will start execution once Tensor data is ready for write access.
+    /// </summary>
+    Unity.Jobs.JobHandle reuse { get; set; }
+}
+
+/// <summary>
+/// Interface for device dependent representation of Tensor data that provides fences for scheduling data job.
+/// </summary>
+public interface IDependableTensorData : IDependableMemoryResource, ITensorData
+{
 }
 
 /// <summary>

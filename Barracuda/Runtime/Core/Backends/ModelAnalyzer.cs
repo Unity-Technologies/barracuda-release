@@ -105,6 +105,12 @@ internal class ModelAnalyzer
                 var W = l.datasets[0].shape;
                 O = new TensorShape(X.flatHeight, W.flatWidth);
             }
+            else if (l.type == Layer.Type.Dense3)
+            {
+                Assert.IsNotNull(l.datasets);
+                var W = l.datasets[0].shape;
+                O = new TensorShape(X.batch, 1, W.channels, X.channels);
+            }
             else if (l.type == Layer.Type.MatMul)
             {
                 if (!shapesByName.ContainsKey(l.inputs[1]) || shapesByName[l.inputs[1]] == null)
@@ -283,6 +289,13 @@ internal class ModelAnalyzer
                 // otherwise shape of the previous tensor is used
                 if (l.pool.Length > 0)
                     O = new TensorShape(l.pool);
+                else
+                    O = X;
+            }
+            else if (l.type == Layer.Type.ConstantOfShape)
+            {
+                if(l.axis != 1)
+                    O = null;
                 else
                     O = X;
             }
@@ -480,6 +493,7 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.LRN ||
                 l.type == Layer.Type.Dropout ||
                 l.type == Layer.Type.LogicalNot ||
+                l.type == Layer.Type.Sign ||
                 l.type == Layer.Type.Where)
             {
                 // works in place, keeps the same shape size
@@ -489,6 +503,7 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.TopKIndices ||
                 l.type == Layer.Type.TopKValues ||
                 l.type == Layer.Type.NonMaxSuppression ||
+                l.type == Layer.Type.LSTM ||
                 l.type == Layer.Type.NonZero)
             {
                 // Calculated at runtime
@@ -762,6 +777,16 @@ internal class ModelAnalyzer
                 unconnected.Remove(i);
 
         return unconnected.Keys.ToArray();
+    }
+
+    public static string[] FindLayerOutputs(Model model, string layerName)
+    {
+        var allVariables = model.layers.Where(x => x.inputs.Contains(layerName)).Select(x => x.name);
+        var globalOutputs = model.outputs.Where(x => x == layerName); ;
+
+        allVariables.Union(globalOutputs);
+
+        return allVariables.ToArray();
     }
 
     static public string[] FindUnconnectedOutputs(Model model)

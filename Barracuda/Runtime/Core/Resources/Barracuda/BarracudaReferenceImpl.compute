@@ -1,5 +1,7 @@
 #pragma kernel Dense_NHWC CHANNELS_FIRST=0
 #pragma kernel Dense_NCHW CHANNELS_FIRST=1
+#pragma kernel Dense3_NHWC CHANNELS_FIRST=0
+#pragma kernel Dense3_NCHW CHANNELS_FIRST=1
 #pragma kernel Conv2D_NHWC CHANNELS_FIRST=0
 #pragma kernel Conv2D_NCHW CHANNELS_FIRST=1
 #pragma kernel Conv3D_NHWC CHANNELS_FIRST=0
@@ -56,6 +58,8 @@
 #pragma kernel Ceil_NCHW CHANNELS_FIRST=1
 #pragma kernel Floor_NHWC CHANNELS_FIRST=0
 #pragma kernel Floor_NCHW CHANNELS_FIRST=1
+#pragma kernel Round_NHWC CHANNELS_FIRST=0
+#pragma kernel Round_NCHW CHANNELS_FIRST=1
 #pragma kernel Reciprocal_NHWC CHANNELS_FIRST=0
 #pragma kernel Reciprocal_NCHW CHANNELS_FIRST=1
 #pragma kernel Swish_NHWC CHANNELS_FIRST=0
@@ -153,6 +157,8 @@
 #pragma kernel BroadcastLogicalXor_NCHW CHANNELS_FIRST=1
 #pragma kernel LogicalNot_NHWC CHANNELS_FIRST=0
 #pragma kernel LogicalNot_NCHW CHANNELS_FIRST=1
+#pragma kernel Sign_NHWC CHANNELS_FIRST=0
+#pragma kernel Sign_NCHW CHANNELS_FIRST=1
 #pragma kernel BroadcastWhere_NHWC CHANNELS_FIRST=0
 #pragma kernel BroadcastWhere_NCHW CHANNELS_FIRST=1
 #pragma kernel ArgMax_NHWC CHANNELS_FIRST=0
@@ -193,6 +199,8 @@
 #pragma kernel Expand_NCHW CHANNELS_FIRST=1
 #pragma kernel LRN_NHWC CHANNELS_FIRST=0
 #pragma kernel LRN_NCHW CHANNELS_FIRST=1
+#pragma kernel OneHot_NHWC CHANNELS_FIRST=0
+#pragma kernel OneHot_NCHW CHANNELS_FIRST=1
 
 #include "Tensor.cginc"
 #include "Random.cginc"
@@ -238,6 +246,26 @@ void KERNEL_FUNC(Dense)(uint3 dispatchThreadID : SV_DispatchThreadID)
         acc += X.Get(y, i) * W.Get(i, x);
 
     O.SetWithActivation(y, x, acc);
+}
+
+[numthreads(8, 8, 1)]
+void KERNEL_FUNC(Dense3)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.width, O.channels, 1);
+    TENSOR_ARGS4(X, W, B, O);
+
+    uint x = dispatchThreadID.x;
+    uint y = dispatchThreadID.y;
+    uint z = dispatchThreadID.z;
+
+    if (x >= O.width) return;
+    if (y >= O.channels) return;
+
+    float acc = B.FastGet(x);
+    for (uint i = 0; i < X.width; ++i)
+        acc += X.Get(z, 0, i, y) * W.Get(i, x);
+
+    O.Set(z, 0, x, y, acc);
 }
 
 [numthreads(4, 4, 4)]
@@ -326,6 +354,14 @@ float FloorOp(float v)
     return v;
 }
 ACTIVATION(Floor, FloorOp);
+
+float RoundOp(float v)
+{
+    v = round(v);
+    return v;
+}
+ACTIVATION(Round, RoundOp);
+
 
 float ReciprocalOp(float v)
 {
@@ -865,6 +901,8 @@ float LogicalNotOp(float v)
 }
 ACTIVATION(LogicalNot, LogicalNotOp);
 
+ACTIVATION(Sign, sign);
+
 [numthreads(4, 4, 4)]
 void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -888,7 +926,7 @@ void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-[numthreads(4,4,1)]
+[numthreads(4, 4, 1)]
 void KERNEL_FUNC(ArgMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.width, O.height, 1);
@@ -918,7 +956,7 @@ void KERNEL_FUNC(ArgMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
-[numthreads(4,4,1)]
+[numthreads(4, 4, 1)]
 void KERNEL_FUNC(ArgMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(O.width, O.height, 1);
@@ -2522,4 +2560,25 @@ void KERNEL_FUNC(Expand)(uint3 dispatchThreadID : SV_DispatchThreadID)
         float v = X.Get8D(s*sS,r*rS,n*nS,t*tS,d*dS,h*hS,w*wS,c*cS);
         O.Set8D(s,r,n,t,d,h,w,c,v);
     }
+}
+
+[numthreads(4, 4, 4)]
+void KERNEL_FUNC(OneHot)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(X.flatHeight, depth, X.flatWidth);
+    TENSOR_ARGS2_8D(X, O);
+
+    uint depth = _Axis;
+    uint flatWidthX = X.GetFlatWidth();
+    bool isInput1D = (flatWidthX == 1);
+
+    uint n = dispatchThreadID.x;    uint j = dispatchThreadID.y; uint i = dispatchThreadID.z;
+    if (n >= X.batch) return;    if (j >= depth) return;       if (i >= flatWidthX) return;
+
+    uint index = (uint)(X.Get(n, i));
+    float v = (j == index) ? _Alpha : _Beta;
+    if(isInput1D)
+        O.Set(n, j, v);
+    else
+        O.Set(n, j, i, v);
 }

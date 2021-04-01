@@ -1301,11 +1301,34 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
-                Parallel_For(0L, O.length / unrollSize, m_InnerLoop.m_logicaNotInnerLoopDelegate);
+                Parallel_For(0L, O.length / unrollSize, m_InnerLoop.m_logicalNotInnerLoopDelegate);
 
                 // Remainder
                 for (int i = (O.length / unrollSize) * unrollSize; i < O.length; ++i)
                     oPtr[i] = Convert.ToSingle( !Convert.ToBoolean(xPtr[i]) );
+            }
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sign(Tensor X)
+    {
+        var O = NewTensorLike(X);
+
+        unsafe
+        {
+            fixed (float*
+            xPtr = &Pin(X).array[Pin(X).offset],
+            oPtr = &Pin(O).array[Pin(O).offset])
+            {
+                const int unrollSize = 4;
+                m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+                Parallel_For(0L, O.length / unrollSize, m_InnerLoop.m_signInnerLoopDelegate);
+
+                // Remainder
+                for (int i = (O.length / unrollSize) * unrollSize; i < O.length; ++i)
+                    oPtr[i] = (xPtr[i] > 0) ? 1.0f : ((xPtr[i] < 0) ? -1.0f : 0.0f);
             }
         }
         return O;
@@ -2830,7 +2853,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_logicalAndInnerLoopDelegate;
         public Action<long> m_logicalOrInnerLoopDelegate;
         public Action<long> m_logicalXorInnerLoopDelegate;
-        public Action<long> m_logicaNotInnerLoopDelegate;
+        public Action<long> m_logicalNotInnerLoopDelegate;
+        public Action<long> m_signInnerLoopDelegate;
         public Action<long> m_whereInnerLoopDelegate;
         public Action<long> m_maxInnerLoopDelegateNoBroadcast;
         public Action<long> m_minInnerLoopDelegateNoBroadcast;
@@ -2867,7 +2891,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Func<float,float,float> m_logicalAndOpDelegate;
         public Func<float,float,float> m_logicalOrOpDelegate;
         public Func<float,float,float> m_logicalXorOpDelegate;
-        public Func<float,float>       m_logicaNotOpDelegate;
+        public Func<float,float>       m_logicalNotOpDelegate;
+        public Func<float, float>      m_signOpDelegate;
 
         public InnerLoop()
         {
@@ -2909,7 +2934,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_logicalAndInnerLoopDelegate = LogicalAndInnerLoop;
             m_logicalOrInnerLoopDelegate = LogicalOrInnerLoop;
             m_logicalXorInnerLoopDelegate = LogicalXorInnerLoop;
-            m_logicaNotInnerLoopDelegate = LogicalNotInnerLoop;
+            m_logicalNotInnerLoopDelegate = LogicalNotInnerLoop;
+            m_signInnerLoopDelegate = SignInnerLoop;
             m_whereInnerLoopDelegate = WhereInnerLoop;
             m_maxInnerLoopDelegateNoBroadcast = MaxInnerLoopNoBroadcast;
             m_minInnerLoopDelegateNoBroadcast = MinInnerLoopNoBroadcast;
@@ -2945,7 +2971,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_logicalAndOpDelegate = LogicalAnd;
             m_logicalOrOpDelegate = LogicalOr;
             m_logicalXorOpDelegate = LogicalXor;
-            m_logicaNotOpDelegate = LogicalNot;
+            m_logicalNotOpDelegate = LogicalNot;
+            m_signOpDelegate = Sign;
         }
 
         public void SetState(int unrollSize, float* oPtr, float* xPtr, float* sPtr, float* bPtr, TensorShape oShape, TensorShape xShape, TensorShape sShape, TensorShape bShape)
@@ -4504,6 +4531,16 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             oPtr[i + 3] = Convert.ToBoolean(xPtr[i + 3]) ? 0.0f : 1.0f;
         }
 
+        private void SignInnerLoop(long n)
+        {
+            int i = (int)n * unrollSize;
+
+            oPtr[i + 0] = (xPtr[i + 0] > 0) ? 1.0f : ((xPtr[i + 0] < 0) ? -1.0f : 0.0f);
+            oPtr[i + 1] = (xPtr[i + 1] > 0) ? 1.0f : ((xPtr[i + 1] < 0) ? -1.0f : 0.0f);
+            oPtr[i + 2] = (xPtr[i + 2] > 0) ? 1.0f : ((xPtr[i + 2] < 0) ? -1.0f : 0.0f);
+            oPtr[i + 3] = (xPtr[i + 3] > 0) ? 1.0f : ((xPtr[i + 3] < 0) ? -1.0f : 0.0f);
+        }
+
         private void WhereInnerLoopNoBroadcast(long n)
         {
             int i = (int)n * unrollSize;
@@ -4682,6 +4719,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         private float LogicalNot(float a)
         {
             return Convert.ToSingle(!Convert.ToBoolean(a));
+        }
+        private float Sign(float a)
+        {
+            return (a > 0) ? 1.0f : ((a < 0) ? -1.0f : 0.0f);
         }
         private float Where(float c, float a, float b)
         {

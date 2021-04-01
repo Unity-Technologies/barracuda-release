@@ -137,8 +137,9 @@ namespace Unity.Barracuda.Compiler.Passes
                 }
 
                 var reshapedX = m_Ops.Reshape(constX, shape);
-
                 layer.ApplyTensorToDataSet(reshapedX, 0);
+                reshapedX.Dispose();
+                constX.Dispose();
             });
 
 

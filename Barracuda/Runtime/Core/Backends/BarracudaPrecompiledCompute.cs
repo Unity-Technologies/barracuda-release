@@ -282,6 +282,15 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
                 continue;
             }
+            else if (l.type == Layer.Type.Dense3)
+            {
+                var instructions = new List<CompiledInstruction>();
+                kernel = BestKernel(ComputeKernelLibrary.Dense3(X, l.datasets[0].shape, O));
+                instructions.Add(new CompiledInstruction {kernel = kernel, shape = O});
+
+                m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
+                continue;
+            }
             else if (
                 l.type == Layer.Type.Conv2D)
             {
@@ -676,6 +685,28 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         fn.Dispatch();
 
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        if (m_Compiled.kernel.shader == null)
+            return base.Dense3(X, W, B);
+
+        Assert.IsNotNull(m_Compiled.kernel.shader);
+        var O = NewTensor(m_Compiled.shape);
+        var fn = m_Compiled.kernel;
+
+        fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensorDecl(_DeclW, W.shape, Pin(W).offset);
+        fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
+        Assert.AreEqual(Pin(W).buffer, Pin(B).buffer);
+        fn.SetTensorBuffer(_DataWBK, Pin(W).buffer);
+
+        fn.Dispatch();
+
+        return O;
     }
 
     /// <inheritdoc/>

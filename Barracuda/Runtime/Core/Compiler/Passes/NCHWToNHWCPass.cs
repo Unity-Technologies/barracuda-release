@@ -10,7 +10,7 @@ namespace Unity.Barracuda.Compiler.Passes
         IDictionary<string, TensorShape?> m_ShapesByName;
 
         // NHWC models, layout re-ordering
-        bool m_isModelExportedFromNCHW;
+        bool m_isModelExportedFromNHWC;
         Dictionary<string, LayoutTransposeRemovalHelper.ChannelsOrder> m_layersChannelOrder;
 
         readonly BurstCPUOps m_Ops = new BurstCPUOps();
@@ -27,8 +27,8 @@ namespace Unity.Barracuda.Compiler.Passes
 
             // This is a necessary pass for NCHW models that have the layout built into the model itself (e.g. SSD)
             // It's necessary to contract this into a single layer, so that the Gather pass doesn't get converted
-            var shapeGatherContractionPass = new ShapeGatherContractionPass();
-            shapeGatherContractionPass.Run(ref model);
+            var shapeContractionPass = new ShapeContractionPass();
+            shapeContractionPass.Run(ref model);
 
             // Remove shape-gather-reshape pattern when they map a transpose to NHWC operation
             var shapeGatherReshapeToNHWCRemovePass = new ShapeGatherReshapeToNHWCRemovePass();
@@ -75,13 +75,13 @@ namespace Unity.Barracuda.Compiler.Passes
             // * remove layout transposes
             // * convert axis/constants accordingly
             LayoutTransposeRemovalHelper transposeRemoval = new LayoutTransposeRemovalHelper();
-            m_isModelExportedFromNCHW = transposeRemoval.InferAllLayersChannelOrder(model, out m_layersChannelOrder);
+            m_isModelExportedFromNHWC = transposeRemoval.InferAllLayersChannelOrder(model, out m_layersChannelOrder);
 
-            if (m_isModelExportedFromNCHW && !transposeRemoval.IsImporterLikelyNHWCLayout(model.ProducerName))
+            if (m_isModelExportedFromNHWC && !transposeRemoval.IsImporterLikelyNHWCLayout(model.ProducerName))
                 nhwc.Warnings.Add(new Model.ImporterWarning("model", "model detected as NCHW, but not natively in this layout, behavior might be erroneous"));
 
             // remove layout change transposes
-            if (m_isModelExportedFromNCHW)
+            if (m_isModelExportedFromNHWC)
                 transposeRemoval.RemoveAllChannelLayoutTransposes(ref model, m_layersChannelOrder);
 
             var modelBuilder = new ModelBuilder(nhwc);
@@ -96,7 +96,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 int[] permutations = tensorShape.Get8DPermutationsForNCHWPermutationsAndShape(rankPermutations);
 
                 // Preserve symbolic shape by operating on int array instead of TensorShape, which would resolve unknown dimensions
-                if (m_isModelExportedFromNCHW) // transpose input shape if importer preserved NHWC layout
+                if (m_isModelExportedFromNHWC) // transpose input shape if importer preserved NHWC layout
                 {
                     if (m_layersChannelOrder[input.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NCHW)
                         input.shape = TensorExtensions.Permute(shape, permutations);
@@ -128,7 +128,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 if (m_layersChannelOrder.TryGetValue(l.name, out LayoutTransposeRemovalHelper.ChannelsOrder layerChannelOrder))
                 {
-                    if (m_isModelExportedFromNCHW && (layerChannelOrder == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC))
+                    if (m_isModelExportedFromNHWC && (layerChannelOrder == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC))
                     {
                         if (rewritersNHWC.TryGetValue(l.type, out Action<Layer, ModelBuilder> rwNCHW))
                         {

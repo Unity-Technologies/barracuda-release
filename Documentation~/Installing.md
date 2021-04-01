@@ -15,6 +15,7 @@ If you want a more recent (un-verified) version, enable `preview` packages:
 
 ![Install preview packages](images/InstallPreviewPackages.png)
 
+Note: in Unity 2020.3 and later Barracuda is not visible in Package Manager. It still can be enabled by manually editing your project's `Packages/manifest.json` and adding `com.unity.barracuda` entry there.
 
 ## GitHub
 

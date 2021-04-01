@@ -16,15 +16,11 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     private JobHandle m_WriteFence;
     private bool m_SafeToDispose = true;
 
-    /// <summary>
-    /// Read fence
-    /// </summary>
+    /// <inheritdoc/>
     public JobHandle fence { get { return m_ReadFence; }  set { m_ReadFence = value; m_WriteFence = value; m_SafeToDispose = false; } }
 
-    /// <summary>
-    /// Write fence
-    /// </summary>
-    public JobHandle reuse { get { return m_WriteFence; } set { m_WriteFence = value;                      m_SafeToDispose = false; } }
+    /// <inheritdoc/>
+    public JobHandle reuse { get { return m_WriteFence; } set { m_WriteFence = BurstCPUOps.Dependencies(value, m_WriteFence); m_SafeToDispose = false; } }
 
     /// <summary>
     /// Creates new array

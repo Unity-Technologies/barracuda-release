@@ -96,7 +96,7 @@ namespace Unity.Barracuda.ONNX
                         var typedData = new long[shape.length];
                         Assert.IsTrue((sizeof(long) * shape.length) == onnxTensor.RawData.Length);
                         Buffer.BlockCopy(byteArray, 0, typedData, 0, byteArray.Length);
-                        data = typedData.Select(v => v < int.MinValue ? (float)int.MinValue : v > int.MaxValue ? (float)int.MaxValue : (float)v).ToArray();
+                        data = typedData.Select(v => v < (long)int.MinValue ? (float)int.MinValue : v > (long)int.MaxValue ? (float)int.MaxValue : (float)v).ToArray();
                     }
                     // UInt8
                     else if (onnxTensor.DataType == (int)TensorProto.Types.DataType.Uint8)

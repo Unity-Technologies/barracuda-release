@@ -86,6 +86,15 @@ public class StatsOps : IOps, IModelCompiler
         m_Mem += (long)X.length + (long)W.length + (long)B.length + (long)O.length;
         return O;
     }
+    Tensor IOps.Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        var O = m_Ops.Dense3(X, W, B);
+
+        m_Alu += (long)X.height * (long)X.width * (long)W.width * 2L * (long)X.batch * (long)X.channels;
+        m_Mem += (long)X.length + (long)W.length + (long)O.length;
+
+        return O;
+    }
 
     /// <inheritdoc/>
     Tensor IOps.Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
@@ -468,6 +477,13 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.Round(Tensor X)
+    {
+        Elementwise(X);
+        return m_Ops.Round(X);
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Reciprocal(Tensor X)
     {
         Elementwise(X, Transcendental.Reciprocal);
@@ -772,6 +788,14 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.Sign(Tensor x)
+    {
+        var O = m_Ops.Sign(x);
+        Elementwise(O);
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Where(Tensor c, Tensor a, Tensor b)
     {
         var O = m_Ops.Where(c, a, b);
@@ -830,6 +854,14 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    public Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell)
+    {
+        var O = m_Ops.LSTM(X, W, R, Wb, Rb, hidden, cell);
+        // @TODO: not implemented
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Concat(Tensor[] tensors, int axis)
     {
         var O = m_Ops.Concat(tensors, axis);
@@ -857,6 +889,14 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Shape(Tensor X, int axis)
     {
         var O = m_Ops.Shape(X, axis);
+        Elementwise(O);
+        return O;
+    }
+        
+    /// <inheritdoc/>
+    Tensor IOps.ConstantOfShape(TensorShape X, float value)
+    {
+        var O = m_Ops.ConstantOfShape(X, value);
         Elementwise(O);
         return O;
     }

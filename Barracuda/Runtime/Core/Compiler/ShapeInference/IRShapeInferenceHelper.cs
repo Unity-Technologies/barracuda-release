@@ -111,6 +111,25 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
             else
                 return new TensorShape(size[0], size[1], size[2], size[3], size[4], size[5], size[6], size[7]);
         }
+        static public TensorShape OnnxLayoutToBarracudaTensorShape(int[] size)
+        {
+            if (size.Length == 0)
+                return new TensorShape(1, 1, 1, 1);
+            else if (size.Length == 1)
+                return new TensorShape(size[0], 1, 1, 1);
+            else if (size.Length == 2)
+                return new TensorShape(size[0], 1, 1, size[1]);
+            else if (size.Length == 3)
+                return new TensorShape(size[0], 1, size[2], size[1]);
+            else if (size.Length == 4)
+                return new TensorShape(size[0], size[2], size[3], size[1]);
+            else if (size.Length == 5)
+                return new TensorShape(size[0], size[2], size[3], size[4], size[1]);
+            else if (size.Length == 6)
+                return new TensorShape(1, 1, size[0], size[2], size[3], size[4], size[5], size[1]);
+            else
+                return new TensorShape(size[0], size[1], size[2], size[4], size[5], size[6], size[7], size[3]);
+        }
 
         static public TensorShape? InferOutputShapeNCHW(Layer layer, int[] inputRanks, TensorShape[] inputShapes)
         {
@@ -352,6 +371,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.ArgMin:
                 {
                     TensorShape X = inputShapes[0];
+
                     int rank = inputRanks[0];
                     var xShape = ShapeToOnnxLayout(X, rank);
 
@@ -375,6 +395,9 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     {
                         int rank = inputRanks[0];
                         List<int> xShape = ShapeToOnnxLayout(X, rank);
+
+                        // Permutations may already be in padded form for op purposes, so strip down to match rank
+                        permutations = permutations.Take(rank).ToArray();
 
                         var oShape = TensorExtensions.Permute(xShape.ToArray(), permutations);
                         return OnnxLayoutToTensorShape(oShape);
@@ -464,21 +487,26 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Tile:
                 {
-                    TensorShape X = inputShapes[0];
-
                     if (inputShapes.Length > 1)
                         return null;
 
-                    // pool size is treated as tiling coefficient here
-                    Assert.IsNotNull(layer.pool);
-                    Assert.AreEqual(layer.pool.Length, 4);
-                    var scale = layer.pool;
-                    return X.Scale(scale);
+                    var inputShape = ShapeToOnnxLayout(inputShapes[0], inputRanks[0]);
+                    var scale = layer.pool.ToArray();
+                    Assert.IsNotNull(scale);
+                    Assert.AreEqual(scale.Length, inputShape.Count);
+
+                    for (int i = 0; i < scale.Length; i++)
+                        scale[i] *= inputShape[i];
+
+                    return OnnxLayoutToTensorShape(scale);
                 }
                 case Layer.Type.ConstantOfShape:
                 {
-                    if (inputShapes.Length == 1)
+                    if(layer.axis == 1)
                         return inputShapes[0];
+
+                    if (inputShapes.Length == 1)
+                        return null;
                     else
                         return OnnxLayoutToTensorShape(layer.pool);
                 }
@@ -515,10 +543,21 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     if (inputShapes.Length > 1)
                         return null;
-                    // pool size is treated as new shape
-                    var size = layer.pool;
 
-                    return OnnxLayoutToTensorShape(size);
+                    var size = layer.pool.ToList();
+                    var inputShape = ShapeToOnnxLayout(inputShapes[0], inputRanks[0]);
+
+                    int rankO = Math.Max(size.Count, inputShape.Count);
+                    for (int i = 0; i < rankO - size.Count; i++)
+                        size.Insert(0, 1);
+                    for (int i = 0; i < rankO - inputShape.Count; i++)
+                        inputShape.Insert(0, 1);
+
+                    var tiledShape = new int[rankO];
+                    for (int i = 0; i < rankO; i++)
+                        tiledShape[i] = Mathf.Max(size[i], inputShape[i]);
+
+                    return OnnxLayoutToTensorShape(tiledShape);
                 }
                 case Layer.Type.Concat:
                 {
@@ -558,6 +597,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.LRN:
                 case Layer.Type.Dropout:
                 case Layer.Type.LogicalNot:
+                case Layer.Type.Sign:
                 case Layer.Type.Where:
                 {
                     // works in place, keeps the same shape size
@@ -636,14 +676,17 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.StridedSlice:
                 {
+                    if (inputShapes.Length > 1)
+                        return null;
+
                     TensorShape X = inputShapes[0];
                     int rank = inputRanks[0];
                     var nchwShape = ShapeToOnnxLayout(X, rank);
 
-                    var starts = layer.pad;
-                    var ends = layer.pool;
-                    var steps = layer.stride;
-                    var axes = layer.axes;
+                    var starts = layer.pad.ToArray();
+                    var ends = layer.pool.ToArray();
+                    var steps = layer.stride.ToArray();
+                    var axes = layer.axes.ToArray();
 
                     var onnxStarts = Enumerable.Repeat(0, rank).ToArray();
                     var onnxEnds = Enumerable.Repeat(int.MaxValue, rank).ToArray(); // by default copy the whole axis till the end
@@ -726,7 +769,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     shapesByName.TryGetValue(l.inputs[i], out TensorShape? ishape);
 
-                    if (ishape == null)
+                    if (ishape == null || !ranksByName.ContainsKey(l.inputs[i]) || ranksByName[l.inputs[i]] == null)
                     {
                         allshapesAreKnown = false;
                         break;
@@ -758,7 +801,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     shapesByName.TryGetValue(l.inputs[i], out TensorShape? ishape);
 
-                    if (ishape == null)
+                    if (ishape == null || !ranksByName.ContainsKey(l.inputs[i]) || ranksByName[l.inputs[i]] == null)
                     {
                         allshapesAreKnown = false;
                         break;

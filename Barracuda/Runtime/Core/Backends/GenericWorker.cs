@@ -1,14 +1,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq; // ToArray()
 
 using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.Profiling;
 
 using System.Runtime.CompilerServices;
-using System.Threading;
 
 [assembly: InternalsVisibleTo("Unity.Barracuda.PerformanceTests")]
 [assembly: InternalsVisibleTo("Unity.Barracuda.Tests")]
@@ -250,6 +248,13 @@ public class GenericWorker : IWorker
                 Assert.AreEqual(inputs.Length, 3);
                 Profiler.BeginSample ("Barracuda.Dense");
                 X = m_Ops.Dense(X, inputs[1], inputs[2], GetAndVerifyFusedActivation(l));
+            }
+            // GEMM - optimized rank3 path
+            else if (l.type == Layer.Type.Dense3)
+            {
+                Assert.AreEqual(inputs.Length, 3);
+                Profiler.BeginSample ("Barracuda.Dense3");
+                X = m_Ops.Dense3(X, inputs[1], inputs[2]);
             }
             // MatMul
             else if (l.type == Layer.Type.MatMul)
@@ -687,6 +692,11 @@ public class GenericWorker : IWorker
                 Profiler.BeginSample("Barracuda.LogicalNot");
                 X = m_Ops.LogicalNot(X);
             }
+            else if (l.type == Layer.Type.Sign)
+            {
+                Profiler.BeginSample("Barracuda.Sign");
+                X = m_Ops.Sign(X);
+            }
             else if (l.type == Layer.Type.Where)
             {
                 Assert.AreEqual(inputs.Length, 3);
@@ -735,13 +745,30 @@ public class GenericWorker : IWorker
             {
                 Profiler.BeginSample("Barracuda.Expand");
 
-                // pool size is treated as new shape
-                var newShape = l.pool;
+                var shape = l.pool;
+                if (inputs.Length == 1)
+                {
+                    // pool size is treated as new shape
+                    Assert.IsNotNull(shape);
+                    Assert.IsTrue(shape.Length == 8 || shape.Length == 4);
 
-                Assert.IsNotNull(newShape);
-                Assert.IsTrue(newShape.Length == 8 || newShape.Length == 4);
+                    if (shape.Length == 4)
+                        shape = new[] { 1, 1, l.pool[0], 1, 1, l.pool[1], l.pool[2], l.pool[3] };
+                }
+                else
+                {
+                    // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
+                    var refShape = inputs[1].ToReadOnlyArray();
+                    shape = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(refShape, x => (int)x)).ToArray();
+                }
 
-                X = m_Ops.Expand(X, new TensorShape(newShape));
+                var inputShape = new[] { X.shape.sequenceLength, X.shape.numberOfDirections, X.shape.batch, X.shape.extraDimension, X.shape.depth, X.shape.height, X.shape.width, X.shape.channels };
+                var tiledShape = new int[8];
+
+                for (int i = 0; i < 8; i++)
+                    tiledShape[i] = Mathf.Max(shape[i], inputShape[i]);
+
+                X = m_Ops.Expand(X, new TensorShape(tiledShape));
             }
             else if (l.type == Layer.Type.Shape)
             {
@@ -792,11 +819,100 @@ public class GenericWorker : IWorker
 
                 X = m_Ops.NonMaxSuppression(inputs, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, l.axis);
             }
-            else if (l.type == Layer.Type.Squeeze ||
-                l.type == Layer.Type.Unsqueeze)
+            else if (l.type == Layer.Type.LSTM)
             {
-                Profiler.BeginSample ("Barracuda.Squeeze/Unsqueeze");
-                X = m_Ops.Copy(X);
+                bool constantWRB = l.datasets.Length > 0;
+
+                int hidden_index;
+                int cell_index;
+
+                Tensor[] w, r, wb, rb;
+
+                using (var td = new TensorScope())
+                {
+                    TensorScope.F _ = td._; // Shorthand
+
+                    if (constantWRB)
+                    {
+                        w = new[]
+                        {
+                            l.DataSetToTensor(0),
+                            l.DataSetToTensor(1),
+                            l.DataSetToTensor(2),
+                            l.DataSetToTensor(3)
+                        };
+
+                        r = new[]
+                        {
+                            l.DataSetToTensor(4),
+                            l.DataSetToTensor(5),
+                            l.DataSetToTensor(6),
+                            l.DataSetToTensor(7)
+                        };
+
+                        wb = new[]
+                        {
+                            l.DataSetToTensor(8),
+                            l.DataSetToTensor(9),
+                            l.DataSetToTensor(10),
+                            l.DataSetToTensor(11)
+                        };
+
+                        rb = new[]
+                        {
+                            l.DataSetToTensor(12),
+                            l.DataSetToTensor(13),
+                            l.DataSetToTensor(14),
+                            l.DataSetToTensor(15)
+                        };
+
+                        hidden_index = 1;
+                        cell_index = 2;
+                    }
+                    else
+                    {
+                        // Barracuda N1WC [num_directions, 4*hidden_size, input_size] -> Barracuda NC [4*hidden_size, input_size]
+                        // (i.e. drop directions since they are unsupported)
+                        Tensor W = _(m_Ops.Transpose(inputs[1], new[] { 2, 0, 1, 3 }));
+
+                        // Barracuda N1WC [num_directions, 4*hidden_size, hidden_size] -> Barracuda NC [4*hidden_size, input_size]
+                        // (i.e. drop directions since they are unsupported)
+                        Tensor R = _(m_Ops.Transpose(inputs[2], new[] { 2, 0, 1, 3 }));
+                        Tensor B = inputs[3];
+
+                        OpsUtils.SplitWRBForLSTM(m_Ops, W, R, B, out w, out r, out wb, out rb);
+
+                        hidden_index = 4;
+                        cell_index = 5;
+                    }
+
+                    // Tag for auto-disposal
+                    for (int i = 0; i < w.Length; i++)
+                    {
+                        _(w[i]);
+                        _(r[i]);
+                        _(wb[i]);
+                        _(rb[i]);
+                    }
+
+                    Tensor[] Y = m_Ops.LSTM(X, w, r, wb, rb, inputs[hidden_index], inputs[cell_index]);
+
+                    X = Y[0];
+                    Tensor hiddenFinal = Y[1];
+                    Tensor cellFinal = Y[2];
+
+                    // We don't support multiple outputs from layers, so set memories directly, which gets picked
+                    // up by subsequent output layers that load memories
+                    var memories = m_Model.memories;
+                    for (int m = 0; m < memories.Count; m++)
+                    {
+                        Model.Memory memory = memories[m];
+                        if (l.inputs[hidden_index].Contains(memory.input))
+                            m_Vars.SetInput(memory.input, hiddenFinal);
+                        else if (l.inputs[cell_index].Contains(memory.input))
+                            m_Vars.SetInput(memory.input, cellFinal);
+                    }
+                }
             }
             else if (l.type == Layer.Type.Concat)
             {
@@ -815,7 +931,30 @@ public class GenericWorker : IWorker
             else if (l.type == Layer.Type.Tile)
             {
                 Profiler.BeginSample ("Barracuda.Tile");
-                X = m_Ops.Tile(X, l.pool);
+
+                var size = l.pool;
+                if (size.Length == 0 && inputs.Length > 1)
+                {
+                    // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
+                    var inputShape = inputs[1].ToReadOnlyArray();
+                    size = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(inputShape, x => (int)x)).ToArray();
+                }
+
+                X = m_Ops.Tile(X, size);
+            }
+            else if(l.type == Layer.Type.ConstantOfShape)
+            {
+                Profiler.BeginSample ("Barracuda.ConstantOfShape");
+
+                var size = inputs[0].shape;
+                if(l.axis != 1)
+                {
+                    // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
+                    var inputShape = inputs[0].ToReadOnlyArray();
+                    size = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(inputShape, x => (int)x));
+                }
+
+                X = m_Ops.ConstantOfShape(size, l.alpha); 
             }
             // Activations
             else if (l.type == Layer.Type.Activation)
@@ -898,6 +1037,10 @@ public class GenericWorker : IWorker
                 {
                     X = m_Ops.Floor(X);
                 }
+                else if (l.activation == Layer.Activation.Round)
+                {
+                    X = m_Ops.Round(X);
+                }
                 else if (l.activation == Layer.Activation.Reciprocal)
                 {
                     X = m_Ops.Reciprocal(X);
@@ -969,8 +1112,8 @@ public class GenericWorker : IWorker
             }
             else
             {
-                Profiler.BeginSample ("Barracuda.Dummy");
-                Assert.AreEqual(l.activation, Layer.Activation.None);
+                Profiler.BeginSample ("Barracuda.NotImplemented");
+                Assert.IsTrue(l.type == Layer.Type.Nop, $"Layer type {l.type} not explicitly handled");
             }
 
             m_Vars.Store(l, X);

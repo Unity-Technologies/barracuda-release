@@ -65,7 +65,7 @@ namespace Unity.Barracuda
         /// <returns>Input instance</returns>
         public Model.Input Input(string name, Int32 batch, Int32 channels)
         {
-            m_Model.inputs.Add(new Model.Input {name = name, shape = new []{batch, 1, 1, channels}});
+            m_Model.inputs.Add(new Model.Input {name = name, shape = new []{batch, 1, 1, channels}, rank = 2});
 
             return m_Model.inputs.Last();
         }
@@ -81,7 +81,7 @@ namespace Unity.Barracuda
         /// <returns>Input instance</returns>
         public Model.Input Input(string name, Int32 batch, Int32 height, Int32 width, Int32 channels)
         {
-            m_Model.inputs.Add(new Model.Input {name = name, shape = new []{batch, height, width, channels}});
+            m_Model.inputs.Add(new Model.Input {name = name, shape = new []{batch, height, width, channels}, rank = 4});
 
             return m_Model.inputs.Last();
         }
@@ -326,6 +326,30 @@ namespace Unity.Barracuda
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = weight.shape.length;
             layer.weights                     = new float[weight.shape.length + bias.shape.length];
+
+            weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+        public Layer Dense3(string name, object input, Tensor weight, Tensor bias)
+        {
+            Layer layer = new Layer(name, Layer.Type.Dense3);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.datasets = new Layer.DataSet[2];
+            layer.datasets[0].name = $"{name}/W";
+            layer.datasets[0].shape = weight.shape;
+            layer.datasets[0].itemSizeInBytes = 4;
+            layer.datasets[0].length = weight.shape.length;
+            layer.datasets[0].offset = 0;
+            layer.datasets[1].name = $"{name}/B";
+            layer.datasets[1].shape = bias.shape;
+            layer.datasets[1].itemSizeInBytes = 4;
+            layer.datasets[1].length = bias.shape.length;
+            layer.datasets[1].offset = weight.shape.length;
+            layer.weights = new float[weight.shape.length + bias.shape.length];
 
             weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
             bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
@@ -894,6 +918,22 @@ namespace Unity.Barracuda
             layer.pool = ends;
             layer.stride = strides;
             layer.axes = axes;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        internal Layer StridedSlice(string name, object input, object starts, object ends, object strides, object axes)
+        {
+            Layer layer = new Layer(name, Layer.Type.StridedSlice);
+
+            List<string> inputs = new List<string> { ResolveInput(input), ResolveInput(starts), ResolveInput(ends) };
+            if (strides != null)
+                inputs.Add(ResolveInput(strides));
+            if (axes != null)
+                inputs.Add(ResolveInput(axes));
+            layer.inputs = inputs.ToArray();
 
             m_Model.layers.Add(layer);
 
@@ -1728,6 +1768,23 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Performs a `sign` operation elementwise on the input tensor.
+        /// Return 1.0 elementwise if x > 0 else -1.0 if x < 0 else 0.0
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Sign(string name, object input)
+        {
+            Layer layer = new Layer(name, Layer.Type.Sign);
+            layer.inputs = new[] { ResolveInput(input) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
         /// Return elements, either from X or Y, depending on condition (with broadcasting support, based on the shape of the condition)
         /// Return X elementwise if condition is true Y otherwise.
         /// Input is consider false if 0.0 elementwise true otherwise.
@@ -2090,57 +2147,86 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
-        /// LSTM (ML-Agents models only) - requires expansion (see ExpandOpsPass)
+        /// LSTM
         /// </summary>
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
         /// <param name="outputs">output nodes</param>
-        /// <param name="W">W data Tensor</param>
-        /// <param name="R">R data Tensor</param>
-        /// <param name="B">B data Tensor</param>
+        /// <param name="w">W data</param>
+        /// <param name="r">R data</param>
+        /// <param name="b">B data (optional)</param>
         /// <param name="hiddenSize">Number of neurons in the hidden layer</param>
-        /// <returns>created Layer instance</returns>
-        public Layer[] LSTM(string name, object input, string[] outputs, Tensor W, Tensor R, Tensor B, int hiddenSize)
+        /// <param name="initialHidden">Initial value of the hidden layer (optional)</param>
+        /// <param name="initialCell">Initial value of the hidden layer (optional)</param>
+        /// <returns>created Layer instances</returns>
+        public Layer[] LSTM(string name, object input, string[] outputs, object w, object r, object b, int hiddenSize,
+            object initialHidden = null, object initialCell = null)
         {
             Layer layer = new Layer(name, Layer.Type.LSTM);
-            layer.inputs = new[] { ResolveInput(input) };
-            layer.outputs = outputs; // outputs 0-2 are real outputs, output 3 is the resolved input base name, output 4 is the resolved output base name
-            layer.pool = new[] { hiddenSize };
 
-            layer.datasets = new Layer.DataSet[3];
-            layer.datasets[0].name            = $"{name}/W";
-            layer.datasets[0].shape           = W.shape;
-            layer.datasets[0].itemSizeInBytes = 4;
-            layer.datasets[0].length          = W.shape.length;
-            layer.datasets[0].offset          = 0;
+            // LSTM's first output may not be used (Y), but we need to preserve the layer regardless, so any additional outputs get computed
+            layer.flags |= Layer.Flags.Preserve;
 
-            layer.datasets[1].name            = $"{name}/R";
-            layer.datasets[1].shape           = R.shape;
-            layer.datasets[1].itemSizeInBytes = 4;
-            layer.datasets[1].length          = R.shape.length;
-            layer.datasets[1].offset          = W.shape.length;
+            string layerHidden = $"{name}_wm_h";
+            string layerCell = $"{name}_wm_c";
 
-            layer.datasets[2].name            = $"{name}/B";
-            layer.datasets[2].shape           = B.shape;
-            layer.datasets[2].itemSizeInBytes = 4;
-            layer.datasets[2].length          = B.shape.length;
-            layer.datasets[2].offset          = W.shape.length + R.shape.length;
+            if (initialHidden == null)
+            {
+                // Add memory inputs (if not specified) since they are used as inputs to this layer (will be initialized to 0)
+                initialHidden = layerHidden;
+            }
+            else
+            {
+                // We don't support directions (i.e. only forward direction) and have built the implementation around
+                // removing direction axes from W,R,B to allow for 2D matrix multiplications.
+                // [num_directions, batch_size, hidden_size] NCH -> [batch_size, hidden_size] CH
+                initialHidden = Transpose($"{layerHidden}_for_{name}", initialHidden, new[] { 1, 2, 0 });
+            }
 
-            layer.weights                     = new float[W.shape.length + R.shape.length + B.shape.length];
-
-            W.ToReadOnlyArray().CopyTo(layer.weights, 0);
-            R.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
-            B.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[2].offset);
+            if (initialCell == null)
+            {
+                // Add memory inputs (if not specified) since they are used as inputs to this layer (will be initialized to 0)
+                initialCell = layerCell;
+            }
+            else
+            {
+                // We don't support directions (i.e. only forward direction) and have built the implementation around
+                // removing direction axes from W,R,B to allow for 2D matrix multiplications.
+                // [num_directions, batch_size, hidden_size] NCH -> [batch_size, hidden_size] CH
+                initialCell = Transpose($"{layerCell}_for_{name}", initialCell, new[] { 1, 2, 0 });
+            }
 
             m_Model.layers.Add(layer);
 
-            Layer layer1 = Identity(outputs[1], layer, rank: 3); // Y_h
-            Layer layer2 = Identity(outputs[2], layer, rank: 3); // Y_c
+            Layer stateHidden = Transpose(outputs[1] ?? $"{name}_Y_h", layerHidden, new[] { 2, 0, 1 });    // Y_h
+            Layer stateCell = Transpose(outputs[2] ?? $"{name}_Y_c", layerCell, new[] { 2, 0, 1 });        // Y_c
 
-            // LSTM requires expanding
-            model.flags |= Model.Flags.NeedsCompilation;
+            // LSTM-node working memory (if no input was specified) and additional outputs
+            Memory(layerHidden, stateHidden, new TensorShape(-1, 1, 1, hiddenSize));
+            Memory(layerCell, stateCell, new TensorShape(-1, 1, 1, hiddenSize));
 
-            return new [] { layer, layer1, layer2 };
+            var inputs = new List<string>();
+            inputs.Add(ResolveInput(input));
+
+            if (w is Tensor W && r is Tensor R && b is Tensor B)
+            {
+                OpsUtils.BakeConstantWRBIntoLSTMLayer(layer, W, R, B);
+            }
+            else
+            {
+                // Dynamic input
+                inputs.Add(ResolveInput(w));
+                inputs.Add(ResolveInput(r));
+                inputs.Add(ResolveInput(b));
+            }
+
+            inputs.Add(ResolveInput(initialHidden));
+            inputs.Add(ResolveInput(initialCell));
+
+            layer.inputs = inputs.ToArray();
+            layer.pool = new[] { hiddenSize };
+
+            return new [] { layer, stateHidden, stateCell };
         }
     }
 }

@@ -62,7 +62,16 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                 // => fused layer will have the same inputs as inputLayer
                 Layer fusedLayer = FuseConsecutiveLayers(inputLayer, layer);
 
-                if (LayerComplextity(fusedLayer) > LayerComplextity(inputLayer) + LayerComplextity(layer))
+                // if isLayerPreserved :
+                //  new complexity =  fusedLayer + inputLayer
+                // else
+                //  new complexity =  fusedLayer
+                // test if new complexity is worth the merge
+                long layerComplexity = LayerComplextity(layer);
+                long inputComplexity = LayerComplextity(inputLayer);
+                long oldComplexity = inputComplexity + layerComplexity;
+                long newComplexity = LayerComplextity(fusedLayer) + (isLayerPreserved ? inputComplexity : 0);
+                if (newComplexity > oldComplexity)
                     continue;
 
                 if (layerHasActivation)

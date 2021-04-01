@@ -1,0 +1,423 @@
+#pragma kernel Dense3_T8x8_R8x8_NHWC BLOCK_SIZE=8 KERNEL_PER_TG=64 CHANNELS_FIRST=0
+#pragma kernel Dense3_T8x8_R8x8_NCHW BLOCK_SIZE=8 KERNEL_PER_TG=64 CHANNELS_FIRST=1
+
+#pragma kernel Dense3_T8x16_R4x4_NHWC BLOCK_SIZE=4 KERNEL_PER_TG=32 CHANNELS_FIRST=0
+#pragma kernel Dense3_T8x16_R4x4_NCHW BLOCK_SIZE=4 KERNEL_PER_TG=32 CHANNELS_FIRST=1
+
+#pragma kernel Dense3_L1Cached64_NHWC CHANNELS_FIRST=0
+#pragma kernel Dense3_L1Cached64_NCHW CHANNELS_FIRST=1
+
+
+#include "Tensor.cginc"
+
+TENSOR_DECL(X)
+TENSOR_DECL(W)
+TENSOR_DECL(B)
+TENSOR_DECL(WBK)
+TENSOR_DECL_RW(O)
+
+
+float ffma(float a, float b, float c) { return dot(float2(a, c), float2(b, 1)); } //return a*b+c;} //fastfma(a,b,c); }
+#if CHANNELS_FIRST
+    #define FUNC_NAME_CALL(KERNEL, SIZE) KERNEL##SIZE##x##SIZE##_NCHW
+    #define CACHE_NAME_CALL(KERNEL, SIZE, TENSOR) KERNEL##SIZE##x##SIZE##_Cache_##TENSOR##_NCHW
+#else
+    #define FUNC_NAME_CALL(KERNEL, SIZE) KERNEL##SIZE##x##SIZE##_NHWC
+    #define CACHE_NAME_CALL(KERNEL, SIZE, TENSOR) KERNEL##SIZE##x##SIZE##_Cache_##TENSOR##_NHWC
+#endif
+#define FUNC_NAME(KERNEL, SIZE) FUNC_NAME_CALL(KERNEL, SIZE)
+#define CACHE_NAME(KERNEL, SIZE, TENSOR) CACHE_NAME_CALL(KERNEL, SIZE, TENSOR)
+
+
+#if BLOCK_SIZE == 8
+#if KERNEL_PER_TG == 64
+#define KERNEL_NAME Dense3_T8x8_R
+#define CACHE_WIDTH_W_PAD 1
+
+#define CACHE_WIDTH_X 64                     
+#define CACHE_WIDTH_W (64+CACHE_WIDTH_W_PAD) 
+
+#define CACHE_DEPTH 8
+groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, LDS)[1039]; // [(8*9)*(3*8+7)+(7)*8+7+1] // [(CACHE_WIDTH_A + CACHE_WIDTH_B)* BLOCK_SIZE];
+[numthreads(8, 8, 1)]
+void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint threadIndex : SV_GroupIndex, uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+    uint ti = threadIndex;
+    uint bx = groupID.x * 8 * BLOCK_SIZE;
+    uint by = groupID.y * 8 * BLOCK_SIZE;
+
+    uint n = X.width;
+    uint strideX = X.channels;
+    uint strideW = W.GetFlatWidth();
+    uint lengthW = W.GetLength() - 1;
+    uint dzX = groupID.z * n * strideX;
+    uint dzO = groupID.z * strideW * strideX;
+
+#define LDS_ CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, LDS)
+#define X_OFFSET 0
+#define W_OFFSET CACHE_DEPTH*8*BLOCK_SIZE
+
+    float dstO[BLOCK_SIZE*BLOCK_SIZE];
+    uint tg_X = 0;
+    uint tg_W = 0;
+
+    [unroll] for (tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
+        dstO[0*BLOCK_SIZE + tg_W] = B.FastGet(min(B.GetLength()-1, bx + ((ti & 7) << 3) + tg_W));
+
+    [unroll] for (tg_X = 1; tg_X < BLOCK_SIZE; ++tg_X)
+        [unroll] for (tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
+            dstO[tg_X*BLOCK_SIZE + tg_W] = dstO[0*BLOCK_SIZE + tg_W];
+
+    for (uint i = 0; i < n; i += CACHE_DEPTH)
+    {
+        #if CHANNELS_FIRST
+            //LDS_[X_OFFSET + ti + 8 * 8 * [0..7]] = X.FastGet((i + [0..7]) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 0] = X.MaskedGet(((by + ti) < strideX) && ((i + 0) < X.width), dzX + (i + 0) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 1] = X.MaskedGet(((by + ti) < strideX) && ((i + 1) < X.width), dzX + (i + 1) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 2] = X.MaskedGet(((by + ti) < strideX) && ((i + 2) < X.width), dzX + (i + 2) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 3] = X.MaskedGet(((by + ti) < strideX) && ((i + 3) < X.width), dzX + (i + 3) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 4] = X.MaskedGet(((by + ti) < strideX) && ((i + 4) < X.width), dzX + (i + 4) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 5] = X.MaskedGet(((by + ti) < strideX) && ((i + 5) < X.width), dzX + (i + 5) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 6] = X.MaskedGet(((by + ti) < strideX) && ((i + 6) < X.width), dzX + (i + 6) + X.width * (by + ti));
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 7] = X.MaskedGet(((by + ti) < strideX) && ((i + 7) < X.width), dzX + (i + 7) + X.width * (by + ti));
+        #else
+            //LDS_[X_OFFSET + ti + 8 * 8 * [0..7]] = X.FastGet(X.channels * (i + [0..7]) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 0] = X.MaskedGet(((by + ti) < strideX) && ((i + 0) < X.width), dzX + X.channels * (i + 0) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 1] = X.MaskedGet(((by + ti) < strideX) && ((i + 1) < X.width), dzX + X.channels * (i + 1) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 2] = X.MaskedGet(((by + ti) < strideX) && ((i + 2) < X.width), dzX + X.channels * (i + 2) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 3] = X.MaskedGet(((by + ti) < strideX) && ((i + 3) < X.width), dzX + X.channels * (i + 3) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 4] = X.MaskedGet(((by + ti) < strideX) && ((i + 4) < X.width), dzX + X.channels * (i + 4) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 5] = X.MaskedGet(((by + ti) < strideX) && ((i + 5) < X.width), dzX + X.channels * (i + 5) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 6] = X.MaskedGet(((by + ti) < strideX) && ((i + 6) < X.width), dzX + X.channels * (i + 6) + by + ti);
+            LDS_[X_OFFSET + ti + CACHE_WIDTH_X * 7] = X.MaskedGet(((by + ti) < strideX) && ((i + 7) < X.width), dzX + X.channels * (i + 7) + by + ti);
+        #endif
+                      
+        //LDS_[W_OFFSET + ti + writeIndex + (8 * 8 + 1) * [0..7]] = W.FastGet(strideB * (i + [0..7]) + bx + ti);
+        uint WWriteIndex = (ti & 0x20) >> 5;// (ti > 31) ? CACHE_WIDTH_B_PAD : 0;
+
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 0 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 0) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 1 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 1) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 2 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 2) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 3 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 3) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 4 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 4) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 5 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 5) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 6 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 6) + bx + ti, lengthW));
+        LDS_[W_OFFSET + (ti + WWriteIndex) + 7 * CACHE_WIDTH_W] = W.FastGet(min(strideW * (i + 7) + bx + ti, lengthW));
+
+        GroupMemoryBarrierWithGroupSync();
+
+        //uint ptrX = X_OFFSET + (ti/8) * 8;
+        //uint ptrW = W_OFFSET + (ti%8) * 8 + readIndex;
+        uint ptrX = X_OFFSET + (ti & 0x78);
+        uint ptrW = ((ti & 7) << 3);
+        ptrW += (ti & 0x4) >> 2; // ptrW += (ptrW > 31) ? CACHE_WIDTH_W_PAD : 0;
+        ptrW += W_OFFSET;
+
+        float srcX[BLOCK_SIZE];
+        float srcW[BLOCK_SIZE];
+
+        [unroll] for (uint tg_CacheExecuteIdx = 0; tg_CacheExecuteIdx < CACHE_DEPTH; tg_CacheExecuteIdx++)
+        {
+            srcX[0] = LDS_[ptrX | 0];
+            srcX[1] = LDS_[ptrX | 1];
+            srcX[2] = LDS_[ptrX | 2];
+            srcX[3] = LDS_[ptrX | 3];
+            srcX[4] = LDS_[ptrX | 4];
+            srcX[5] = LDS_[ptrX | 5];
+            srcX[6] = LDS_[ptrX | 6];
+            srcX[7] = LDS_[ptrX | 7];
+
+            srcW[0] = LDS_[ptrW + 0];
+            srcW[1] = LDS_[ptrW + 1];
+            srcW[2] = LDS_[ptrW + 2];
+            srcW[3] = LDS_[ptrW + 3];
+            srcW[4] = LDS_[ptrW + 4];
+            srcW[5] = LDS_[ptrW + 5];
+            srcW[6] = LDS_[ptrW + 6];
+            srcW[7] = LDS_[ptrW + 7];
+
+            ptrX += CACHE_WIDTH_X;
+            ptrW += CACHE_WIDTH_W;
+
+            [unroll] for (tg_X = 0; tg_X < BLOCK_SIZE; ++tg_X)
+                [unroll] for (tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
+                    dstO[tg_X*BLOCK_SIZE + tg_W] = ffma(srcX[tg_X], srcW[tg_W], dstO[tg_X*BLOCK_SIZE + tg_W]);
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    #if CHANNELS_FIRST
+        [unroll] for (tg_X = 0; tg_X < BLOCK_SIZE; ++tg_X)
+            [unroll] for (tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
+                O.FastSet(dzO + ((bx + 8 * (ti % 8)) + tg_X) + O.width * ((by + 8 * (ti / 8)) + tg_W), dstO[BLOCK_SIZE * tg_W + tg_X]);
+    #else
+        [unroll] for (uint tg_XOffset = 0; tg_XOffset < BLOCK_SIZE; tg_XOffset += 2)
+        {
+            [unroll] for (tg_X = 0; tg_X < 2; ++tg_X)
+                [unroll] for (tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
+                {
+                    //To avoid bank conflict store in 32 groups [8pixelsGroups,4channelsGroups] each group contain 64 values [8pixels,8kernels] for a total of 2048 values [64pixels,32channels]
+                    uint ldsOffsetOfGroup = 65 * (tg_X*BLOCK_SIZE + tg_W);//64 * ([0,3]*8+[0,7]) = [0,1984]
+                    LDS_[ldsOffsetOfGroup + ti] = dstO[BLOCK_SIZE * tg_W + (tg_XOffset + tg_X)];
+                }
+
+            GroupMemoryBarrierWithGroupSync();
+      
+            [unroll] for (tg_X = 0; tg_X < 16; ++tg_X)
+            {
+                // (((tg_A % 4) * 8) + (ti % 8)) * CACHE_WIDTH_A
+                uint ldsOffsetOfGroup = 65 * (((tg_X & 1) << 3) + (ti & 7));//CACHE_WIDTH_A * ([0,3]*8+[0,7]) = [0,1984]
+                // (ti / 8) * 8 + (tg_A / 4)
+                uint ldsOffsetInGroup = (ti & 0x78) + (tg_X >> 1);//[0,7]*8+[0,7] = [0,63]
+                //load from LDS and store to DDR
+                uint readIndex = ldsOffsetOfGroup + ldsOffsetInGroup;//[0,2047]
+                // bx + tg_!%4 + (tgA/4)*8 + tg_AOffset
+                uint writeXId = bx + (tg_X & 1) + ((tg_X >> 1) << 3) + tg_XOffset;
+                uint writeIndex = dzO + O.channels * writeXId + (by + ti);
+                O.FastSet(writeIndex, LDS_[readIndex]);
+            }
+        }
+    #endif
+}
+
+#endif
+#undef CACHE_DEPTH
+#undef KERNEL_NAME
+#elif BLOCK_SIZE == 4
+#if KERNEL_PER_TG == 32
+
+//TODO optimize
+#define KERNEL_NAME Dense3_T8x16_R
+#define CACHE_DEPTH 8
+
+groupshared float CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, LDS)[16*8*4 + 8*8*4]; // [(8*9)*(3*8+7)+(7)*8+7+1] // [(CACHE_WIDTH_A + CACHE_WIDTH_B)* BLOCK_SIZE];
+
+[numthreads(8, 16, 1)]
+void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint threadIndex : SV_GroupIndex)
+{
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+#define LDS_ CACHE_NAME(KERNEL_NAME, BLOCK_SIZE, LDS)
+
+
+    uint x = 8 * groupID.x + (threadIndex % 8);
+    uint y = 16 * groupID.y + (threadIndex / 8);
+
+    uint n = X.width;
+    uint strideX = X.channels;
+    uint strideW = W.GetFlatWidth();
+    uint dzX = groupID.z * n * strideX;
+    uint dzO = groupID.z * strideW * strideX;
+
+    float dstO[BLOCK_SIZE*BLOCK_SIZE];
+    dstO[0 ] = B.FastGet(min(4 * x + 0, strideW - 1));
+    dstO[1 ] = B.FastGet(min(4 * x + 0, strideW - 1));
+    dstO[2 ] = B.FastGet(min(4 * x + 0, strideW - 1));
+    dstO[3 ] = B.FastGet(min(4 * x + 0, strideW - 1));
+    dstO[4 ] = B.FastGet(min(4 * x + 1, strideW - 1));
+    dstO[5 ] = B.FastGet(min(4 * x + 1, strideW - 1));
+    dstO[6 ] = B.FastGet(min(4 * x + 1, strideW - 1));
+    dstO[7 ] = B.FastGet(min(4 * x + 1, strideW - 1));
+    dstO[8 ] = B.FastGet(min(4 * x + 2, strideW - 1));
+    dstO[9 ] = B.FastGet(min(4 * x + 2, strideW - 1));
+    dstO[10] = B.FastGet(min(4 * x + 2, strideW - 1));
+    dstO[11] = B.FastGet(min(4 * x + 2, strideW - 1));
+    dstO[12] = B.FastGet(min(4 * x + 3, strideW - 1));
+    dstO[13] = B.FastGet(min(4 * x + 3, strideW - 1));
+    dstO[14] = B.FastGet(min(4 * x + 3, strideW - 1));
+    dstO[15] = B.FastGet(min(4 * x + 3, strideW - 1));
+
+    //float acc = B.FastGet(min(x, strideW - 1));
+    // loop over X columns (flatWidth) and W rows (height) in CACHESIZE steps
+    for (uint i = 0; i < n; i += CACHE_DEPTH)
+    {
+        // Cache X
+        // coalescent reads
+        #if CHANNELS_FIRST
+            LDS_[(threadIndex / 8) * 8 + (threadIndex % 8) + 16 * 8 * 0] = X.MaskedGet((4 * y + 0 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + (i + (threadIndex % 8)) + X.width * (4 * y + 0));
+            LDS_[(threadIndex / 8) * 8 + (threadIndex % 8) + 16 * 8 * 1] = X.MaskedGet((4 * y + 1 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + (i + (threadIndex % 8)) + X.width * (4 * y + 1));
+            LDS_[(threadIndex / 8) * 8 + (threadIndex % 8) + 16 * 8 * 2] = X.MaskedGet((4 * y + 2 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + (i + (threadIndex % 8)) + X.width * (4 * y + 2));
+            LDS_[(threadIndex / 8) * 8 + (threadIndex % 8) + 16 * 8 * 3] = X.MaskedGet((4 * y + 3 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + (i + (threadIndex % 8)) + X.width * (4 * y + 3));
+        #else
+            LDS_[(threadIndex / 8)*8 + (threadIndex % 8) + 16*8 * 0] = X.MaskedGet((4 * y + 0 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + X.channels*(i + (threadIndex % 8)) + 4 * y + 0);
+            LDS_[(threadIndex / 8)*8 + (threadIndex % 8) + 16*8 * 1] = X.MaskedGet((4 * y + 1 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + X.channels*(i + (threadIndex % 8)) + 4 * y + 1);
+            LDS_[(threadIndex / 8)*8 + (threadIndex % 8) + 16*8 * 2] = X.MaskedGet((4 * y + 2 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + X.channels*(i + (threadIndex % 8)) + 4 * y + 2);
+            LDS_[(threadIndex / 8)*8 + (threadIndex % 8) + 16*8 * 3] = X.MaskedGet((4 * y + 3 < X.channels) && (i + (threadIndex % 8)) < X.width, dzX + X.channels*(i + (threadIndex % 8)) + 4 * y + 3);
+        #endif
+        LDS_[8 * 16 * 4 + ((threadIndex / 8)%8) * 8 + (threadIndex % 8) + 8 * 8 * (2*((threadIndex/8)/8)+0)] = W.MaskedGet((4 * x + 0 < strideW) && (i + ((threadIndex / 8)%8)) < W.GetFlatHeight(), 4 * x + (2*((threadIndex/8)/8)+0) + (i + ((threadIndex / 8)%8))*strideW);
+        LDS_[8 * 16 * 4 + ((threadIndex / 8)%8) * 8 + (threadIndex % 8) + 8 * 8 * (2*((threadIndex/8)/8)+1)] = W.MaskedGet((4 * x + 1 < strideW) && (i + ((threadIndex / 8)%8)) < W.GetFlatHeight(), 4 * x + (2*((threadIndex/8)/8)+1) + (i + ((threadIndex / 8)%8))*strideW);
+
+        GroupMemoryBarrierWithGroupSync();
+
+        float srcX[4];
+        float srcW[4];
+
+        // X * W
+        [unroll]
+        for (uint di = 0; di < CACHE_DEPTH; ++di)
+        {
+            srcX[0] = LDS_[di + (threadIndex / 8) * 8 + 8 * 16 * 0];
+            srcX[1] = LDS_[di + (threadIndex / 8) * 8 + 8 * 16 * 1];
+            srcX[2] = LDS_[di + (threadIndex / 8) * 8 + 8 * 16 * 2];
+            srcX[3] = LDS_[di + (threadIndex / 8) * 8 + 8 * 16 * 3];
+
+            srcW[0] = LDS_[4 * 8 * 16 + 8 * di + (threadIndex % 8) + 8 * 8 * 0];
+            srcW[1] = LDS_[4 * 8 * 16 + 8 * di + (threadIndex % 8) + 8 * 8 * 1];
+            srcW[2] = LDS_[4 * 8 * 16 + 8 * di + (threadIndex % 8) + 8 * 8 * 2];
+            srcW[3] = LDS_[4 * 8 * 16 + 8 * di + (threadIndex % 8) + 8 * 8 * 3];
+
+            dstO[0] = fastfma(srcX[0], srcW[0], dstO[0]);
+            dstO[1] = fastfma(srcX[1], srcW[0], dstO[1]);
+            dstO[2] = fastfma(srcX[2], srcW[0], dstO[2]);
+            dstO[3] = fastfma(srcX[3], srcW[0], dstO[3]);
+
+            dstO[4] = fastfma(srcX[0], srcW[1], dstO[4]);
+            dstO[5] = fastfma(srcX[1], srcW[1], dstO[5]);
+            dstO[6] = fastfma(srcX[2], srcW[1], dstO[6]);
+            dstO[7] = fastfma(srcX[3], srcW[1], dstO[7]);
+
+            dstO[8]  = fastfma(srcX[0], srcW[2], dstO[8]);
+            dstO[9 ] = fastfma(srcX[1], srcW[2], dstO[9]);
+            dstO[10] = fastfma(srcX[2], srcW[2], dstO[10]);
+            dstO[11] = fastfma(srcX[3], srcW[2], dstO[11]);
+
+            dstO[12] = fastfma(srcX[0], srcW[3], dstO[12]);
+            dstO[13] = fastfma(srcX[1], srcW[3], dstO[13]);
+            dstO[14] = fastfma(srcX[2], srcW[3], dstO[14]);
+            dstO[15] = fastfma(srcX[3], srcW[3], dstO[15]);
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    #if CHANNELS_FIRST
+        O.FastSet(dzO + (4 * x + 0) + O.width * (4 * y + 0), dstO[0]);
+        O.FastSet(dzO + (4 * x + 0) + O.width * (4 * y + 1), dstO[1]);
+        O.FastSet(dzO + (4 * x + 0) + O.width * (4 * y + 2), dstO[2]);
+        O.FastSet(dzO + (4 * x + 0) + O.width * (4 * y + 3), dstO[3]);
+
+        O.FastSet(dzO + (4 * x + 1) + O.width * (4 * y + 0), dstO[4]);
+        O.FastSet(dzO + (4 * x + 1) + O.width * (4 * y + 1), dstO[5]);
+        O.FastSet(dzO + (4 * x + 1) + O.width * (4 * y + 2), dstO[6]);
+        O.FastSet(dzO + (4 * x + 1) + O.width * (4 * y + 3), dstO[7]);
+
+        O.FastSet(dzO + (4 * x + 2) + O.width * (4 * y + 0), dstO[8]);
+        O.FastSet(dzO + (4 * x + 2) + O.width * (4 * y + 1), dstO[9]);
+        O.FastSet(dzO + (4 * x + 2) + O.width * (4 * y + 2), dstO[10]);
+        O.FastSet(dzO + (4 * x + 2) + O.width * (4 * y + 3), dstO[11]);
+
+        O.FastSet(dzO + (4 * x + 3) + O.width * (4 * y + 0), dstO[12]);
+        O.FastSet(dzO + (4 * x + 3) + O.width * (4 * y + 1), dstO[13]);
+        O.FastSet(dzO + (4 * x + 3) + O.width * (4 * y + 2), dstO[14]);
+        O.FastSet(dzO + (4 * x + 3) + O.width * (4 * y + 3), dstO[15]);
+    #else
+        O.FastSet(dzO + (4 * x + 0)*O.channels + 4 * y + 0, dstO[0]);
+        O.FastSet(dzO + (4 * x + 0)*O.channels + 4 * y + 1, dstO[1]);
+        O.FastSet(dzO + (4 * x + 0)*O.channels + 4 * y + 2, dstO[2]);
+        O.FastSet(dzO + (4 * x + 0)*O.channels + 4 * y + 3, dstO[3]);
+
+        O.FastSet(dzO + (4 * x + 1)*O.channels + 4 * y + 0, dstO[4]);
+        O.FastSet(dzO + (4 * x + 1)*O.channels + 4 * y + 1, dstO[5]);
+        O.FastSet(dzO + (4 * x + 1)*O.channels + 4 * y + 2, dstO[6]);
+        O.FastSet(dzO + (4 * x + 1)*O.channels + 4 * y + 3, dstO[7]);
+
+        O.FastSet(dzO + (4 * x + 2)*O.channels + 4 * y + 0, dstO[8]);
+        O.FastSet(dzO + (4 * x + 2)*O.channels + 4 * y + 1, dstO[9]);
+        O.FastSet(dzO + (4 * x + 2)*O.channels + 4 * y + 2, dstO[10]);
+        O.FastSet(dzO + (4 * x + 2)*O.channels + 4 * y + 3, dstO[11]);
+
+        O.FastSet(dzO + (4 * x + 3)*O.channels + 4 * y + 0, dstO[12]);
+        O.FastSet(dzO + (4 * x + 3)*O.channels + 4 * y + 1, dstO[13]);
+        O.FastSet(dzO + (4 * x + 3)*O.channels + 4 * y + 2, dstO[14]);
+        O.FastSet(dzO + (4 * x + 3)*O.channels + 4 * y + 3, dstO[15]);
+    #endif
+}
+
+
+#endif
+#undef CACHE_DEPTH
+#undef KERNEL_NAME
+#endif
+
+#undef FUNC_NAME
+#undef CACHE_NAME
+#undef FUNC_NAME_CALL
+#undef CACHE_NAME_CALL
+
+#if CHANNELS_FIRST
+    #define FUNC_NAME_CALL(KERNEL) KERNEL##_NCHW
+    #define CACHE_NAME_CALL(KERNEL, TENSOR) KERNEL##_Cache_##TENSOR##_NCHW
+#else
+    #define FUNC_NAME_CALL(KERNEL) KERNEL##_NHWC
+    #define CACHE_NAME_CALL(KERNEL, TENSOR) KERNEL##_Cache_##TENSOR##_NHWC
+#endif
+#define FUNC_NAME(KERNEL) FUNC_NAME_CALL(KERNEL)
+#define CACHE_NAME(KERNEL, TENSOR) CACHE_NAME_CALL(KERNEL, TENSOR)
+
+// NOTE: usually this path is used for <16 batches
+#undef CACHESIZE
+#undef LDS_
+
+#define KERNEL_NAME Dense3_L1Cached64
+#define CACHESIZE 64
+
+groupshared float CACHE_NAME(KERNEL_NAME, LDS)[CACHESIZE];
+
+[numthreads(64, 1, 1)]
+void FUNC_NAME(KERNEL_NAME)(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID, uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+#define LDS_ CACHE_NAME(KERNEL_NAME, LDS)
+
+    uint x = CACHESIZE * groupID.x + groupThreadID.x;
+    uint y = groupID.y;
+
+    uint n = X.width;
+    uint strideX = X.channels;
+    uint strideW = W.GetFlatWidth();
+    uint dzX = groupID.z * n * strideX;
+    uint dzO = groupID.z * strideW * strideX;
+
+    float acc = B.FastGet(min(x, strideW - 1));
+    // loop over X columns (flatWidth) and W rows (height) in CACHESIZE steps
+    for (uint i = 0; i < n; i += CACHESIZE)
+    {
+        // Cache X
+        // coalescent reads
+        bool maskX = (y < strideX) && (i + groupThreadID.x) < X.width;
+        #if CHANNELS_FIRST
+            LDS_[groupThreadID.x] = X.MaskedGet(maskX, dzX + y * X.width + (i + groupThreadID.x));
+        #else
+            LDS_[groupThreadID.x] = X.MaskedGet(maskX, dzX + (i + groupThreadID.x) * X.channels + y);
+        #endif
+
+        GroupMemoryBarrierWithGroupSync();
+
+        // X * W
+        [unroll]
+        for (uint di = 0; di < CACHESIZE; ++di)
+        {
+            acc = fastfma(LDS_[di], W.MaskedGet(x < strideW && (i+di) < W.GetFlatHeight(), x + (i + di)*strideW), acc);
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    if ((x < O.width) && (y < O.channels))
+    {
+#if CHANNELS_FIRST
+        O.FastSet(dzO + y * O.width + x, acc);
+#else
+        O.FastSet(dzO + x * O.channels + y, acc);
+#endif
+    }
+
+#undef LDS_
+}
+#undef KERNEL_NAME
+#undef CACHESIZE

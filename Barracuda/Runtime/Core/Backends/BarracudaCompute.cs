@@ -136,11 +136,77 @@ internal sealed class ComputeKernelLibrary
                     StrictAnd(X.flatWidth % 16 == 0)
                     // @TODO: relax Strict constraint, only And part should be necessary due to mask
             ));
+
             entries.Add(new Entry("Dense_L1Cached64",
                     Int3(w, h),                                     BigO(X.flatWidth)
             ));
+
+            // optimized H == 1 fast path
+            entries.Add(new Entry("Dense_V_L1Cached64",
+                    Int3(w, 1),                                 0.9f * BigO(X.flatWidth),
+                    valid_: h == 1
+            ));
         }
 
+        return entries;
+    }
+
+    private static List<Entry> s_MultidimMatMulEntries = new List<Entry>(4);
+    static public List<Entry> MultidimMatMul(TensorShape X, int rankX, TensorShape Y, int rankY, TensorShape O)
+    {
+        var entries = s_MultidimMatMulEntries;
+        entries.Clear();
+        {
+            // rank3 x rank2
+            if (rankX == 3 && rankY == 2)
+            {
+                var h = O.channels;
+                var w = O.width;
+                var n = O.batch;
+
+                // R8x8
+                entries.Add(new Entry("MultidimMatMul_T8x8_R8x8_AR3_BR2",
+                        Int3(w / 8, h / 8, n), BigO(X.width) / 8,
+                        valid_: w % 64 == 0 && h % 8 == 0
+                ));
+                entries.Add(new Entry("MultidimMatMul_L1Cached64_AR3_BR2",
+                        Int3(w, h, n), BigO(X.flatWidth) / 64
+                ));
+                //  // R4x4
+                //  entries.Add(new Entry("MultidimMatMul_T16x16_R4x4_AR3_BR2",
+                //          Int3(w / 4, h / 4, n), BigO(X.width) / 4,
+                //          StrictAnd(w % 64 == 0 && h % 64 == 0)
+                //  ));
+            }
+        }
+        return entries;
+    }
+    private static List<Entry> s_Dense3MulEntries = new List<Entry>(4);
+    static public List<Entry> Dense3(TensorShape X, TensorShape Y, TensorShape O)
+    {
+        var entries = s_Dense3MulEntries;
+        entries.Clear();
+        {
+            // rank3
+            var h = O.channels;
+            var w = O.width;
+            var n = O.batch;
+
+            // R4x4
+            // TODO optimize
+            entries.Add(new Entry("Dense3_T8x16_R4x4",
+                    Int3(ComputeHelper.IDivC(w, 4), ComputeHelper.IDivC(h, 4), n), (BigO(X.width) / 8),
+                    valid_: w % 32 == 0 && h % 16 == 0
+            ));
+            // R8x8
+            entries.Add(new Entry("Dense3_T8x8_R8x8",
+                    Int3(ComputeHelper.IDivC(w, 8), ComputeHelper.IDivC(h, 8), n), (BigO(X.width) / 8)*0.7f,
+                    valid_: w % 64 == 0 && h % 8 == 0
+            ));
+            entries.Add(new Entry("Dense3_L1Cached64",
+                    Int3(w, h, n),                                     BigO(X.flatWidth)/64
+            ));
+        }
         return entries;
     }
 
@@ -565,6 +631,56 @@ internal sealed class ComputeKernelLibrary
         return entries;
     }
 
+    private static List<Entry> s_PartialReduceEntries = new List<Entry>(1);
+    internal static readonly Dictionary<Layer.Type, string> s_PartialReduceKernelNames = new Dictionary<Layer.Type, string> {
+        {Layer.Type.ReduceMax, "PartialReduceMax"}, {Layer.Type.ReduceMean, "PartialReduceMean"},
+        {Layer.Type.ReduceMin, "PartialReduceMin"}, {Layer.Type.ReduceProd, "PartialReduceProd"},
+        {Layer.Type.ReduceSum, "PartialReduceSum"}};
+    internal static readonly Dictionary<Layer.Type, string> s_PartialReduceLoopKernelNames = new Dictionary<Layer.Type, string> {
+        {Layer.Type.ReduceMax, "PartialReduceMax_Loop"}, {Layer.Type.ReduceMean, "PartialReduceMean_Loop"},
+        {Layer.Type.ReduceMin, "PartialReduceMin_Loop"}, {Layer.Type.ReduceProd, "PartialReduceProd_Loop"},
+        {Layer.Type.ReduceSum, "PartialReduceSum_Loop"}};
+    internal static List<Entry> PartialReduce(Layer.Type kernelName, int flatHeight, int reducedDim, int flatWidth)
+    {
+        var entries = s_PartialReduceEntries;
+        entries.Clear();
+
+        reducedDim = reducedDim / 4;
+
+        var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+        var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+        entries.Add(new Entry(s_PartialReduceKernelNames[kernelName],
+            Int3(flatHeight, reducedDim, flatWidth), BigO((int)Mathf.Log((float)reducedDim)), valid_: (flatHeight <  (int)ComputeFunc.SafeDispatchLimit) && (flatWidth < (int)ComputeFunc.SafeDispatchLimit)));
+        entries.Add(new Entry(s_PartialReduceLoopKernelNames[kernelName],
+            Int3(flatHeight / unrolledH, reducedDim, flatWidth / unrolledW), 1.2f*BigO(unrolledH * unrolledW * (int)Mathf.Log((float)reducedDim))));
+        return entries;
+    }
+    private static List<Entry> s_GlobalReduceEntries = new List<Entry>(1);
+    internal static readonly Dictionary<Layer.Type, string> s_GlobalReduceKernelNames = new Dictionary<Layer.Type, string> {
+        {Layer.Type.ReduceMax, "GlobalReduceMax"}, {Layer.Type.ReduceMean, "GlobalReduceMean"},
+        {Layer.Type.ReduceMin, "GlobalReduceMin"}, {Layer.Type.ReduceProd, "GlobalReduceProd"},
+        {Layer.Type.ReduceSum, "GlobalReduceSum"}};
+    internal static readonly Dictionary<Layer.Type, string> s_GlobalReduceLoopKernelNames = new Dictionary<Layer.Type, string> {
+        {Layer.Type.ReduceMax, "GlobalReduceMax_Loop"}, {Layer.Type.ReduceMean, "GlobalReduceMean_Loop"},
+        {Layer.Type.ReduceMin, "GlobalReduceMin_Loop"}, {Layer.Type.ReduceProd, "GlobalReduceProd_Loop"},
+        {Layer.Type.ReduceSum, "GlobalReduceSum_Loop"}};
+    internal static List<Entry> GlobalReduce(Layer.Type kernelName, int flatHeight, int reducedDim, int flatWidth)
+    {
+        var entries = s_GlobalReduceEntries;
+        entries.Clear();
+
+        var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+        var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+        entries.Add(new Entry(s_GlobalReduceKernelNames[kernelName],
+            Int3(flatHeight, 1, flatWidth), BigO((int)Mathf.Log((float)reducedDim)), valid_: (flatHeight <  (int)ComputeFunc.SafeDispatchLimit) && (flatWidth < (int)ComputeFunc.SafeDispatchLimit)));
+        entries.Add(new Entry(s_GlobalReduceLoopKernelNames[kernelName],
+            Int3(flatHeight / unrolledH, 1, flatWidth / unrolledW), 1.2f*BigO(unrolledH * unrolledW * (int)Mathf.Log((float)reducedDim))));
+        return entries;
+    }
+
+
     private static List<Entry> s_NormalizationTailEntries = new List<Entry>(3);
     internal static List<Entry> NormalizationTail(TensorShape X, TensorShape O)
     {
@@ -605,6 +721,50 @@ internal sealed class ComputeKernelLibrary
         entries.Add( // NOTE: dispatched over X (not O)
             new Entry("TransposeToChannelFirst",
                 Int3(X.channels, X.width, X.height), BigO(O.batch)));
+
+        return entries;
+    }
+
+    private static List<Entry> s_Transpose = new List<Entry>(1);
+    internal static List<Entry> Transpose(TensorShape X, TensorShape O)
+    {
+        var entries = s_Transpose;
+        entries.Clear();
+
+        entries.Add( // NOTE: dispatched over X (not O)
+            new Entry("Transpose",
+                Int3(X.channels, X.width, X.height), BigO(O.batch)));
+
+        return entries;
+    }
+
+    private static List<Entry> s_Transpose8D = new List<Entry>(1);
+    internal static List<Entry> Transpose8D(TensorShape X, TensorShape O, ComputeInfo.ChannelsOrder cOrder)
+    {
+        var entries = s_Transpose8D;
+        entries.Clear();
+
+        if (cOrder == ComputeInfo.ChannelsOrder.NCHW)
+            entries.Add( // NOTE: dispatched over X (not O)
+                new Entry("Transpose8D",
+                    Int3(X.width, X.height, X.depth), BigO(O.batch)));
+        else
+            entries.Add( // NOTE: dispatched over X (not O)
+                new Entry("Transpose8D",
+                    Int3(X.channels, X.width, X.height), BigO(O.batch)));
+
+        return entries;
+    }
+
+    private static List<Entry> s_Transpose2D = new List<Entry>(1);
+    internal static List<Entry> Transpose2D(TensorShape O)
+    {
+        var entries = s_Transpose2D;
+        entries.Clear();
+
+        entries.Add(
+            new Entry("Transpose2D",
+                Int3(O.flatWidth, O.flatHeight, 1), BigO(O.batch)));
 
         return entries;
     }
@@ -910,6 +1070,42 @@ public class ComputeOps : ReferenceComputeOps
         if (B != Y) B.Dispose();
 
         buffer.Dispose();
+
+        return O;
+    }
+
+    public override Tensor MatMul(Tensor X, int rankX, Tensor Y, int rankY)
+    {
+        if (!(rankX == 3 && rankY == 2))
+            return base.MatMul(X, rankX, Y, rankY);
+
+        var O = NewTensor(X.batch, 1, Y.channels, X.channels);
+       
+        var fn = BestKernel(ComputeKernelLibrary.MultidimMatMul(X.shape, rankX, Y.shape, rankY, O.shape));
+       
+        fn.SetTensor("A", X.shape, Pin(X).buffer);
+        fn.SetTensor("B", Y.shape, Pin(Y).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+       
+        fn.Dispatch();
+       
+        return O;
+    }
+
+    public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        var O = NewTensor(X.batch, 1, W.channels, X.channels);
+
+        var fn = BestKernel(ComputeKernelLibrary.Dense3(X.shape, W.shape, O.shape));
+      
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.SetTensorDecl("W", W.shape, Pin(W).offset);
+        fn.SetTensorDecl("B", B.shape, Pin(B).offset);
+        Assert.AreEqual(Pin(W).buffer, Pin(B).buffer);
+        fn.SetTensorBuffer("WBK", Pin(W).buffer);
+      
+        fn.Dispatch();
 
         return O;
     }
@@ -1256,7 +1452,7 @@ public class ComputeOps : ReferenceComputeOps
         var X2 = X; // save a X^2 and do it in the first dispatch
         bool isFirstDispatch = true;
         // downsample with pyramid approach
-        while (X.height * X.width >= 8*8*2)
+        while (X.height * X.width > 8*8*2*2)
         {
             var lastLength = X.length;
             var XX2 = GlobalAvgVariancePool2DReduce(X, X2, isFirstDispatch);
@@ -1319,7 +1515,7 @@ public class ComputeOps : ReferenceComputeOps
         s_GlobalPool2DInputDim[1] = X.width;
 
         // downsample with pyramid approach
-        while (X.height * X.width >= 8*8*2)
+        while (X.height * X.width > 8*8*2*2)
         {
             var lastLength = X.length;
             X = GlobalPool2DReduce(smallKernelName, X);
@@ -1405,8 +1601,109 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    void ComputeReduceDispatchDim(TensorShape X, TensorShape O, int axis, out int flatHeight, out int reducedDim, out int flatWidth)
+    {
+        int[] OshapeLayoutSpecific = O.ToArray();
+
+        reducedDim = X[axis];
+
+        if(ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+        {
+            OshapeLayoutSpecific[TensorShape.DataBatch + 1] = O[TensorShape.C];
+            for(int i = TensorShape.DataBatch + 1; i < TensorShape.C; i++)
+                OshapeLayoutSpecific[i + 1] = O[i];
+
+            if(axis == TensorShape.C)
+                axis = TensorShape.DataBatch + 1;
+            else if (axis > TensorShape.DataBatch)
+                axis += 1;
+        }
+
+        flatHeight = 1;
+        flatWidth = 1;
+        for (int i = 0; i < 8; i++)
+        {
+            if (i < axis)
+                flatHeight *= OshapeLayoutSpecific[i];
+            if (i > axis)
+                flatWidth *= OshapeLayoutSpecific[i];
+        }
+    }
+
+    internal static int[] s_PartialReduceSumDimensions = new int[3];
+
+    Tensor ReducePartial(Layer.Type kernelName, Tensor X, int axis)
+    {
+        var Oshape = X.shape;
+        Oshape[axis] = ComputeHelper.IDivC(ComputeHelper.IDivC(X.shape[axis], 64), 4);
+
+        ComputeReduceDispatchDim(X.shape, Oshape, axis, out int flatHeight, out int reducedDim, out int flatWidth);
+
+        s_PartialReduceSumDimensions[0] = flatHeight;
+        s_PartialReduceSumDimensions[1] = flatWidth;
+        s_PartialReduceSumDimensions[2] = reducedDim;
+
+        var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+        var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+        var O = NewTensor(Oshape);
+        var fn = BestKernel(ComputeKernelLibrary.PartialReduce(kernelName, flatHeight, reducedDim, flatWidth));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.shader.SetInt("_UnrolledH", unrolledH);
+        fn.shader.SetInt("_UnrolledW", unrolledW);
+        fn.shader.SetInt("_ReducedDim", Oshape[axis]);
+        fn.shader.SetInts("_Pool", s_PartialReduceSumDimensions);
+
+        fn.Dispatch();
+        return O;
+    }
+
+    internal static int[] s_GlobalReduceSumDimensions = new int[3];
+
     /// <inheritdoc/>
-    protected override Tensor Reduce(string kernelName, Tensor X, int axis)
+    protected override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    {
+        axis = X.shape.Axis(axis);
+        int baseReducedDim = X.shape[axis];
+        var Oshape = X.shape.Reduce(axis);
+
+        while(X.shape[axis] > 64*4)
+        {
+            var lastLength = X.length;
+            X = ReducePartial(kernelName, X, axis);
+            Assert.IsTrue(X.length < lastLength);
+        }
+
+        ComputeReduceDispatchDim(X.shape, Oshape, axis, out int flatHeight, out int reducedDim, out int flatWidth);
+
+
+        s_GlobalReduceSumDimensions[0] = flatHeight;
+        s_GlobalReduceSumDimensions[1] = flatWidth;
+        s_GlobalReduceSumDimensions[2] = baseReducedDim;
+
+
+        var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+        var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+        var O = NewTensor(Oshape);
+        var fn = BestKernel(ComputeKernelLibrary.GlobalReduce(kernelName, flatHeight, reducedDim, flatWidth));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.shader.SetInt("_UnrolledH", unrolledH);
+        fn.shader.SetInt("_UnrolledW", unrolledW);
+        fn.shader.SetInt("_ReducedDim", reducedDim);
+        fn.shader.SetInts("_Pool", s_GlobalReduceSumDimensions);
+
+        fn.Dispatch();
+        return O;
+    }
+
+
+    // slow path for ArgMax/Min for now
+    private Tensor ReduceSlow(string kernelName, Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
 
@@ -1438,6 +1735,19 @@ public class ComputeOps : ReferenceComputeOps
 
         return O;
     }
+
+    /// <inheritdoc/>
+    public override Tensor ArgMax(Tensor X, int axis)
+    {
+        return ReduceSlow("ArgMax", X, axis);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ArgMin(Tensor X, int axis)
+    {
+        return ReduceSlow("ArgMin", X, axis);
+    }
+
 
     /// <inheritdoc/>
     protected override Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
@@ -1527,6 +1837,86 @@ public class ComputeOps : ReferenceComputeOps
         fn.SetTensor("O", O.shape, Pin(O).buffer);
 
         fn.Dispatch();
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Transpose(Tensor X)
+    {
+        Assert.IsTrue(X.dimensions <= 2);
+
+        var O = NewTensor(X.flatWidth, X.flatHeight);
+        var fn = BestKernel(ComputeKernelLibrary.Transpose2D(O.shape));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+
+        fn.Dispatch();
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Transpose(Tensor X, int[] permutations)
+    {
+        if (!X.shape.Is4D() || permutations.Length != 4)
+            return Transpose8D(X, permutations);
+
+        Assert.AreEqual(permutations.Length, 4);
+
+        var O = NewTensor(X.shape.Permute(permutations));
+
+        var fn = BestKernel(ComputeKernelLibrary.Transpose(X.shape, O.shape));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+        fn.shader.SetInts("_Pool", permutations);
+
+        fn.Dispatch();
+
+        return O;
+    }
+
+    internal override Tensor Transpose8D(Tensor X, int[] permutations)
+    {
+        permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
+
+        // See: Permute() in ONNXTensor.cs and https://stackoverflow.com/a/32034565
+        var O = NewTensor(X.shape.Permute(permutations));
+
+        var OonDeviceShape = GetOnDeviceShape(O.shape);
+        var XonDeviceShape = GetOnDeviceShape(X.shape);
+        var onDevicePermutation = ConvertPermutationToDeviceLayout(permutations);
+
+        // outTensor strides
+        var reversePermute = new int[permutations.Length];
+        for (var i = 0; i < permutations.Length; ++i)
+            reversePermute[i] = Array.IndexOf(onDevicePermutation, i);
+        var tempOutStrides = new int[TensorShape.MaxRank+1];
+        tempOutStrides[8] = 1;
+        for (int i = 7; i >= 0; --i)
+            tempOutStrides[i] = tempOutStrides[i+1] * OonDeviceShape[i];
+        var outStride = new int[reversePermute.Length];
+        for (var i = 0; i < reversePermute.Length; ++i)
+            outStride[i] = tempOutStrides[reversePermute[i] + 1];
+
+        var d0_3  = new[] {XonDeviceShape[0], XonDeviceShape[1],XonDeviceShape[2],XonDeviceShape[3]};
+        var d4_7  = new[] {XonDeviceShape[4], XonDeviceShape[5],XonDeviceShape[6],XonDeviceShape[7]};
+        var outStride0_3 = new[] {outStride[0],outStride[1],outStride[2],outStride[3]};
+        var outStride4_7 = new[] {outStride[4],outStride[5],outStride[6],outStride[7]};
+
+        var fn = BestKernel(ComputeKernelLibrary.Transpose8D(X.shape, O.shape, ComputeInfo.channelsOrder));
+
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+
+        fn.shader.SetInts("_Pad", d0_3);
+        fn.shader.SetInts("_Pool", d4_7);
+        fn.shader.SetInts("_Stride", outStride0_3);
+        fn.shader.SetInts("_ChannelWriteMask", outStride4_7);
+
+        fn.Dispatch();
+
         return O;
     }
 
@@ -1670,6 +2060,19 @@ public class ComputeOps : ReferenceComputeOps
     {
         var O = NewTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, "LogicalNot"));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O).buffer);
+
+        fn.Dispatch();
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sign(Tensor X)
+    {
+        var O = NewTensor(X.shape);
+        var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, "Sign"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("O", O.shape, Pin(O).buffer);

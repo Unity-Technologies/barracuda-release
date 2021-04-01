@@ -94,12 +94,45 @@ namespace Unity.Barracuda.ONNX
                 return Convert(inputStream);
         }
 
+        // Legacy LSTM importer automagically split input nodes and added output nodes when they didn't exist in the
+        // network, which is no longer supported
+        bool IsLegacyMLAgentsLSTMNetwork(ModelProto onnxModel)
+        {
+            GraphProto graph = onnxModel.Graph;
+            // Hallway-lstm.onnx - legacy importer splits recurrent_in to recurrent_in_c and recurrent_in_h
+            if (onnxModel.ProducerName == "tf2onnx"
+                && graph.Input.Any(i => i.Name.Contains("recurrent_in"))
+                && graph.Output.Any(o => o.Name.Contains("recurrent_out")))
+                return true;
+
+            // Hallway.onnx - legacy importer splits memories to memories_c and memories_h;
+            // adds output node recurrent_out_<nn>_c and recurrent_out_<nn>_h
+            NodeProto lstmNode = graph.Node.FirstOrDefault(n => n.OpType == "LSTM");
+            if (onnxModel.ProducerName == "pytorch"
+                && graph.Input.Any(i => i.Name.Contains("memories"))
+                && lstmNode.Output.Count == 3
+                && !graph.Node.Any(n => n.Name == lstmNode.Output[1]) // missing output cell and hidden nodes
+                && !graph.Node.Any(n => n.Name == lstmNode.Output[2]))
+                return true;
+
+            return false;
+        }
+
         internal Model Convert(CodedInputStream inputStream)
         {
             var onnxModel = new ModelProto();
             onnxModel.MergeFrom(inputStream);
 
-            m_FixTf2OnnxExportIssues = (onnxModel.ProducerName == "tf2onnx");
+            m_FixTf2OnnxExportIssues = onnxModel.ProducerName == "tf2onnx";
+
+            bool legacyMLAgentsLSTMNetwork = IsLegacyMLAgentsLSTMNetwork(onnxModel);
+            if (legacyMLAgentsLSTMNetwork)
+                m_ImportMode = ImportMode.Legacy;
+
+            if (m_ImportMode.HasFlag(ImportMode.Standard))
+                UseStandardImporter();
+            else
+                UseLegacyImporter();
 
             var model = ConvertOnnxModel(onnxModel);
             if (m_ImportMode.HasFlag(ImportMode.Standard))
@@ -119,6 +152,9 @@ namespace Unity.Barracuda.ONNX
                     runnableNHWCPass.Run(ref model);
                 }
             }
+
+            if (legacyMLAgentsLSTMNetwork)
+                model.Warnings.Add(new Model.ImporterWarning("model", "Using legacy importer since legacy LSTM network was detected; Support will be removed in Barracuda v2.0"));
 
             return model;
         }
@@ -141,11 +177,6 @@ namespace Unity.Barracuda.ONNX
             m_TreatErrorsAsWarnings = treatErrorsAsWarnings;
             m_ForceArbitraryBatchSize = forceArbitraryBatchSize;
             m_ImportMode = importMode;
-
-            if (m_ImportMode.HasFlag(ImportMode.Standard))
-                UseStandardImporter();
-            else
-                UseLegacyImporter();
         }
 
         void UseStandardImporter()
@@ -221,14 +252,9 @@ namespace Unity.Barracuda.ONNX
             Add("Expand", (net, node) => {
                 if (node.IsInput1Const)
                 {
-                    var onnxShape = node.Input1Constant(onnxLayout: "ONNX", name: "shape").AsInts();
-                    var symbolicShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "ONNX");
-                    bool containsNoVariableDimensions = !symbolicShape.Any(v => v == -1);
-                    if (containsNoVariableDimensions && m_ForceArbitraryBatchSize)
-                        symbolicShape[TensorShape.DataBatch] = -1; // force arbitrary batch size
-
-                    net.Expand(node.Name, node.Input0, symbolicShape);
-                    Output(node, rank: symbolicShape.Length);
+                    var onnxShape = node.Input1Constant(onnxLayout: "C", name: "shape").AsInts();
+                    net.Expand(node.Name, node.Input0, onnxShape);
+                    Output(node, rank: onnxShape.Length);
                 }
                 else
                 {
@@ -327,16 +353,27 @@ namespace Unity.Barracuda.ONNX
                 int[] starts, ends, axes, steps;
                 if (node.InputCount > 1) // Slice-10
                 {
-                    var constStarts      = node.Input1Constant(onnxLayout: "ONNX", name:"starts");
-                    var constEnds        = node.Input2Constant(onnxLayout: "ONNX", name:"ends");
-                    var defaultAxes = new Tensor(constStarts.shape, Enumerable.Range(0, constStarts.length).Select(v => (float)v).ToArray());
-                    var constAxes        = node.Input3ConstantOptional(defaultAxes, onnxLayout:"ONNX", name:"axes");
-                    var constSteps       = node.Input4ConstantOptional(constStarts.shape, 1.0f, onnxLayout:"ONNX", name:"steps");
+                    if (!node.IsInput1Const || !node.IsInput2Const)
+                    {
+                        if(node.InputCount == 5)
+                            net.StridedSlice(node.Name, node.Input0, starts: node.Input1, ends: node.Input2, strides: node.Input4, axes: node.Input3);
+                        else if (node.InputCount == 3)
+                            net.StridedSlice(node.Name, node.Input0, starts: node.Input1, ends: node.Input2, strides: null, axes: null);
+                    }
+                    else
+                    {
+                        var constStarts = node.Input1Constant(onnxLayout: "ONNX", name: "starts");
+                        var constEnds = node.Input2Constant(onnxLayout: "ONNX", name: "ends");
+                        var defaultAxes = new Tensor(constStarts.shape, Enumerable.Range(0, constStarts.length).Select(v => (float)v).ToArray());
+                        var constAxes = node.Input3ConstantOptional(defaultAxes, onnxLayout: "ONNX", name: "axes");
+                        var constSteps = node.Input4ConstantOptional(constStarts.shape, 1.0f, onnxLayout: "ONNX", name: "steps");
 
-                    starts  = constStarts.AsInts();
-                    ends    = constEnds.AsInts();
-                    axes    = constAxes.AsInts();
-                    steps   = constSteps.AsInts();
+                        starts = constStarts.AsInts();
+                        ends = constEnds.AsInts();
+                        axes = constAxes.AsInts();
+                        steps = constSteps.AsInts();
+                        net.StridedSlice(node.Name, node.Input0, starts: starts, ends: ends, strides: steps, axes: axes);
+                    }
                 }
                 else // Slice-1
                 {
@@ -344,9 +381,8 @@ namespace Unity.Barracuda.ONNX
                     ends        = node.Ends;
                     axes        = node.AxesOptional(Enumerable.Range(0, starts.Length).ToArray());
                     steps       = Enumerable.Repeat(1, starts.Length).ToArray();
+                    net.StridedSlice(node.Name, node.Input0, starts: starts, ends: ends, strides: steps, axes: axes);
                 }
-
-                net.StridedSlice(node.Name, node.Input0, starts: starts, ends: ends, strides: steps, axes: axes);
             });
             Add("Gather", (net, node) =>
             {
@@ -471,22 +507,55 @@ namespace Unity.Barracuda.ONNX
             });
             Add("LSTM", (net, node) =>
             {
-                var W = node.Input1Constant(onnxLayout: "RKC", name: "W");
-                var R = node.Input2Constant(onnxLayout: "RKC", name: "R");
-                var B = node.Input3Constant(onnxLayout: "RC", name: "B");
+                node.UnsupportedAttribute("activation_alpha");
+                node.UnsupportedAttribute("activation_beta");
+                node.UnsupportedAttribute("activations", new[] { "Sigmoid", "Tanh", "Tanh" }); // Only Sigmoid is supported for now
+                node.UnsupportedAttribute("clip");
+                node.UnsupportedAttribute("direction", "forward"); // Only forward direction supported
+                node.UnsupportedAttribute("input_forget");
+                node.UnsupportedAttribute("layout"); // alternate layout not supported
+
                 int hiddenSize = node.GetRequiredInt("hidden_size");
+                string[] nodeInputs = node.Inputs;
+                int inputCount = nodeInputs.Length;
 
-                // We're resolving the base input and output names ahead-of-time for later conversion
-                var baseLSTMName = ResolveLstmInputName(node);
-                var baseLSTMOutputName = ResolveLstmOutputName(node);
+                object W = node.Input1;
+                if (node.IsInput1Const)
+                    W = node.Input1Constant(onnxLayout: "RKC", name: "W");
 
-                // 0-2 are real inputs, 3-4 are being stored here for convenience
-                string[] outputs = { node.Outputs[0], node.Outputs[1], node.Outputs[2], baseLSTMName, baseLSTMOutputName };
-                net.LSTM(node.Name, node.Input0, outputs, W, R, B, hiddenSize);
+                object R = node.Input2;
+                if (node.IsInput2Const)
+                    R = node.Input2Constant(onnxLayout: "RKC", name: "R");
 
-                Output(node.Outputs[0], rank:2); // Actually rank 4, but needs to be 2 for how we handle this layer
-                Output(node.Outputs[1], rank:2); // Actually rank 3, but needs to be 2 for how we handle this layer
-                Output(node.Outputs[2], rank:2); // Actually rank 3, but needs to be 2 for how we handle this layer
+                object B = node.Input3Optional;
+                if (inputCount > 3 && node.IsInput3Const)
+                {
+                    B = node.Input3Constant(onnxLayout: "RC", name: "B");
+                }
+                else if (string.IsNullOrEmpty((string)B))
+                {
+                    var tensor = new Tensor(new TensorShape(1, 8 * hiddenSize));
+                    tensor.Fill(0);
+                    B = net.Const($"Const_{node.Name}_B", tensor, rank: 2);
+                }
+
+                int outputCount = node.Outputs.Length;
+                string[] outputs = { node.Outputs[0],
+                    outputCount > 1 ? node.Outputs[1] : null,
+                    outputCount > 2 ? node.Outputs[2] : null };
+
+                string initialHidden = inputCount > 5 && !string.IsNullOrEmpty(nodeInputs[5]) ? node.Input5Optional : null;
+                string initialCell = inputCount > 6 && !string.IsNullOrEmpty(nodeInputs[6]) ? node.Input6Optional : null;
+
+                net.LSTM(node.Name, node.Input0, outputs, W, R, B, hiddenSize, initialHidden, initialCell);
+
+                Output(node.Outputs[0], rank:2); // Actually rank 4, but needs to be 2 for how we handle this layer (re-evaluate?)
+
+                if (outputCount > 1)
+                    Output(node.Outputs[1], rank:2); // Actually rank 3, but needs to be 2 for how we handle this layer (re-evaluate?)
+
+                if (outputCount > 2)
+                    Output(node.Outputs[2], rank:2); // Actually rank 3, but needs to be 2 for how we handle this layer (re-evaluate?)
             });
 
             // Activation ops
@@ -592,6 +661,7 @@ namespace Unity.Barracuda.ONNX
             Add("Or", (net, node)      => { net.LogicalOr(node.Name, node.Input0, node.Input1); });
             Add("And", (net, node)     => { net.LogicalAnd(node.Name, node.Input0, node.Input1); });
             Add("Not", (net, node)     => { net.LogicalNot(node.Name, node.Input0); });
+            Add("Sign", (net, node)    => { net.Sign(node.Name, node.Input0); });
             Add("Xor", (net, node)     => { net.LogicalXor(node.Name, node.Input0, node.Input1); });
             Add("Where", (net, node)   => { net.Where(node.Name, node.Input0, node.Input1, node.Input2); });
 
@@ -750,27 +820,8 @@ namespace Unity.Barracuda.ONNX
                 Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
             });
             Add("MatMul", (net, node)   => {
-                // TODO, make that distinction latter on in rank inference
-                if (node.InputCount == 2 && !node.IsInput1Const || node.Input0Rank != 2 || node.Input1Rank != 2)
-                {
-                    // if inputs are const, need to transpose them
-                    if (node.IsInput1Const)
-                    {
-                        var Y = constantTensors[node.Input1].ToBarracuda("ONNX");
-                        net.Const(node.Input1, Y, insertionIndex:-1, rank:node.Input1Rank);
-                    }
-                    net.MatMul(node.Name, node.Input0, node.Input1);
-                    Output(node, features: node.Input0Features, rank: Math.Max(node.Input0Rank, node.Input1Rank));
-                }
-                else
-                {
-                    var weights = node.Input1Constant(onnxLayout: "CK", name: "B");
-                    var biases = node.DefaultTensor(Bias(weights.shape), 0.0f);
-                    // Change data layout from "channels first" to "channels last"
-                    //weights = SwapSpatialDimensionsAndFeaturesInMatMulWeights(weights, node.Input0Features, node.Input0Layout);
-                    net.Dense(node.Name, node.Input0, weights, biases);
-                    Output(node, features: weights.channels, rank: 2); // MatMul forces flatten of the input to rank 2
-                }
+                net.MatMul(node.Name, node.Input0, node.Input1);
+                Output(node, features: node.Input0Features, rank: Math.Max(node.Input0Rank, node.Input1Rank));
             });
             Add("Conv", (net, node)     => {
                 int[] dilationsDHW = new[] { 1, 1, 1 }; // @TODO trap on wrong values
@@ -2547,6 +2598,62 @@ namespace Unity.Barracuda.ONNX
         private readonly Dictionary<string, Action<ModelBuilder, ONNXNodeWrapper>> m_NodeImporters =
             new Dictionary<string, Action<ModelBuilder, ONNXNodeWrapper>>();
 
+        // NOTE: It's questionable whether we should be doing this since the ONNX specification requires the graph to be
+        // topologically sorted, but at least one network encountered that was exported from keras2onnx v1.7.0 produced
+        // an incorrectly sorted graph. related example: https://github.com/onnx/keras-onnx/issues/184
+        void SortTopologically(ModelProto onnxModel, List<NodeProto> sortedGraph)
+        {
+            var nodesToSort = new Queue<NodeProto>();
+            GraphProto onnxGraph = onnxModel.Graph;
+            foreach (NodeProto node in onnxGraph.Node)
+            {
+                nodesToSort.Enqueue(node);
+            }
+
+            var requeueNodes = new Queue<NodeProto>();
+            while (nodesToSort.Count > 0)
+            {
+                NodeProto node = nodesToSort.Dequeue();
+
+                var allInputsExist = true;
+                foreach (string input in node.Input)
+                {
+                    if (string.IsNullOrEmpty(input))
+                        continue;
+
+                    if (!sortedGraph.Exists(n => n.Output.Any(o => o == input))
+                        && !onnxGraph.Input.Any(i => i.Name == input)
+                        && !onnxGraph.Initializer.Any(i => i.Name == input))
+                    {
+                        allInputsExist = false;
+                        break;
+                    }
+                }
+
+                if (!allInputsExist)
+                {
+                    if (nodesToSort.Count != 0)
+                    {
+                        // Mark for re-processing again when (potentially) all inputs have been processed
+                        // We use a separate list, so we don't continually spin on nodes that are missing inputs
+                        if (!requeueNodes.Contains(node))
+                            requeueNodes.Enqueue(node);
+                        continue;
+                    }
+
+                    // Something must've gone wrong
+                    throw new OnnxImportException($"Missing inputs to node {node.Name}, but there are no nodes to process.");
+                }
+
+                if (!sortedGraph.Contains(node))
+                    sortedGraph.Add(node);
+
+                // Now that we have at least processed a single new node, let's requeue
+                while (requeueNodes.Count > 0)
+                    nodesToSort.Enqueue(requeueNodes.Dequeue());
+            }
+        }
+
         private Model ConvertOnnxModel(ModelProto onnxModel)
         {
             var model = new Model();
@@ -2555,7 +2662,7 @@ namespace Unity.Barracuda.ONNX
             var modelBuilder = new ModelBuilder(model);
 
             // Builds list of nodes that should not be included into the final Barracuda Model, mostly for LSTMs
-            var nodesToSkip = BuildNodeSkipList(onnxModel.Graph);
+            var nodesToSkip = standardImport ? new HashSet<string>() : BuildNodeSkipList(onnxModel.Graph);
 
             // Convert graph inputs & outputs
             var initializersByName = onnxModel.Graph.Initializer.ToDictionary(i => i.Name, i => true);
@@ -2563,10 +2670,10 @@ namespace Unity.Barracuda.ONNX
             {
                 // skip input tensors that have initializer data, they are constant tensors not global inputs
                 // also skip nodes that should be trimmed
-                if (initializersByName.ContainsKey(i.Name) || nodesToSkip.Contains(i.Name))
+                if (initializersByName.ContainsKey(i.Name) || (!standardImport && nodesToSkip.Contains(i.Name)))
                     continue;
 
-                if (m_OverrideGlobalInputs.ContainsKey(i.Name))
+                if (!standardImport && m_OverrideGlobalInputs.ContainsKey(i.Name))
                 {
                     Const(i.Name, m_OverrideGlobalInputs[i.Name]);
                     continue;
@@ -2584,10 +2691,22 @@ namespace Unity.Barracuda.ONNX
             foreach (TensorProto initializer in onnxModel.Graph.Initializer)
                 Const(initializer.Name, new ONNXTensor(initializer));
 
-            // Convert graph nodes
-            foreach (NodeProto onnxNode in onnxModel.Graph.Node)
+            // Nodes are supposed to be sorted, but this isn't always the case
+            var sortedGraph = new List<NodeProto>();
+            if (standardImport)
             {
-                if (nodesToSkip.Contains(ONNXNodeWrapper.GetName(onnxNode)))
+                SortTopologically(onnxModel, sortedGraph);
+            }
+            else
+            {
+                // for the legacy import pipeline, let's keep it as it was
+                sortedGraph.AddRange(onnxModel.Graph.Node);
+            }
+
+            // Convert graph nodes
+            foreach (NodeProto onnxNode in sortedGraph)
+            {
+                if (!standardImport && nodesToSkip.Contains(ONNXNodeWrapper.GetName(onnxNode)))
                     continue;
 
                 var node = new ONNXNodeWrapper(onnxNode, m_ModelTensors, model.Warnings);
@@ -2844,6 +2963,7 @@ namespace Unity.Barracuda.ONNX
             }
         }
 
+        // TODO: Remove along with legacy importer in Barracuda 2.0
         private HashSet<string> BuildNodeSkipList(GraphProto graph)
         {
             var res = new HashSet<string>();

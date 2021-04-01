@@ -14,6 +14,9 @@
 
 #pragma kernel MatMulPackB0Bias
 
+#pragma kernel Dense_V_L1Cached64
+
+
 #include "Tensor.cginc"
 
 TENSOR_DECL(X)
@@ -21,9 +24,9 @@ TENSOR_DECL(W)
 TENSOR_DECL(B)
 TENSOR_DECL(WBK)
 TENSOR_DECL_RW(O)
+float ffma(float a, float b, float c) { return dot(float2(a, c), float2(b, 1)); } //return a*b+c;} //fastfma(a,b,c); }
 
 #if DENSE
-float ffma(float a, float b, float c) { return dot(float2(a,c), float2(b,1)); } //return a*b+c;} //fastfma(a,b,c); }
 #define FUNC_NAME_CALL(KERNEL, SIZE) KERNEL##SIZE##x##SIZE
 #define FUNC_NAME(KERNEL, SIZE) FUNC_NAME_CALL(KERNEL, SIZE)
 #define CACHE_NAME_CALL(KERNEL, SIZE, TENSOR) KERNEL##SIZE##x##SIZE##_Cache_##TENSOR
@@ -1390,6 +1393,7 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThre
 #undef CACHESIZE
 #define CACHESIZE 64
 groupshared float Dense_L1Cached64_X[CACHESIZE];
+
 [numthreads(CACHESIZE, 1, 1)]
 void Dense_L1Cached64(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID)
 {
@@ -1831,4 +1835,52 @@ void MatMulPackB0Bias(uint3 dispatchThreadID : SV_DispatchThreadID)
     float v = X.Get(y, x);
     O.Set(y, x, v);
     O.FastSet(O.GetLength() + x, 0.0f);
+}
+
+
+
+#undef CACHESIZE
+#undef LDS_
+#undef X_OFFSET
+#undef W_OFFSET
+#define CACHESIZE 64
+groupshared float Dense_V_L1Cached64_LDS[CACHESIZE];
+
+[numthreads(64, 1, 1)]
+void Dense_V_L1Cached64(uint3 groupID : SV_GroupID, uint threadIndex : SV_GroupIndex, uint3 groupThreadID : SV_GroupThreadID)
+{
+    //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
+    TENSOR_SHARED2_ARGS4(X, W, B, WBK, O);
+
+#define LDS_ Dense_V_L1Cached64_LDS
+
+    uint ti = threadIndex;
+
+    uint bx = CACHESIZE * groupID.x + ti;
+
+    float dstO = B.FastGet(min(bx, O.GetFlatWidth() - 1));
+
+    // loop over X columns (flatWidth) and W rows (height) in CACHESIZE steps
+    for (uint i = 0; i < X.GetFlatWidth(); i += CACHESIZE)
+    {
+        // Cache X
+        // coalescent reads
+        LDS_[ti] = X.FastGet(min(i + ti, X.GetFlatWidth() - 1));
+
+        GroupMemoryBarrierWithGroupSync();
+
+        // X * W
+        [unroll]
+        for (uint di = 0; di < CACHESIZE; ++di)
+        {
+            dstO = fastfma(LDS_[di], W.MaskedGet((i + di) < W.GetFlatHeight(), bx + (i + di)*W.GetFlatWidth()), dstO);
+        }
+
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    if(bx < O.GetFlatWidth())
+        O.FastSetWithActivation(bx, dstO);
+
+#undef LDS_
 }

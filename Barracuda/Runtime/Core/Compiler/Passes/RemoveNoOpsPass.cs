@@ -85,7 +85,8 @@ namespace Unity.Barracuda.Compiler.Passes.Cleanup
                         && layer.pad.All(s => s == 0)
                         && layer.pool.All(e => e == int.MaxValue)
                         && layer.stride.All(s => s == 1))) ||
-                   (layer.type == Layer.Type.Transpose && Enumerable.SequenceEqual(layer.pool, new [] { 0, 1, 2, 3 }));
+                   (layer.type == Layer.Type.Transpose && Enumerable.SequenceEqual(layer.pool, new [] { 0, 1, 2, 3 })) ||
+                   (layer.type == Layer.Type.Expand && layer.inputs.Length == 1 && layer.pool.Length >= 1 && layer.pool.All(x => x == 1));
         }
     }
 }

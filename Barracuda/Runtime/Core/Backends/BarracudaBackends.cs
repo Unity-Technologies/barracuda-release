@@ -40,6 +40,18 @@ public interface IOps
     Tensor Dense(Tensor x, Tensor w, Tensor b, Layer.FusedActivation fusedActivation);
 
     /// <summary>
+    /// rank3 Dense layer (matrix multiplication) o = `x` ⨯ `w` + `b`
+    /// O: N,_,W,C / X: N,_,W,C / W:N,_,_,C / B:N,_,_,_
+    /// </summary>
+    /// <param name="x">x argument (rank3)</param>
+    /// <param name="w">w argument (rank2)</param>
+    /// <param name="b">bias argument (rank1)</param>
+    /// <param name="fusedActivation">fused activation type</param>
+    /// <returns>output Tensor</returns>
+    Tensor Dense3(Tensor x, Tensor w, Tensor b);
+
+
+    /// <summary>
     /// 2D convolution
     /// </summary>
     /// <param name="x">input</param>
@@ -450,6 +462,13 @@ public interface IOps
     Tensor Floor(Tensor x);
 
     /// <summary>
+    /// Round to nearest integer. In case of halfs, round to nearest even integer
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <returns>output Tensor</returns>
+    Tensor Round(Tensor x);
+
+    /// <summary>
     /// Reciprocal (1/x)
     /// </summary>
     /// <param name="x">input</param>
@@ -756,6 +775,13 @@ public interface IOps
     Tensor Where(Tensor c, Tensor a, Tensor b);
 
     /// <summary>
+    /// Sign
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <returns>Tensor with 1 if x > 0 -1 if < 0 and 0 if == 0 values</returns>
+    Tensor Sign(Tensor x);
+
+    /// <summary>
     /// Flatten
     /// </summary>
     /// <param name="x">input</param>
@@ -839,12 +865,33 @@ public interface IOps
     Tensor NonMaxSuppression(Tensor[] tensors, int maxOutputBoxesPerClass, float iouThreshold, float scoreThreshold, int centerPointBox);
 
     /// <summary>
+    /// LSTM
+    /// </summary>
+    /// <param name="X">The input sequences packed into one 3-D tensor.</param>
+    /// <param name="W">W parameter weight matrix for input, output, forget, and cell gates - W[iofc]</param>
+    /// <param name="R">R recurrence weight matrix for input, output, forget, and cell gates - R[iofc]</param>
+    /// <param name="Wb">W bias vectors for input, output, forget, and cell gates - Wb[iofc]</param>
+    /// <param name="Rb">R bias vectors for input, output, forget, and cell gates - Rb[iofc]</param>
+    /// <param name="hidden">Initial value of the hidden</param>
+    /// <param name="cell">Initial value of the cell</param>
+    /// <returns>[Y (concatenated intermediate values of the hidden), Y_h (final hidden), Y_c (final cell)]</returns>
+    Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell);
+
+    /// <summary>
     /// Shape of the `input`
     /// </summary>
     /// <param name="X">input</param>
     /// <param name="axis">axis</param>
     /// <returns>output Tensor</returns>
     Tensor Shape(Tensor X, int axis = -1);
+
+    /// <summary>
+    /// Creates a constant of shape `input`
+    /// </summary>
+    /// <param name="X">input shape</param>
+    /// <param name="value">value</param>
+    /// <returns>output Tensor</returns>
+    Tensor ConstantOfShape(TensorShape X, float value = 0.0f);
 
     /// <summary>
     /// Copy

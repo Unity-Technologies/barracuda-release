@@ -877,7 +877,7 @@ public static class TensorExtensions
             else
                 sliced[i] = counts[i];
             if (stride[i] != 0 && stride[i] < counts[i])
-                sliced[i] /= stride[i];
+                sliced[i] = (int)Mathf.Ceil(sliced[i] / (float)stride[i]);
             else
                 sliced[i] = 1;
 

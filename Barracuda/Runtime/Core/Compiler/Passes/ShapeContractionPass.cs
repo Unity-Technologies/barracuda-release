@@ -6,7 +6,7 @@ using UnityEngine.Assertions;
 
 namespace Unity.Barracuda.Compiler.Passes
 {
-    class ShapeGatherContractionPass : IModelPass
+    class ShapeContractionPass : IModelPass
     {
         public void Run(ref Model model)
         {
@@ -45,6 +45,14 @@ namespace Unity.Barracuda.Compiler.Passes
                             remap[layer.name] = previousLayer.name;
                         }
                     }
+                }
+                else if (previousLayer.type == Layer.Type.Shape
+                    && layer.type == Layer.Type.ConstantOfShape)
+                {
+                    layer.axis = 1;
+                    layer.type = Layer.Type.ConstantOfShape;
+                    layer.inputs[0] = previousLayer.inputs[0];
+                    remap[previousLayer.name] = layer.name;
                 }
             }
 

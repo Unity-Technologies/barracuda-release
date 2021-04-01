@@ -59,11 +59,13 @@ namespace Unity.Barracuda
                 new string[]
                 {
                     "Abs_Flat", "Abs_FlatStrict", "Abs_Loop", "Neg_Flat", "Neg_FlatStrict", "Neg_Loop", "Ceil_Flat",
-                    "Ceil_FlatStrict", "Ceil_Loop", "Floor_Flat", "Floor_FlatStrict", "Floor_Loop", "Selu_Flat",
+                    "Ceil_FlatStrict", "Ceil_Loop", "Floor_Flat", "Floor_FlatStrict", "Floor_Loop",
+                    "Round_Flat", "Round_FlatStrict", "Round_Loop", "Selu_Flat",
                     "Selu_FlatStrict", "Selu_Loop", "Softplus_Flat", "Softplus_FlatStrict", "Softplus_Loop", "Elu_Flat",
                     "Elu_FlatStrict", "Elu_Loop", "Exp_Flat", "Exp_FlatStrict", "Exp_Loop", "Log_Flat",
                     "Log_FlatStrict", "Log_Loop", "Pow_Flat", "Pow_FlatStrict", "Pow_Loop", "LogicalNot_Flat",
-                    "LogicalNot_FlatStrict", "LogicalNot_Loop", "Acos_Flat", "Acos_FlatStrict", "Acos_Loop",
+                    "LogicalNot_FlatStrict", "LogicalNot_Loop",  "Sign_Flat", "Sign_FlatStrict", "Sign_Loop",
+                    "Acos_Flat", "Acos_FlatStrict", "Acos_Loop",
                     "Acosh_Flat", "Acosh_FlatStrict", "Acosh_Loop", "Asin_Flat", "Asin_FlatStrict", "Asin_Loop",
                     "Asinh_Flat", "Asinh_FlatStrict", "Asinh_Loop", "Atan_Flat", "Atan_FlatStrict", "Atan_Loop",
                     "Atanh_Flat", "Atanh_FlatStrict", "Atanh_Loop", "Cos_Flat", "Cos_FlatStrict", "Cos_Loop",
@@ -157,7 +159,24 @@ namespace Unity.Barracuda
                 new[]
                 {
                     "Dense_L1Cached64", "DenseTiled16x16", "DenseTiled32x32", "DenseTiled64x64", "Dense_T8x8_R4x4",
-                    "Dense_T16x16_R4x4", "Dense_Tilled2x2_Cached", "Dense_Tilled4x4_Cached", "MatMulPackB0Bias"
+                    "Dense_T16x16_R4x4", "Dense_Tilled2x2_Cached", "Dense_Tilled4x4_Cached", "MatMulPackB0Bias",
+                    "Dense_V_L1Cached64"
+                });
+
+            RegisterKernels("Barracuda/MatMul",
+                new[]
+                {
+                    "MultidimMatMul_T16x16_R4x4_AR3_BR2_NHWC", "MultidimMatMul_T16x16_R4x4_AR3_BR2_NCHW",
+                    "MultidimMatMul_T8x8_R8x8_AR3_BR2_NHWC", "MultidimMatMul_T8x8_R8x8_AR3_BR2_NCHW",
+                    "MultidimMatMul_L1Cached64_AR3_BR2_NHWC", "MultidimMatMul_L1Cached64_AR3_BR2_NCHW"
+                });
+
+            RegisterKernels("Barracuda/Dense3",
+                new[]
+                {
+                    "Dense3_T8x8_R8x8_NHWC", "Dense3_T8x8_R8x8_NCHW",
+                    "Dense3_T8x16_R4x4_NHWC", "Dense3_T8x16_R4x4_NCHW",
+                    "Dense3_L1Cached64_NHWC", "Dense3_L1Cached64_NCHW"
                 });
 
             RegisterKernels("Barracuda/Generic",
@@ -179,6 +198,12 @@ namespace Unity.Barracuda
                     "Pad2DReflect_NCHW", "Pad2DSymmetric_NHWC", "Pad2DSymmetric_NCHW"
                 });
 
+            RegisterKernels("Barracuda/Transpose",
+                new[]
+                {
+                    "Transpose2D_NHWC","Transpose2D_NCHW","Transpose_NHWC","Transpose_NCHW","Transpose8D"
+                });
+
             RegisterKernels("Barracuda/Pool_NHWC",
                 new[]
                 {
@@ -198,9 +223,25 @@ namespace Unity.Barracuda
             RegisterKernels("Barracuda/Reduce",
                 new[]
                 {
-                    "ReduceMin_NHWC", "ReduceMin_NCHW", "ReduceMax_NHWC", "ReduceMax_NCHW", "ReduceSum_NHWC",
-                    "ReduceSum_NCHW", "ReduceMean_NHWC", "ReduceMean_NCHW", "ReduceProd_NHWC", "ReduceProd_NCHW",
-                    "ArgMax_NHWC", "ArgMax_NCHW", "ArgMin_NHWC", "ArgMin_NCHW"
+                    "PartialReduceMin", "PartialReduceMin_Loop",
+                    "GlobalReduceMin", "GlobalReduceMin_Loop",
+
+                    "PartialReduceMax", "PartialReduceMax_Loop",
+                    "GlobalReduceMax", "GlobalReduceMax_Loop",
+
+                    "PartialReduceSum", "PartialReduceSum_Loop",
+                    "GlobalReduceSum", "GlobalReduceSum_Loop",
+
+                    "PartialReduceMean", "PartialReduceMean_Loop",
+                    "GlobalReduceMean", "GlobalReduceMean_Loop",
+
+                    "PartialReduceProd", "PartialReduceProd_Loop",
+                    "GlobalReduceProd", "GlobalReduceProd_Loop"
+                });
+            RegisterKernels("Barracuda/ReduceSlow",
+                new[]
+                {
+                     "ArgMax_NHWC", "ArgMax_NCHW", "ArgMin_NHWC", "ArgMin_NCHW"
                 });
         }
 

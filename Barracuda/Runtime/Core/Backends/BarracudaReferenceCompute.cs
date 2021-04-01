@@ -1029,6 +1029,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
+        X = GetTensorInCurrentMemoryLayout(X);
+        Y = GetTensorInCurrentMemoryLayout(Y);
+
         // MatMul implementation in terms of Dense
         var A = (xTranspose) ? Transpose(X): X;
         var B = (yTranspose) ? Transpose(Y): Y;
@@ -1067,6 +1070,22 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        var Oshape = new TensorShape(X.batch, 1, W.channels, X.channels);
+
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dense3");
+
+        SetTensor(fn, "X", X);
+        SetTensor(fn, "W", W);
+        SetTensor(fn, "B", B);
+
+        var O = Dispatch(fn, Oshape, Oshape.width, Oshape.channels, Oshape.batch);
 
         return O;
     }
@@ -1745,6 +1764,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     /// <inheritdoc/>
+    public override Tensor Round(Tensor X)
+    {
+        return Activation("Round", X);
+    }
+
+    /// <inheritdoc/>
     public override Tensor Reciprocal(Tensor X)
     {
         return Activation("Reciprocal", X);
@@ -1962,11 +1987,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <param name="X">input</param>
     /// <param name="axis">axis</param>
     /// <returns>output `Tensor`</returns>
-    protected virtual Tensor Reduce(string kernelName, Tensor X, int axis)
+    internal static readonly Dictionary<Layer.Type, string> s_ReduceRefKernelNames = new Dictionary<Layer.Type, string> {
+        {Layer.Type.ReduceMax, "ReduceMax"}, {Layer.Type.ReduceMean, "ReduceMean"},
+        {Layer.Type.ReduceMin, "ReduceMin"}, {Layer.Type.ReduceProd, "ReduceProd"},
+        {Layer.Type.ReduceSum, "ReduceSum"}, {Layer.Type.ArgMax, "ArgMax"},
+        {Layer.Type.ArgMin, "ArgMin"}
+    };
+    protected virtual Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
 
-        //TODO optimize when reducing not on channel.
         bool needTranpose = axis != TensorShape.C;
         FillReducePermute(axis);
 
@@ -1976,7 +2006,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var oShape = X.shape.Reduce(TensorShape.C);
         Assert.AreEqual(oShape.channels, 1);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, s_ReduceRefKernelNames[kernelName]);
         SetTensor(fn, "X", X);
 
         var O = Dispatch(fn, oShape, oShape.width, oShape.height, 1);
@@ -1990,43 +2020,43 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor ArgMax(Tensor X, int axis)
     {
-        return Reduce("ArgMax", X, axis);
+        return Reduce(Layer.Type.ArgMax, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ArgMin(Tensor X, int axis)
     {
-        return Reduce("ArgMin", X, axis);
+        return Reduce(Layer.Type.ArgMin, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceMin(Tensor X, int axis)
     {
-        return Reduce("ReduceMin", X, axis);
+        return Reduce(Layer.Type.ReduceMin, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceMax(Tensor X, int axis)
     {
-        return Reduce("ReduceMax", X, axis);
+        return Reduce(Layer.Type.ReduceMax, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceSum(Tensor X, int axis)
     {
-        return Reduce("ReduceSum", X, axis);
+        return Reduce(Layer.Type.ReduceSum, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceMean(Tensor X, int axis)
     {
-        return Reduce("ReduceMean", X, axis);
+        return Reduce(Layer.Type.ReduceMean, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceProd(Tensor X, int axis)
     {
-        return Reduce("ReduceProd", X, axis);
+        return Reduce(Layer.Type.ReduceProd, X, axis);
     }
 
     /// <inheritdoc/>
@@ -2100,6 +2130,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     /// <inheritdoc/>
+    public override Tensor Sign(Tensor X)
+    {
+        return Activation("Sign", X);
+    }
+
+    /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "BroadcastWhere");
@@ -2109,6 +2145,29 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "K", B);
 
         return Dispatch(fn, C.shape, C.channels, C.width, C.height);
+    }
+
+    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
+    {
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+            throw new NotImplementedException();
+
+        bool isInput1D = (X.flatWidth == 1);
+
+        TensorShape O = new TensorShape(); 
+        if (isInput1D)
+            O = new TensorShape(X.flatHeight, depth);
+        else
+            O = new TensorShape(X.flatHeight, 1, depth, X.flatWidth);
+
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "OneHot");
+
+        SetTensor(fn, "X", X);
+        fn.shader.SetFloat("_Alpha", onValue);
+        fn.shader.SetFloat("_Beta", offValue);
+        fn.shader.SetInt("_Axis", depth);
+
+        return Dispatch(fn, O, X.flatHeight, depth, X.flatWidth);
     }
 
     /// <summary>
@@ -2259,8 +2318,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return permutationChannelFirst;
     }
 
-    /// <inheritdoc/>
-    public Tensor Transpose8D(Tensor X, int[] permutations)
+    internal virtual Tensor Transpose8D(Tensor X, int[] permutations)
     {
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
 
@@ -2310,6 +2368,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         Assert.AreEqual(permutations.Length, 4);
 
+        X = GetTensorInCurrentMemoryLayout(X);
         var O = X.shape.Permute(permutations);
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose");
@@ -2408,6 +2467,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor StridedSlice(Tensor X, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D)
     {
+        X = GetTensorInCurrentMemoryLayout(X);
+
         unsafe
         {
             int* starts = stackalloc int[TensorShape.MaxRank];
@@ -2480,7 +2541,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 internal struct ComputeFunc
 {
     // dispatch dimension limitation coming from D3D11
-    const uint SafeDispatchLimit = 65535;
+    public static uint SafeDispatchLimit = 65535;
 
     public struct TensorDecl
     {

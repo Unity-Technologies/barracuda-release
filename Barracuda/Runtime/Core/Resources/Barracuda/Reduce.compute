@@ -1,145 +1,279 @@
-#pragma kernel ReduceMin_NHWC CHANNELS_FIRST=0
-#pragma kernel ReduceMin_NCHW CHANNELS_FIRST=1
-#pragma kernel ReduceMax_NHWC CHANNELS_FIRST=0
-#pragma kernel ReduceMax_NCHW CHANNELS_FIRST=1
-#pragma kernel ReduceSum_NHWC CHANNELS_FIRST=0
-#pragma kernel ReduceSum_NCHW CHANNELS_FIRST=1
-#pragma kernel ReduceMean_NHWC CHANNELS_FIRST=0
-#pragma kernel ReduceMean_NCHW CHANNELS_FIRST=1
-#pragma kernel ReduceProd_NHWC CHANNELS_FIRST=0
-#pragma kernel ReduceProd_NCHW CHANNELS_FIRST=1
-#pragma kernel ArgMax_NHWC CHANNELS_FIRST=0
-#pragma kernel ArgMax_NCHW CHANNELS_FIRST=1
-#pragma kernel ArgMin_NHWC CHANNELS_FIRST=0
-#pragma kernel ArgMin_NCHW CHANNELS_FIRST=1
+// TODO fast ArgMax
+#pragma kernel PartialReduceMin LOOP=0 REDUCEMIN PARTIALSUFFIX=PartialReduceMin
+#pragma kernel PartialReduceMin_Loop LOOP=1 REDUCEMIN PARTIALSUFFIX=PartialReduceMin
+#pragma kernel GlobalReduceMin LOOP=0 REDUCEMIN GLOBALSUFFIX=GlobalReduceMin
+#pragma kernel GlobalReduceMin_Loop LOOP=1 REDUCEMIN GLOBALSUFFIX=GlobalReduceMin
 
+#pragma kernel PartialReduceMax LOOP=0 REDUCEMAX PARTIALSUFFIX=PartialReduceMax
+#pragma kernel PartialReduceMax_Loop LOOP=1 REDUCEMAX PARTIALSUFFIX=PartialReduceMax
+#pragma kernel GlobalReduceMax LOOP=0 REDUCEMAX GLOBALSUFFIX=GlobalReduceMax
+#pragma kernel GlobalReduceMax_Loop LOOP=1 REDUCEMAX GLOBALSUFFIX=GlobalReduceMax
+
+#pragma kernel PartialReduceSum LOOP=0 REDUCESUM PARTIALSUFFIX=PartialReduceSum
+#pragma kernel PartialReduceSum_Loop LOOP=1 REDUCESUM PARTIALSUFFIX=PartialReduceSum
+#pragma kernel GlobalReduceSum LOOP=0 REDUCESUM GLOBALSUFFIX=GlobalReduceSum
+#pragma kernel GlobalReduceSum_Loop LOOP=1 REDUCESUM GLOBALSUFFIX=GlobalReduceSum
+
+#pragma kernel PartialReduceMean LOOP=0 REDUCEMEAN PARTIALSUFFIX=PartialReduceMean
+#pragma kernel PartialReduceMean_Loop LOOP=1 REDUCEMEAN PARTIALSUFFIX=PartialReduceMean
+#pragma kernel GlobalReduceMean LOOP=0 REDUCEMEAN GLOBALSUFFIX=GlobalReduceMean
+#pragma kernel GlobalReduceMean_Loop LOOP=1 REDUCEMEAN GLOBALSUFFIX=GlobalReduceMean
+
+#pragma kernel PartialReduceProd LOOP=0 REDUCEPROD PARTIALSUFFIX=PartialReduceProd
+#pragma kernel PartialReduceProd_Loop LOOP=1 REDUCEPROD PARTIALSUFFIX=PartialReduceProd
+#pragma kernel GlobalReduceProd LOOP=0 REDUCEPROD GLOBALSUFFIX=GlobalReduceProd
+#pragma kernel GlobalReduceProd_Loop LOOP=1 REDUCEPROD GLOBALSUFFIX=GlobalReduceProd
 
 #include "Tensor.cginc"
 #include "Random.cginc"
 
-#if CHANNELS_FIRST
-    #define FUNC_NAME_CALL(KERNEL, SUFFIX) KERNEL##SUFFIX##_NCHW
-#else
-    #define FUNC_NAME_CALL(KERNEL, SUFFIX) KERNEL##SUFFIX##_NHWC
-#endif
-#define FUNC_NAME(KERNEL, SUFFIX) FUNC_NAME_CALL(KERNEL, SUFFIX)
-
 TENSOR_DECL(X)
-TENSOR_DECL(W)
-TENSOR_DECL(K)
-TENSOR_DECL(B)
 TENSOR_DECL_RW(O)
 
-#define REDUCE(name, op_name, defaultValue, shouldNormalize) \
-[numthreads(4,4,1)] \
-void KERNEL_FUNC(name)(uint3 dispatchThreadID : SV_DispatchThreadID)\
-{\
-    TENSOR_ARGS3_8D(X, B, O);\
-\
-    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;\
-    if (w >= O.width) return;       if (h >= O.height) return;\
-\
-    for (uint s = 0; s < O.sequenceLength;     ++s)\
-    for (uint r = 0; r < O.numberOfDirections; ++r)\
-    for (uint n = 0; n < O.batch;              ++n)\
-    for (uint t = 0; t < O.extraDimension;     ++t)\
-    for (uint d = 0; d < O.depth;              ++d)\
-    {\
-        float v = defaultValue;\
-        for (uint c = 0; c < X.channels; ++c)\
-            v = op_name (v, X.Get8D(s,r,n,t,d,h,w,c) );\
-\
-        if (shouldNormalize)\
-            v /= X.channels;\
-        O.Set8D(s,r,n,t,d,h,w,0,v);\
-    }\
+uint _ReducedDim;
+uint3 _Pool;
+uint _UnrolledH;
+uint _UnrolledW;
+
+#undef REDUCE_FUNC_NAME
+#undef REDUCE_FUNC_NAME_CALL
+#if LOOP
+#define REDUCE_FUNC_NAME_CALL(KERNEL) KERNEL##_Loop
+#else
+#define REDUCE_FUNC_NAME_CALL(KERNEL) KERNEL
+#endif
+#define REDUCE_FUNC_NAME(KERNEL) REDUCE_FUNC_NAME_CALL(KERNEL)
+
+inline float ReduceDefaultValue()
+{
+#ifdef ARGMAX
+    return -FLT_MAX;
+#endif
+#ifdef ARGMIN
+    return FLT_MAX;
+#endif
+#ifdef REDUCEMIN
+    return FLT_MAX;
+#endif
+#ifdef REDUCEMAX
+    return -FLT_MAX;
+#endif
+#ifdef REDUCEPROD
+    return 1.0;
+#endif
+    return 0.0;
 }
 
-float ReduceMinOp(float v, float x)
+
+inline float ReduceOp(float v, float x)
 {
-    v = min(v, x);
+#ifdef ARGMAX
+    return max(v, x);
+#endif
+#ifdef ARGMIN
+    return min(v, x);
+#endif
+#ifdef REDUCEMIN
+    return min(v, x);
+#endif
+#ifdef REDUCEMAX
+    return max(v, x);
+#endif
+#ifdef REDUCESUM
+    return v + x;
+#endif
+#ifdef REDUCEMEAN
+    return v + x;
+#endif
+#ifdef REDUCEPROD
+    return v * x;
+#endif
     return v;
 }
-REDUCE(ReduceMin, ReduceMinOp, FLT_MAX, 0);
 
-float ReduceMaxOp(float v, float x)
+#undef POOL_SIZE
+#define POOL_SIZE 64
+
+groupshared float ReduceSum_PartialSum[POOL_SIZE];
+
+inline void PartialReduceSumInternalReduce(uint gty, uint s)
 {
-    v = max(v, x);
-    return v;
-}
-REDUCE(ReduceMax, ReduceMaxOp, -FLT_MAX, 0);
-
-float ReduceSumOp(float v, float x)
-{
-    v += x;
-    return v;
-}
-REDUCE(ReduceSum, ReduceSumOp, 0, 0);
-REDUCE(ReduceMean, ReduceSumOp, 0, 1);
-
-float ReduceProdOp(float v, float x)
-{
-    v *= x;
-    return v;
-}
-REDUCE(ReduceProd, ReduceProdOp, 1, 0);
-
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ArgMax)(uint3 dispatchThreadID : SV_DispatchThreadID)
-{
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3_8D(X, B, O);
-
-    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;
-    if (w >= O.width) return;       if (h >= O.height) return;
-
-    for (uint s = 0; s < O.sequenceLength;     ++s)
-        for (uint r = 0; r < O.numberOfDirections; ++r)
-            for (uint n = 0; n < O.batch;              ++n)
-                for (uint t = 0; t < O.extraDimension;     ++t)
-                    for (uint d = 0; d < O.depth;              ++d)
-                    {
-                        int maxIdx = 0;
-                        float maxV = X.Get8D(s,r,n,t,d,h,w,0);
-                        for (uint c = 1; c < X.channels; ++c)
-                        {
-                            float v = X.Get8D(s,r,n,t,d,h,w,c);
-                            if (v > maxV)
-                            {
-                                maxV = v;
-                                maxIdx = c;
-                            }
-                        }
-                        O.Set8D(s,r,n,t,d,h,w,0,maxIdx);
-                    }
+    if (gty < s)
+    {
+        ReduceSum_PartialSum[gty] = ReduceOp(ReduceSum_PartialSum[gty], ReduceSum_PartialSum[gty + s]);
+    }
+    GroupMemoryBarrierWithGroupSync();
 }
 
-[numthreads(4,4,1)]
-void KERNEL_FUNC(ArgMin)(uint3 dispatchThreadID : SV_DispatchThreadID)
+[numthreads(1, POOL_SIZE, 1)]
+void REDUCE_FUNC_NAME(PARTIALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    //DISPATCH ARGS(O.width, O.height, 1);
-    TENSOR_ARGS3_8D(X, B, O);
+    //DISPATCH ARGS(1, O.batch, O.flatwidth);
+    TENSOR_ARGS2(X, O);
 
-    uint w = dispatchThreadID.x;    uint h = dispatchThreadID.y;
-    if (w >= O.width) return;       if (h >= O.height) return;
+    uint flatHeight = dispatchThreadID.x;
+    uint flatWidth = dispatchThreadID.z;
 
-    for (uint s = 0; s < O.sequenceLength;     ++s)
-        for (uint r = 0; r < O.numberOfDirections; ++r)
-            for (uint n = 0; n < O.batch;              ++n)
-                for (uint t = 0; t < O.extraDimension;     ++t)
-                    for (uint d = 0; d < O.depth;              ++d)
-                    {
-                        int minIdx = 0;
-                        float minV = X.Get8D(s,r,n,t,d,h,w,0);
-                        for (uint c = 1; c < X.channels; ++c)
-                        {
-                            float v = X.Get8D(s,r,n,t,d,h,w,c);
-                            if (v < minV)
-                            {
-                                minV = v;
-                                minIdx = c;
-                            }
-                        }
-                        O.Set8D(s,r,n,t,d,h,w,0,minIdx);
-                    }
+    uint strideFlatHeight  = _Pool[0];
+    uint strideFlatWidth   = _Pool[1];
+    uint baseReducedLength = _Pool[2];
+
+    uint strideReducedDim = _ReducedDim;
+
+#if LOOP
+    uint strideFlatHeightUnroll = _UnrolledH;
+    uint strideFlatWidthUnroll  = _UnrolledW;
+#endif
+
+
+
+    uint gty = groupThreadID.y;
+    uint gy = groupId.y;
+
+    // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+    // half the number of blocks (x) replaced with 4 loads
+    uint y = gy * POOL_SIZE * 4 + gty;
+
+    float defaultValue = ReduceDefaultValue();
+
+#if LOOP
+    for (uint fhUnrolled = 0; fhUnrolled < strideFlatHeightUnroll; fhUnrolled++)
+    for (uint fwUnrolled = 0; fwUnrolled < strideFlatWidthUnroll; fwUnrolled++)
+#endif
+    {
+        #if LOOP
+        uint flatHeightIdx = (flatHeight * strideFlatHeightUnroll + fhUnrolled);
+        uint flatWidthIdx  = (flatWidth * strideFlatWidthUnroll + fwUnrolled);
+        float v0 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 0 * POOL_SIZE) < baseReducedLength) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * baseReducedLength + (y + 0 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        float v1 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 1 * POOL_SIZE) < baseReducedLength) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * baseReducedLength + (y + 1 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        float v2 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 2 * POOL_SIZE) < baseReducedLength) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * baseReducedLength + (y + 2 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        float v3 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 3 * POOL_SIZE) < baseReducedLength) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * baseReducedLength + (y + 3 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        #else
+        float v0 = X.MaskedGet((y + 0 * POOL_SIZE) < baseReducedLength, flatHeight * strideFlatWidth * baseReducedLength + (y + 0 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        float v1 = X.MaskedGet((y + 1 * POOL_SIZE) < baseReducedLength, flatHeight * strideFlatWidth * baseReducedLength + (y + 1 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        float v2 = X.MaskedGet((y + 2 * POOL_SIZE) < baseReducedLength, flatHeight * strideFlatWidth * baseReducedLength + (y + 2 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        float v3 = X.MaskedGet((y + 3 * POOL_SIZE) < baseReducedLength, flatHeight * strideFlatWidth * baseReducedLength + (y + 3 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        #endif
+        ReduceSum_PartialSum[gty] = ReduceOp(v0, ReduceOp(v1, ReduceOp(v2, v3)));
+
+        GroupMemoryBarrierWithGroupSync();
+
+        // sequential addressing
+        // mem = [x0...xn y0..yn]
+        //     = [x0+y0...xn+yn ...]
+        // last sum saved for last
+        // following code is unrolled:
+        // for s = (POOL_SIZE*POOL_SIZE) / 2; s > 1; s >>= 1
+        PartialReduceSumInternalReduce(gty, 32);
+        PartialReduceSumInternalReduce(gty, 16);
+        PartialReduceSumInternalReduce(gty, 8);
+        PartialReduceSumInternalReduce(gty, 4);
+        PartialReduceSumInternalReduce(gty, 2);
+
+        if (gty == 0)
+        {
+            float v = ReduceOp(ReduceSum_PartialSum[0], ReduceSum_PartialSum[1]);
+            #if LOOP
+            if ((flatHeightIdx < strideFlatHeight) && (flatWidthIdx < strideFlatWidth))
+                O.FastSet(flatHeightIdx * strideFlatWidth * strideReducedDim + gy * strideFlatWidth + flatWidthIdx, v);
+            #else
+            O.FastSet(flatHeight * strideFlatWidth * strideReducedDim + gy * strideFlatWidth + flatWidth, v);
+            #endif
+        }
+    }
+}
+
+#undef POOL_SIZE
+#define POOL_SIZE 64
+
+groupshared float GlobalReduceSum_PartialSum[POOL_SIZE];
+
+inline void GlobalReduceSumInternalReduce(uint gty, uint s)
+{
+    if (gty < s)
+    {
+        GlobalReduceSum_PartialSum[gty] = ReduceOp(GlobalReduceSum_PartialSum[gty], GlobalReduceSum_PartialSum[gty + s]);
+    }
+    GroupMemoryBarrierWithGroupSync();
+}
+
+[numthreads(1, POOL_SIZE, 1)]
+void REDUCE_FUNC_NAME(GLOBALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
+{
+    //DISPATCH ARGS(1, O.batch, O.flatwidth);
+    TENSOR_ARGS2(X, O);
+
+    uint flatHeight = dispatchThreadID.x;
+    uint flatWidth = dispatchThreadID.z;
+
+    uint strideFlatHeight  = _Pool[0];
+    uint strideFlatWidth   = _Pool[1];
+    uint baseReducedLength = _Pool[2];
+
+#if LOOP
+    uint strideFlatHeightUnroll = _UnrolledH;
+    uint strideFlatWidthUnroll = _UnrolledW;
+#endif
+
+    uint strideReducedDim = _ReducedDim;
+
+
+    uint gty = groupThreadID.y;
+    uint gy = groupId.y;
+
+    // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+    // half the number of blocks (x) replaced with 4 loads
+    uint y = gy * POOL_SIZE * 4 + gty;
+
+    float defaultValue = ReduceDefaultValue();
+
+#if LOOP
+    for (uint fhUnrolled = 0; fhUnrolled < strideFlatHeightUnroll; fhUnrolled++)
+    for (uint fwUnrolled = 0; fwUnrolled < strideFlatWidthUnroll; fwUnrolled++)
+#endif
+    {
+        #if LOOP
+        uint flatHeightIdx = (flatHeight * strideFlatHeightUnroll + fhUnrolled);
+        uint flatWidthIdx  = (flatWidth * strideFlatWidthUnroll + fwUnrolled);
+        float v0 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 0 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * strideReducedDim + (y + 0 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        float v1 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 1 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * strideReducedDim + (y + 1 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        float v2 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 2 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * strideReducedDim + (y + 2 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        float v3 = X.MaskedGet((flatHeightIdx < strideFlatHeight) && ((y + 3 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth * strideReducedDim + (y + 3 * POOL_SIZE) * strideFlatWidth + flatWidthIdx, defaultValue);
+        #else
+        float v0 = X.MaskedGet((y + 0 * POOL_SIZE) < strideReducedDim, flatHeight * strideFlatWidth * strideReducedDim + (y + 0 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        float v1 = X.MaskedGet((y + 1 * POOL_SIZE) < strideReducedDim, flatHeight * strideFlatWidth * strideReducedDim + (y + 1 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        float v2 = X.MaskedGet((y + 2 * POOL_SIZE) < strideReducedDim, flatHeight * strideFlatWidth * strideReducedDim + (y + 2 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        float v3 = X.MaskedGet((y + 3 * POOL_SIZE) < strideReducedDim, flatHeight * strideFlatWidth * strideReducedDim + (y + 3 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
+        #endif
+        GlobalReduceSum_PartialSum[gty] = ReduceOp(v0, ReduceOp(v1, ReduceOp(v2, v3)));
+
+        GroupMemoryBarrierWithGroupSync();
+
+        // sequential addressing
+        // mem = [x0...xn y0..yn]
+        //     = [x0+y0...xn+yn ...]
+        // last sum saved for last
+        // following code is unrolled:
+        // for s = (POOL_SIZE*POOL_SIZE) / 2; s > 1; s >>= 1
+        GlobalReduceSumInternalReduce(gty, 32);
+        GlobalReduceSumInternalReduce(gty, 16);
+        GlobalReduceSumInternalReduce(gty, 8);
+        GlobalReduceSumInternalReduce(gty, 4);
+        GlobalReduceSumInternalReduce(gty, 2);
+
+        if (gty == 0)
+        {
+            float v = ReduceOp(GlobalReduceSum_PartialSum[0], GlobalReduceSum_PartialSum[1]);
+#ifdef REDUCEMEAN
+            // TODO: if stability issues / baseReducedLength at every step
+            v /= baseReducedLength;
+#endif
+            #if LOOP
+            if((flatHeightIdx < strideFlatHeight) && (flatWidthIdx < strideFlatWidth))
+                O.FastSet(flatHeightIdx * strideFlatWidth + flatWidthIdx, v);
+            #else
+            O.FastSet(flatHeight * strideFlatWidth + flatWidth, v);
+            #endif
+        }
+    }
 }

@@ -90,7 +90,7 @@ namespace Unity.Barracuda.Compiler.Passes
                             break;
                     }
 
-                    if (m_isModelExportedFromNCHW && (m_layersChannelOrder[layer.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC))
+                    if (m_isModelExportedFromNHWC && (m_layersChannelOrder[layer.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC))
                     {
                         switch (rank)
                         {
@@ -132,9 +132,11 @@ namespace Unity.Barracuda.Compiler.Passes
 
                     var O = m_Ops.Transpose(X, permutations);
                     correctedConstLayer.ApplyTensorToDataSet(O, 0);
-
                     correctedConstants.Add(correctedConstLayer);
                     layer.inputs[i] = correctedConstLayer.name;
+
+                    X.Dispose();
+                    O.Dispose();
                 }
 
                 nhwc.layers[l] = layer;

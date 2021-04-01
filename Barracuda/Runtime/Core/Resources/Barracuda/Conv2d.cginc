@@ -1473,7 +1473,7 @@ void KernelWinograd_3x3(uint3 dispatchThreadID : SV_DispatchThreadID)
 
 float4x4 ApplyWinnogradB(float4x4 d)
 {
-    // BT x u x B, used mathematica to expresse the opperation using only +/-
+    // BT x u x B, used mathematica to express the operation using only +/-
     //return float4x4(float4( d[0][0] - d[0][2] - d[2][0] + d[2][2],  d[0][1] + d[0][2] - d[2][1] - d[2][2], -d[0][1] + d[0][2] + d[2][1] - d[2][2], -d[0][1] + d[0][3] + d[2][1] - d[2][3]),
     //                float4( d[1][0] - d[1][2] + d[2][0] - d[2][2],  d[1][1] + d[1][2] + d[2][1] + d[2][2], -d[1][1] + d[1][2] - d[2][1] + d[2][2], -d[1][1] + d[1][3] - d[2][1] + d[2][3]),
     //                float4(-d[1][0] + d[1][2] + d[2][0] - d[2][2], -d[1][1] - d[1][2] + d[2][1] + d[2][2],  d[1][1] - d[1][2] - d[2][1] + d[2][2],  d[1][1] - d[1][3] - d[2][1] + d[2][3]),
@@ -1528,7 +1528,7 @@ float4x4 ApplyWinnogradB(float4x4 d)
 
 float2x2 ApplyWinnogradA(float4x4 uv)
 {
-    // A x u x A, used mathematica to expresse the opperation using only +/-
+    // A x u x A, used mathematica to express the operation using only +/-
     // return float2x2(float2(uv[0][0] + uv[0][1] + uv[0][2] + uv[1][0] + uv[1][1] + uv[1][2] + uv[2][0] + uv[2][1] + uv[2][2], uv[0][1] - uv[0][2] + uv[0][3] + uv[1][1] - uv[1][2] + uv[1][3] + uv[2][1] - uv[2][2] + uv[2][3]),
     //                 float2(uv[1][0] + uv[1][1] + uv[1][2] - uv[2][0] - uv[2][1] - uv[2][2] + uv[3][0] + uv[3][1] + uv[3][2], uv[1][1] - uv[1][2] + uv[1][3] - uv[2][1] + uv[2][2] - uv[2][3] + uv[3][1] - uv[3][2] + uv[3][3])
     //                );

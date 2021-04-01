@@ -187,6 +187,12 @@ namespace Unity.Barracuda.ONNX
             if (!Enumerable.SequenceEqual(valueArray, defaultValue))
                 Warn($"Unsupported attribute {name}, node {Name} of type {OperatorType}. Value will be ignored and defaulted to [{string.Join(", ", defaultValue)}].");
         }
+        public void UnsupportedAttribute(string name, string[] defaultValue)
+        {
+            var stringArray = GetOptionalStringArray(name, defaultValue);
+            if (!Enumerable.SequenceEqual(stringArray, defaultValue))
+                Warn($"Unsupported attribute {name}, node {Name} of type {OperatorType}. Value will be ignored and defaulted to [{string.Join(", ", defaultValue)}].");
+        }
         public void UnsupportedAttribute(string name, Func<int, bool> predicate, int[] defaultValue)
         {
             var valueArray = GetOptionalIntArray(name, defaultValue);
@@ -332,6 +338,16 @@ namespace Unity.Barracuda.ONNX
         {
             var raw = FindAttribute(name, AttributeProto.Types.AttributeType.String).S;
             return raw.ToStringUtf8();
+        }
+        public string[] GetOptionalStringArray(string name, string[] defaultValue)
+        {
+            try { return GetRequiredStringArray(name); }
+            catch (OnnxLayerImportException) { return defaultValue; }
+        }
+        public string[] GetRequiredStringArray(string name)
+        {
+            var attribute = FindAttribute(name,AttributeProto.Types.AttributeType.Strings);
+            return attribute.Strings.Select(s => s.ToStringUtf8()).ToArray();
         }
 
         // Complex attribute helpers

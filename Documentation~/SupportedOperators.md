@@ -32,7 +32,7 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 * <a href="#Less">Less</a>
 * <a href="#LessOrEqual">LessOrEqual</a>
 * <a href="#LRN">LRN</a>
-* <a href="#LSTM">LSTM (ML-Agents models only)</a>
+* <a href="#LSTM">LSTM  (ML-Agents models only)</a>
 * <a href="#MatMul">MatMul</a>
 * <a href="#Max">Max</a>
 * <a href="#MaxPool">MaxPool</a>
@@ -273,8 +273,15 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 
 ##### <a name="LSTM">LSTM</a>
 * [ONNX specification](https://github.com/onnx/onnx/blob/master/docs/Operators.md#LSTM)<br>
-* Maps to Barracuda op: <tt>Complex simple operation subgraph</tt><br>
-* Notes: ML-Agents models only<br>
+* Unsupported attribute: <tt>activation_alpha</tt><br>
+* Unsupported attribute: <tt>activation_beta</tt><br>
+* Unsupported attribute: <tt>activations</tt><br>
+* Unsupported attribute: <tt>clip</tt><br>
+* Unsupported attribute: <tt>direction</tt><br>
+* Unsupported attribute: <tt>input_forget</tt><br>
+* Unsupported attribute: <tt>activation_beta</tt><br>
+* Maps to Barracuda op: <tt>LSTM</tt><br>
+* Notes: ML-Agents models only are supported<br>
 
 
 ##### <a name="MatMul">MatMul</a>

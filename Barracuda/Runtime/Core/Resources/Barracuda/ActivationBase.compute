@@ -10,6 +10,9 @@
 #pragma kernel Floor_Flat
 #pragma kernel Floor_FlatStrict
 #pragma kernel Floor_Loop
+#pragma kernel Round_Flat
+#pragma kernel Round_FlatStrict
+#pragma kernel Round_Loop
 
 #pragma kernel Selu_Flat
 #pragma kernel Selu_FlatStrict
@@ -34,7 +37,10 @@
 #pragma kernel Pow_Loop
 #pragma kernel LogicalNot_Flat
 #pragma kernel LogicalNot_FlatStrict
-#pragma kernel LogicalNot_Loop
+#pragma kernel Sign_Loop
+#pragma kernel Sign_Flat
+#pragma kernel Sign_FlatStrict
+#pragma kernel Sign_Loop
 
 #pragma kernel Acos_Flat
 #pragma kernel Acos_FlatStrict

@@ -64,6 +64,27 @@ namespace Unity.Barracuda
                 Tensor bias0 = l0.DataSetToTensor(0);
                 Tensor bias1 = l1.DataSetToTensor(0);
 
+                int rankO = Math.Max(bias0.dimensions, bias1.dimensions);
+                if (l0.axis >= 0 && l1.axis >= 0) // legacy tests don't store constant rank in axis
+                {
+                    // broadcast rule
+                    int rank0 = l0.axis;
+                    List<int> shape0 = Compiler.IRShapeInferenceHelper.ShapeInference.ShapeToOnnxLayout(bias0.shape, rank0);
+                    rank0 = Math.Max(rank0, 1);
+                    int rank1 = l1.axis;
+                    List<int> shape1 = Compiler.IRShapeInferenceHelper.ShapeInference.ShapeToOnnxLayout(bias1.shape, rank1);
+                    rank1 = Math.Max(rank1, 1);
+
+                    rankO = Math.Max(rank0, rank1);
+                    for (int k = 0; k < rankO - rank0; k++)
+                        shape0.Insert(0, 1);
+                    for (int k = 0; k < rankO - rank1; k++)
+                        shape1.Insert(0, 1);
+
+                    bias0 = bias0.Reshape(Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(shape0.ToArray()));
+                    bias1 = bias1.Reshape(Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(shape1.ToArray()));
+                }
+
                 TensorShape biasShape = TensorExtensions.MaxShape(new [] { bias0, bias1 });
 
                 Layer lmerged = new Layer(l0.name, l0.type);
@@ -75,7 +96,7 @@ namespace Unity.Barracuda
                 lmerged.datasets[0].length = biasShape.length;
                 lmerged.datasets[0].offset = 0;
                 lmerged.weights = new float[biasShape.length];
-                lmerged.axis = Math.Max(l0.axis, l1.axis);
+                lmerged.axis = rankO;
 
                 Tensor bias = m_Ops.Add(new [] { bias0, bias1 });
 
@@ -92,6 +113,27 @@ namespace Unity.Barracuda
                 Tensor scale0 = l0.DataSetToTensor(0);
                 Tensor scale1 = l1.DataSetToTensor(0);
 
+                int rankO = Math.Max(scale0.dimensions, scale1.dimensions);
+                if (l0.axis >= 0 && l1.axis >= 0) // legacy tests don't store constant rank in axis
+                {
+                    // broadcast rule
+                    int rank0 = l0.axis;
+                    List<int> shape0 = Compiler.IRShapeInferenceHelper.ShapeInference.ShapeToOnnxLayout(scale0.shape, rank0);
+                    rank0 = Math.Max(rank0, 1);
+                    int rank1 = l1.axis;
+                    List<int> shape1 = Compiler.IRShapeInferenceHelper.ShapeInference.ShapeToOnnxLayout(scale1.shape, rank1);
+                    rank1 = Math.Max(rank1, 1);
+
+                    rankO = Math.Max(rank0, rank1);
+                    for (int k = 0; k < rankO - rank0; k++)
+                        shape0.Insert(0, 1);
+                    for (int k = 0; k < rankO - rank1; k++)
+                        shape1.Insert(0, 1);
+
+                    scale0 = scale0.Reshape(Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(shape0.ToArray()));
+                    scale1 = scale1.Reshape(Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(shape1.ToArray()));
+                }
+
                 TensorShape biasShape = TensorExtensions.MaxShape(new[] { scale0, scale1 });
 
                 Layer lmerged = new Layer(l0.name, l0.type);
@@ -103,7 +145,7 @@ namespace Unity.Barracuda
                 lmerged.datasets[0].length = biasShape.length;
                 lmerged.datasets[0].offset = 0;
                 lmerged.weights = new float[biasShape.length];
-                lmerged.axis = Math.Max(l0.axis, l1.axis);
+                lmerged.axis = rankO;
 
                 Tensor bias = m_Ops.Mul(new[] { scale0, scale1 });
 

@@ -115,9 +115,6 @@ internal class BarracudaBackendsFactory
     {
         bool trimModel = trimOutputs != null;
 
-        if (model.flags.HasFlag(Model.Flags.NeedsCompilation))
-            model.Compile();
-
         if (trimOutputs != null)
         {
             foreach (var o in trimOutputs.Except(model.outputs))

@@ -1,5 +1,19 @@
 # Release notes
 
+## [1.3.3] - 2021-03-04
+- ONNX: Improved `LSTM` support.
+- ONNX: better dynamic op shape support
+- ONNX: `Round` support
+- Performance: Improved Transformer architecture performance on GPU.
+- Performance: Better GPU perf for: `MatMul`, `Reduce`, `OneHot`
+- Performance: better constant Layer fusing
+- Performance: Improved loading times for compute implementation of `Transpose/Transpose8D` ops.
+- Fix: Fixed `Reduce` op in NCHW mode.
+- Fix: `CSharpBurst` fixed fencing in Concat, DepthwiseConv2D and PRelu.
+- Fix: StridedSlice for stride of 2 and odd numbers start index.
+- Fix: Fixed `CsharpBurst` read fence handling.
+
+
 ## [1.3.2] - 2021-02-22
 - Fix: numerous small fixes in `CSharpBurst` fences and memory handling.
 - Fix: small fixes for GPU NCHW path.

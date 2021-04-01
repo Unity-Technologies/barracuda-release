@@ -57,7 +57,7 @@ namespace Unity.Barracuda.Compiler.Passes
             IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(modelTemp, inputShapes, ranksByName, out shapesByName);
 
             int negativeRanks = ranksByName.Values.Count(x => x < 0);
-            ValidationHelper.AppendWarning(negativeRanks == 0, "model", $"StaticRankInference: {negativeRanks} no-positifs ranks found!", ref warnings, MessageType.Warning);
+            ValidationHelper.AppendWarning(negativeRanks == 0, "model", $"StaticRankInference: {negativeRanks} negative rank(s) found!", ref warnings, MessageType.Warning);
 
             int knowRanks = ranksByName.Count(x => x.Value != null);
             int knowShapes = shapesByName.Count(x => x.Value != null);
@@ -84,7 +84,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 ValidationHelper.AppendWarning(shapesByName.ContainsKey(name), name, "StaticShapeInference: did not find layer", ref warnings);
                 if (shapesByName.ContainsKey(name))
-                    ValidationHelper.AppendWarning(shapesByName[name] != null, name, "StaticShapeInference: unknown layer shape for at compile time", ref warnings);
+                    ValidationHelper.AppendWarning(shapesByName[name] != null, name, "StaticShapeInference: unknown layer shape at compile time", ref warnings);
             }
         }
     }
@@ -116,11 +116,6 @@ namespace Unity.Barracuda.Compiler.Passes
                     if (sizes != null)
                         ValidationHelper.AppendWarning((sizes[0] == 1) && (sizes[1] == 1), name, "ValidateIntermediateNCHWModelLayers:Upsample3D Only spatial(H and W) resizing is currently supported." +
                                                                                                  " Non spatial sizes (N and C) will be ignored and default to identity.", ref warnings);
-                }
-                else if (type == Layer.Type.Tile)
-                {
-                    var sizes = l.pool;
-                    ValidationHelper.AppendWarning((sizes != null) && (l.inputs.Length == 1), name, "ValidateIntermediateNCHWModelLayers::Tile dynamic shape not supported", ref warnings, MessageType.Error);
                 }
             }
         }
@@ -192,7 +187,7 @@ namespace Unity.Barracuda.Compiler.Passes
             // validate, model contains no unconnected layers
             var unconnectedOutputs = ModelAnalyzer.FindUnconnectedOutputs(model);
             foreach (var o in unconnectedOutputs)
-                ValidationHelper.AppendWarning(false, o, "ValidateUnconectedLayers: Layer is specified as output, but is missing in the model", ref warnings, MessageType.Warning);
+                ValidationHelper.AppendWarning(false, o, "ValidateUnconnectedLayers: Layer is specified as output, but is missing in the model", ref warnings, MessageType.Warning);
         }
     }
 

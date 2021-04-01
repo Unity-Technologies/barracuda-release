@@ -416,6 +416,11 @@ public class ReferenceCPUOps : IOps
         return v;
     }
 
+    public virtual Tensor Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        return Add(new[] { MatMul(X, 3, W, 2), Reshape(B, new TensorShape(1, 1, B.length, 1)) });
+    }
+
     // ---------------------------------------------------------------------------------
     /// <inheritdoc/>
     public virtual Tensor MatMul(Tensor X, int rankX, Tensor Y, int rankY)
@@ -1660,7 +1665,7 @@ public class ReferenceCPUOps : IOps
 
     // TODO: Revisit flattened approach (see previous attempt in source history), which had two of the four axis cases working
     //    but couldn't get the strides just right for the outer loop, so opted for this straightforward approach
-    // NOTE: If sorted is false, then the output is undefined, so it's only necessary to implement something explicitly
+    // NOTE: If `sorted` is false, then the output is undefined, so it's only necessary to implement something explicitly
     //    if there is a benefit in terms of performance
     /// <inheritdoc/>
     public virtual Tensor TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
@@ -2204,6 +2209,21 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
+    public virtual Tensor Round(Tensor X)
+    {
+        var O = NewTensorLike(X);
+
+        var end = X.length;
+        for (int i = 0; i < end; ++i)
+        {
+            float v = X[i];
+            v = Mathf.Round(v);
+            O[i] = v;
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
     public virtual Tensor Reciprocal(Tensor X)
     {
         var O = NewTensorLike(X);
@@ -2548,6 +2568,15 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
+    public Tensor ConstantOfShape(TensorShape X, float value)
+    {
+        Tensor O = NewTensor(X);
+        for (int i = 0; i < O.length; ++i)
+            O[i] = value;
+
+        return O;
+    }
+
     /// <inheritdoc/>
     public Tensor Shape(Tensor X, int axis = -1)
     {
@@ -2879,6 +2908,16 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
+    public virtual Tensor Sign(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = O.length;
+        for (int i = 0; i < end; ++i)
+            O[i] = (X[i] > 0) ? 1.0f : ((X[i] < 0) ? -1.0f : 0.0f);
+        return O;
+    }
+
+    /// <inheritdoc/>
     public virtual Tensor Where(Tensor C, Tensor A, Tensor B)
     {
         var O = NewTensorLike(C);
@@ -3144,6 +3183,81 @@ public class ReferenceCPUOps : IOps
 
             return new Rect(xCenter - halfWidth, yCenter - halfHeight, width, height);
         }
+    }
+
+    /// <inheritdoc/>
+    public Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell)
+    {
+        // Gate indices [iofj]
+        const int g_i = 0, g_o = 1, g_f = 2, g_j = 3;
+
+        TensorShape xShape = X.shape;
+        int sequenceLength = xShape.batch; // X shape is [seq_length, batch_size, input_size]
+
+        Tensor O = null;
+
+        // It's necessary to copy because this is a working memory and we don't want to overwrite the input tensors
+        hidden = Copy(hidden);
+        cell = Copy(cell);
+
+        for (int s = 0; s < sequenceLength; s++)
+        {
+            using (var td = new TensorScope()) // This will dispose every sequence iteration
+            {
+                TensorScope.F _ = td._; // Shorthand
+                Tensor X_sequence = _(StridedSlice(X, new[] { s, 0, 0, 0 }, new[] { s + 1, 0, 0, 0 }, new[] { 1, 1, 1, 1 }));
+
+                // Convert to [batch_size, input_size], dropping sequence axis
+                X_sequence = _(Transpose(X_sequence, new[] { 3, 0, 1, 2 }));
+
+                var i_mad_w = _(Add(new[] { _(MatMul(X_sequence, false, W[g_i], false)), Wb[g_i] }));
+                var i_mad_r = _(Add(new[] { _(MatMul(hidden, false, R[g_i], false)), Rb[g_i] }));
+                var i_mad = _(Add(new[] { i_mad_w, i_mad_r }));
+
+                var j_mad_w = _(Add(new[] { _(MatMul(X_sequence, false, W[g_j], false)), Wb[g_j] }));
+                var j_mad_r = _(Add(new[] { _(MatMul(hidden, false, R[g_j], false)), Rb[g_j] }));
+                var j_mad = _(Add(new[] { j_mad_w, j_mad_r }));
+
+                var f_mad_w = _(Add(new[] { _(MatMul(X_sequence, false, W[g_f], false)), Wb[g_f] }));
+                var f_mad_r = _(Add(new[] { _(MatMul(hidden, false, R[g_f], false)), Rb[g_f] }));
+                var f_mad = _(Add(new[] { f_mad_w, f_mad_r }));
+
+                var o_mad_w = _(Add(new[] { _(MatMul(X_sequence, false, W[g_o], false)), Wb[g_o] }));
+                var o_mad_r = _(Add(new[] { _(MatMul(hidden, false, R[g_o], false)), Rb[g_o] }));
+                var o_mad = _(Add(new[] { o_mad_w, o_mad_r }));
+
+                var i = _(Sigmoid(i_mad));
+                var j = _(Tanh(j_mad));
+                var f = _(Sigmoid(f_mad));
+                var o = _(Sigmoid(o_mad));
+
+                var state_c_mul = _(Mul(new[] { cell, f }));
+                var i_j_mul = _(Mul(new[] { i, j }));
+                var state_c = Add(new[] { state_c_mul, i_j_mul });  // Not disposed automatically
+                var state_c_tanh = _(Tanh(state_c));
+                var state_h = Mul(new[] { o, state_c_tanh });       // Not disposed automatically
+
+                // Must be in the shape [num_directions=1, batch_size, hidden_size]
+                Tensor reshaped_state_h = Reshape(state_h, new TensorShape(1, state_h.batch, state_h.channels, 1));
+                if (O == null)
+                    O = reshaped_state_h;
+                else
+                    O = Concat(new[] { _(O), _(reshaped_state_h) }, TensorShape.DataBatch);
+
+                // If this is not the last sequence, then collect previous memories before assigning new ones
+                // (i.e. keep the final memories)
+                if (s < sequenceLength - 1)
+                {
+                    _(hidden);
+                    _(cell);
+                }
+
+                hidden = state_h;
+                cell = state_c;
+            }
+        }
+
+        return new[] { O, hidden, cell };
     }
 
     /// <inheritdoc/>

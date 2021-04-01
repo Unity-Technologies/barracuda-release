@@ -65,6 +65,15 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        D.Log(X.shape + " * (" + W.flatHeight + "," + W.flatWidth + ") + (" + B.flatWidth + ")");
+        var O = m_Ops.Dense3(X, W, B);
+        O.PrintDataPart(32, Prefix + "Dense3");
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Conv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         D.Log(X.shape + " # " + K.shape + " + (" + B.flatWidth + ")");
@@ -488,6 +497,15 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.Round(Tensor X)
+    {
+        D.Log(X.shape + " ()");
+        var O = m_Ops.Round(X);
+        O.PrintDataPart(32, Prefix + "Round");
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Reciprocal(Tensor X)
     {
         D.Log(X.shape + " ()");
@@ -848,6 +866,15 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.Sign(Tensor x)
+    {
+        var O = m_Ops.Sign(x);
+        D.Log("!(" + x.shape +" )");
+        O.PrintDataPart(32, Prefix + "Sign");
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Where(Tensor c, Tensor a, Tensor b)
     {
         var O = m_Ops.Where(c, a, b);
@@ -915,6 +942,15 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    public Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell)
+    {
+        var O = m_Ops.LSTM(X, W, R, Wb, Rb, hidden, cell);
+        D.Log($"X: {X.shape} hidden: {hidden.shape} cell: {cell.shape}");
+        O[0].PrintDataPart(32, Prefix + nameof(IOps.LSTM));
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.Concat(Tensor[] tensors, int axis)
     {
         var O = m_Ops.Concat(tensors, axis);
@@ -947,6 +983,16 @@ public class VerboseOps : IOps, IModelCompiler
         Debug.Log($"{X.shape}");
         var O = m_Ops.Shape(X, axis);
         O.PrintDataPart(32, Prefix + nameof(IOps.Shape));
+        return O;
+    }
+
+        
+    /// <inheritdoc/>
+    Tensor IOps.ConstantOfShape(TensorShape X, float value)
+    {
+        Debug.Log($"ConstantOfShape {value}");
+        var O = m_Ops.ConstantOfShape(X, value);
+        O.PrintDataPart(32, Prefix + nameof(IOps.ConstantOfShape));
         return O;
     }
 
