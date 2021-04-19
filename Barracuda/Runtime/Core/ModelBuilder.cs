@@ -1804,6 +1804,20 @@ namespace Unity.Barracuda
             return layer;
         }
 
+        internal Layer Pad(Layer.Type type, string name, object input, object pad, object value)
+        {
+            Layer layer = new Layer(name, type);
+            var valuestring = ResolveInput(value);
+            if (string.IsNullOrEmpty(valuestring))
+                layer.inputs = new[] { ResolveInput(input), ResolveInput(pad) };
+            else
+                layer.inputs = new[] { ResolveInput(input), ResolveInput(pad), ResolveInput(value) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
         internal Layer Pad(Layer.Type type, string name, object input, Int32[] pad, float constantValue = 0.0f)
         {
             Layer layer = new Layer(name, type);
@@ -2069,6 +2083,27 @@ namespace Unity.Barracuda
             layer.inputs = new[] { ResolveInput(input) };
             layer.axis = axisIs8D?axis:TensorExtensions.Convert4DTo8DAxis(axis);
             layer.alpha = keepDims;
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
+        /// Generate a tensor containing a sequence of numbers that begin at `start` and extends by increments of `delta` up to `limit` (exclusive).
+        /// the number of elements are defined as follows:
+        /// number_of_elements = max( ceil( (limit - start) / delta ) , 0 )
+        /// output is calculated as follows:
+        /// output[i] = start + (i * delta)
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="start">start</param>
+        /// <param name="limit">limit</param>
+        /// <param name="delta">delta</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Range(string name, object start, object limit, object delta)
+        {
+            Layer layer = new Layer(name, Layer.Type.Range);
+            layer.inputs = new[] { ResolveInput(start), ResolveInput(limit), ResolveInput(delta) };
             m_Model.layers.Add(layer);
 
             return layer;

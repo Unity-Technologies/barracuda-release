@@ -216,6 +216,55 @@ public partial class BurstCPUOps
     }
 
     /// <inheritdoc/>
+    public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        int xb = X.batch,  xw = X.width, xh = X.channels;
+        int yw = W.channels, yh = W.batch;
+
+        Assert.AreEqual(xw, yh);
+        var O = NewTensor(xb, 1, yw, xh);
+
+        var pinX = Pin(X);
+        var pinW = Pin(W);
+        var pinB = Pin(B);
+        var pinO = Pin(O);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrW = &pinW.array[pinW.offset],
+                ptrB = &pinB.array[pinB.offset],
+                ptrO = &pinO.array[pinO.offset])
+                {
+                    {   // O += X * K
+                    var job = new Dense3Job();
+                    job.A = ptrX;
+                    job.AB = xb;
+                    job.AN = xh;
+                    job.AM = xw;
+                    job.B = ptrW;
+                    job.BN = yh;
+                    job.BM = yw;
+                    job.C = ptrB;
+                    job.S = ptrO;
+                    job.SN = xh;
+                    job.SM = yw;
+
+                    job.dispatchThreadX = ((xh + Dense3Job.blockSize - 1) / Dense3Job.blockSize);
+                    job.dispatchThreadY = ((yw + Dense3Job.blockSize - 1) / Dense3Job.blockSize);
+                    job.dispatchThreadZ = xb;
+
+                    pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
+                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
+                }
+            }
+        }
+
+        return O;
+    }
+
+    /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
         //D.Log(string.Format("X = {0}", X.shape));
@@ -1682,6 +1731,69 @@ public partial class BurstCPUOps
         var job = new ReduceSumJob();
         job.offsetReduce = offsetReduce;
         job.reduceDim = X.shape[axis];
+        job.ScheduleXO(X, O, O.length, 1024);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Tile(Tensor X, int[] repeats)
+    {
+        Tensor O = NewTensor(X.shape.Scale(repeats));
+
+        var job = new TileJob();
+        job.shapeX = X.shape;
+        job.shapeO = O.shape;
+        job.ScheduleXO(X, O, O.length, 1024);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Gather(Tensor[] tensors, int axis)
+    {
+        Tensor X = tensors[0];
+        Tensor indices = tensors[1];
+
+        var shape = X.shape;
+        shape[axis] = indices.length;
+
+        var O = NewTensor(shape);
+
+        Assert.AreEqual(TensorShape.MaxRank, 8);
+
+        var job = new GatherJob();
+        job.axis = axis;
+        job.shapeX = X.shape;
+        job.shapeO = O.shape;
+        job.ScheduleXBO(X, indices, O, O.length, 1024);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
+    {
+        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+            throw new NotImplementedException();
+
+        bool isInput1D = (X.flatWidth == 1);
+
+        Tensor O;
+        if (isInput1D)
+            O = NewTensor(X.flatHeight, depth);
+        else
+            O = NewTensor(X.flatHeight, 1, depth, X.flatWidth);
+
+
+        var job = new OneHotJob();
+        job.depth = depth;
+        job.shapeX = X.shape;
+        job.shapeO = O.shape;
+        job.isInput1D = isInput1D;
+        job.onValue = onValue;
+        job.offValue = offValue;
+
         job.ScheduleXO(X, O, O.length, 1024);
 
         return O;

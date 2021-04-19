@@ -678,7 +678,7 @@ public class TensorCachingAllocator : ITensorAllocator
     }
 
     /// <summary>
-    /// Dispose all alocated buffers
+    /// Dispose all allocated buffers
     /// </summary>
     public virtual void Dispose()
     {

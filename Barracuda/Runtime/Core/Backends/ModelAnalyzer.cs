@@ -265,8 +265,15 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.Pad2DSymmetric ||
                 l.type == Layer.Type.Pad2DEdge)
             {
-                Assert.IsNotNull(l.pad);
-                O = X.ApplyBorder(l.pad);
+                if(inputShapes.Count > 1)
+                {
+                    O = null;
+                }
+                else
+                {
+                    Assert.IsNotNull(l.pad);
+                    O = X.ApplyBorder(l.pad);
+                }
             }
             else if (
                 l.type == Layer.Type.Conv3D ||

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 
 using UnityEngine;
 using UnityEngine.Assertions;
@@ -172,7 +173,7 @@ public class GenericWorker : IWorker
     /// <inheritdoc/>
     public virtual void FlushSchedule(bool blocking)
     {
-        // force execution of scheduled ops by requesting results of the intermedite tensor from the device
+        // force execution of scheduled ops by requesting results of the intermediate tensor from the device
         m_SyncTensor.PrepareCacheForAccess(blocking);
     }
 
@@ -758,7 +759,8 @@ public class GenericWorker : IWorker
                 else
                 {
                     // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
-                    var refShape = inputs[1].ToReadOnlyArray();
+                    var refShape = new float[inputs[1].length];
+                    Array.Copy(inputs[1].ToReadOnlyArray(), refShape, inputs[1].length);
                     shape = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(refShape, x => (int)x)).ToArray();
                 }
 
@@ -821,6 +823,8 @@ public class GenericWorker : IWorker
             }
             else if (l.type == Layer.Type.LSTM)
             {
+                Profiler.BeginSample("Barracuda.LSTM");
+
                 bool constantWRB = l.datasets.Length > 0;
 
                 int hidden_index;
@@ -895,7 +899,10 @@ public class GenericWorker : IWorker
                         _(rb[i]);
                     }
 
-                    Tensor[] Y = m_Ops.LSTM(X, w, r, wb, rb, inputs[hidden_index], inputs[cell_index]);
+                    Tensor originalHidden = inputs[hidden_index];
+                    Tensor originalCell = inputs[cell_index];
+
+                    Tensor[] Y = m_Ops.LSTM(X, w, r, wb, rb, originalHidden, originalCell);
 
                     X = Y[0];
                     Tensor hiddenFinal = Y[1];
@@ -908,9 +915,15 @@ public class GenericWorker : IWorker
                     {
                         Model.Memory memory = memories[m];
                         if (l.inputs[hidden_index].Contains(memory.input))
+                        {
+                            _(originalHidden);
                             m_Vars.SetInput(memory.input, hiddenFinal);
+                        }
                         else if (l.inputs[cell_index].Contains(memory.input))
+                        {
+                            _(originalCell);
                             m_Vars.SetInput(memory.input, cellFinal);
+                        }
                     }
                 }
             }
@@ -936,7 +949,8 @@ public class GenericWorker : IWorker
                 if (size.Length == 0 && inputs.Length > 1)
                 {
                     // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
-                    var inputShape = inputs[1].ToReadOnlyArray();
+                    var inputShape = new float[inputs[1].length];
+                    Array.Copy(inputs[1].ToReadOnlyArray(), inputShape, inputs[1].length);
                     size = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(inputShape, x => (int)x)).ToArray();
                 }
 
@@ -950,11 +964,12 @@ public class GenericWorker : IWorker
                 if(l.axis != 1)
                 {
                     // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
-                    var inputShape = inputs[0].ToReadOnlyArray();
+                    var inputShape = new float[inputs[0].length];
+                    Array.Copy(inputs[0].ToReadOnlyArray(), inputShape, inputs[0].length);
                     size = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(inputShape, x => (int)x));
                 }
 
-                X = m_Ops.ConstantOfShape(size, l.alpha); 
+                X = m_Ops.ConstantOfShape(size, l.alpha);
             }
             // Activations
             else if (l.type == Layer.Type.Activation)
@@ -1116,6 +1131,7 @@ public class GenericWorker : IWorker
                 Assert.IsTrue(l.type == Layer.Type.Nop, $"Layer type {l.type} not explicitly handled");
             }
 
+            m_Vars.DisposeAfterLayer(l);
             m_Vars.Store(l, X);
             m_SyncTensor = X;
 
@@ -1187,7 +1203,7 @@ internal class GenericVars : IVars
     protected HashSet<Tensor> m_ModelTensors = new HashSet<Tensor>();
     protected Dictionary<Layer, Tensor[]> m_InputTensorsByLayer = new Dictionary<Layer, Tensor[]>();
     private Dictionary<string, int> m_LayerNameToId = new Dictionary<string, int>();
-    private Dictionary<string, int> m_LayerNameToKeepUntilId = new Dictionary<string, int>();
+    private Dictionary<string, List<int>> m_LayerNameToDisposeWhenDone = new Dictionary<string, List<int>>();
     private Dictionary<int, Layer> m_LayerIdToLayer = new Dictionary<int, Layer>();
     protected StringCache m_StringCache = new StringCache();
 
@@ -1205,6 +1221,22 @@ internal class GenericVars : IVars
         foreach (var t in m_ModelTensors)
             t.Dispose();
         m_ModelTensors.Clear();
+
+        // don't dispose input/user-owned tensors
+        foreach (var ts in m_InputTensorsByLayer.Values)
+            foreach (var t in ts)
+            {
+                if (IsTensorOwnedByInternalAllocator(t))
+                    t.Dispose();
+            }
+        m_InputTensorsByLayer.Clear();
+
+        m_LayerNameToId.Clear();
+        m_LayerNameToDisposeWhenDone.Clear();
+        m_LayerIdToLayer.Clear();
+        m_StringCache.Clear();
+
+        m_Allocator.Dispose();
     }
 
     private ITensorAllocator m_Allocator = new DefaultTensorAllocator();
@@ -1265,50 +1297,81 @@ internal class GenericVars : IVars
         ValidateGlobalInputs(model, inputShapes);
 
         m_LayerNameToId.Clear();
-        m_LayerNameToKeepUntilId.Clear();
+        m_LayerNameToDisposeWhenDone.Clear();
         m_LayerIdToLayer.Clear();
-
-        for (var idx = 0; idx < model.layers.Count; idx++)
-        {
-            var forLayer = model.layers[idx];
-            m_LayerIdToLayer[idx] = forLayer;
-
-            // prepare input placeholders and argument tensors only once per layer
-            if (m_InputTensorsByLayer.ContainsKey(forLayer))
-                continue;
-
-            var tensors = PrepareLayerInputTensors(model, forLayer, ops);
-            m_InputTensorsByLayer.Add(forLayer, tensors);
-        }
 
         for (var i = 0; i < model.layers.Count; i++)
         {
             var layer = model.layers[i];
-            m_LayerNameToId[layer.name] = i;
 
-            for (var j = 0; j < layer.inputs.Length; j++)
+            // prepare input placeholders and argument tensors only once per layer
+            if (m_InputTensorsByLayer.ContainsKey(layer))
+                continue;
+
+            var tensors = PrepareLayerInputTensors(model, layer, ops);
+            m_InputTensorsByLayer.Add(layer, tensors);
+        }
+
+        foreach (var mem in model.memories)
+        {
+            if (!m_TensorsByName.ContainsKey(mem.input))
             {
-                m_LayerNameToKeepUntilId[layer.inputs[j]] = i;
+                // initialize memories that haven't been explicitly set
+                var tensor = m_Allocator.Alloc(mem.shape);
+                SetInput(mem.input, tensor);
+                m_ModelTensors.Add(tensor);
             }
         }
 
-        // inputs should always be preserved
-        foreach (var input in model.inputs)
+        // For each layer we find the latest downstream layer that has said layer as input
+        // ex:
+        // 0 -> 1 -> 4 -> 5 -> 8
+        //   -> 2 -> 3  /     |
+        //   -> 7 ------------/
+        // latestDownstreamLayer:
+        //  0 -> 7, 1 -> 4, 2 -> 3, 4 -> 5, 5 -> 8, 7 -> 8 
+        Dictionary<string, int> latestDownstreamLayer = new Dictionary<string, int>();
+        for (var i = 0; i < model.layers.Count; i++)
         {
-            m_LayerNameToKeepUntilId[input.name] = model.layers.Count;
+            var forLayer = model.layers[i];
+            m_LayerNameToId[forLayer.name] = i;
+            m_LayerIdToLayer[i] = forLayer;
+
+            for (int j = 0; j < forLayer.inputs.Length; j++)
+            {
+                string input = forLayer.inputs[j];
+                if (latestDownstreamLayer.ContainsKey(input))
+                    latestDownstreamLayer[input] = Math.Max(latestDownstreamLayer[input], i);
+                else
+                    latestDownstreamLayer[input] = i;
+            }
         }
 
-        // outputs should always be preserved
-        foreach (var outname in model.outputs)
-        {
-            m_LayerNameToKeepUntilId[outname] = model.layers.Count;
-        }
+        // now that we have the latestDownstreamLayer, we inverse the map
+        // and compute when we reach a layer, what layers can I delete
+        // in this case
+        // 3 -> [2], 4 -> [1], 5 -> [4,3] , 7 -> [0], 8 -> [5,7]
 
-        // memories should always be preserved
-        foreach (var mem in model.memories)
+        // keep layer if output or memories
+        var preserve = new HashSet<string>(
+            model.memories.Select(mem => mem.input).Concat(
+            model.memories.Select(mem => mem.output)).Concat(
+            model.inputs.Select(i => i.name)).Concat(
+            model.outputs));
+
+        foreach (var entry in latestDownstreamLayer)
         {
-            m_LayerNameToKeepUntilId[mem.input] = model.layers.Count;
-            m_LayerNameToKeepUntilId[mem.output] = model.layers.Count;
+            if(preserve.Contains(entry.Key))
+                continue;
+            // input can be not specificed
+            if(!m_LayerNameToId.ContainsKey(entry.Key))
+                continue;
+
+            var forLayer = m_LayerIdToLayer[entry.Value];
+            if (m_LayerNameToDisposeWhenDone.ContainsKey(forLayer.name))
+                m_LayerNameToDisposeWhenDone[forLayer.name].Add(m_LayerNameToId[entry.Key]);
+            else
+                m_LayerNameToDisposeWhenDone[forLayer.name] = new List<int>(m_LayerNameToId[entry.Key]);
         }
     }
 
@@ -1324,28 +1387,24 @@ internal class GenericVars : IVars
         return tensors;
     }
 
-    public virtual void PrepareStorage(Layer forLayer)
-    {
-        // Current layer Id
-        var layerId = m_LayerNameToId[forLayer.name];
+    public virtual void PrepareStorage(Layer forLayer) {}
 
-        for (var idx = 0; idx < layerId; idx++)
+    public virtual void DisposeAfterLayer(Layer forLayer)
+    {
+        if(!m_LayerNameToDisposeWhenDone.ContainsKey(forLayer.name))
+            return;
+
+        foreach (var layerIdxToDispose in m_LayerNameToDisposeWhenDone[forLayer.name])
         {
-            var l = m_LayerIdToLayer[idx];
+            var l = m_LayerIdToLayer[layerIdxToDispose];
             var key = l.name;
 
-            // Remove all allocated tensors for layer storage, but
-            // global constants might not exist in this dictionary,
-            // so lets just ignore them
-            if (m_TensorsByName.ContainsKey(key) &&
-                m_LayerNameToKeepUntilId.ContainsKey(key) &&
-                m_LayerNameToKeepUntilId[key] < layerId &&
-                !m_ModelTensors.Contains(m_TensorsByName[key]))
-            {
-                if (IsTensorOwnedByInternalAllocator(m_TensorsByName[key]))
-                    m_TensorsByName[key].Dispose();
-                m_TensorsByName.Remove(key);
-            }
+            if (!(m_TensorsByName.ContainsKey(key) && !m_ModelTensors.Contains(m_TensorsByName[key])))
+                continue;
+
+            if (IsTensorOwnedByInternalAllocator(m_TensorsByName[key]))
+                m_TensorsByName[key].Dispose();
+            m_TensorsByName.Remove(key);
         }
     }
 
@@ -1408,6 +1467,7 @@ internal class GenericVarsWithReuse : GenericVars
     private HashSet<Layer> m_LayersWithStorage;
     private Tensor m_Temporary;
     private string m_TemporaryName = null;
+    protected IDictionary<string, TensorShape> m_CachedInputShapes;
 
     protected bool layerRequiresStorage { get { return m_LayerRequiresStorage; } }
     protected Tensor temporary { get { return m_Temporary; } }
@@ -1425,7 +1485,11 @@ internal class GenericVarsWithReuse : GenericVars
 
     public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes)
     {
-        base.PrepareStorage(model, ops, inputShapes);
+        if(m_CachedInputShapes != inputShapes)
+        {
+            m_CachedInputShapes = inputShapes;
+            base.PrepareStorage(model, ops, inputShapes);
+        }
 
         ReleaseTemporary();
 
@@ -1488,6 +1552,7 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes)
     {
         base.PrepareStorage(model, ops, inputShapes);
+
         if (m_CachedModel != model)
         {
             // pre-allocate 2 buffers that can be cycled for temporaries
@@ -1545,6 +1610,14 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     {
         m_TemporaryAllocator.Reset(keepCachedMemory);
         m_StorageAllocator.Reset(keepCachedMemory);
+    }
+
+    public override void Dispose()
+    {
+        base.Dispose();
+
+        m_TemporaryAllocator.Dispose();
+        m_StorageAllocator.Dispose();
     }
 
     public long busyBytes

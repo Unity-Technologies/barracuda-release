@@ -59,8 +59,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.MaxPool2D:
                 case Layer.Type.AvgPool2D:
                 {
-                    // TODO 3D case?
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.AvgPool2D inputRanks.Length"); Assert.IsTrue(inputRanks[0] == 4 || inputRanks[0] == 3, "InferOutputRank.AvgPool2D inputRanks");
+                    Assert.IsTrue(inputRanks[0] == 4 || inputRanks[0] == 3, "InferOutputRank.*Pool2D inputRanks");
                     return inputRanks[0];
                 }
                 case Layer.Type.GlobalMaxPool2D:
@@ -79,7 +78,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.Pad2DSymmetric:
                 case Layer.Type.Pad2DEdge:
                 {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.*Pad inputRanks.Length"); Assert.AreEqual(inputRanks[0], 4, "InferOutputRank.*Pad inputRanks");
+                    Assert.AreEqual(inputRanks[0], 4, "InferOutputRank.*Pad inputRanks");
                     return 4;
                 }
                 case Layer.Type.RandomNormal:
@@ -120,6 +119,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.LogicalXor:
                 {
                     return inputRanks.Max();
+                }
+                case Layer.Type.Range:
+                {
+                    return 1;
                 }
                 case Layer.Type.ReduceL1:
                 case Layer.Type.ReduceL2:

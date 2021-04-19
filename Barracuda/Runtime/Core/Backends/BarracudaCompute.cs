@@ -1601,7 +1601,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    void ComputeReduceDispatchDim(TensorShape X, TensorShape O, int axis, out int flatHeight, out int reducedDim, out int flatWidth)
+    internal static void ComputeReduceDispatchDim(TensorShape X, TensorShape O, int axis, out int flatHeight, out int reducedDim, out int flatWidth)
     {
         int[] OshapeLayoutSpecific = O.ToArray();
 

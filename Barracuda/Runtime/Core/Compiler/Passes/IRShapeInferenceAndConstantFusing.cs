@@ -131,8 +131,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 var useCPUforBaking = WorkerFactory.Device.CPU;
                 using (var worker = WorkerFactory.CreateWorker(opsModel, useCPUforBaking))
                 {
-                    var bakedConstant = worker.Execute(layerInputs).PeekOutput();
-                    bakedConstant.TakeOwnership();
+                    var bakedConstant = worker.Execute(layerInputs).CopyOutput();
                     knownLayersValue[layer.name] = bakedConstant;
                     newKnownLayers.Add(layer.name);
                 }
@@ -289,6 +288,38 @@ namespace Unity.Barracuda.Compiler.Passes
         {
             switch (layer.type)
             {
+                case Layer.Type.Border2D:
+                case Layer.Type.Border3D:
+                case Layer.Type.Pad2DEdge:
+                case Layer.Type.Pad2DReflect:
+                case Layer.Type.Pad2DSymmetric:
+                {
+                    if (layer.inputs.Length <= 1 || !IsLayerKnown(layer.inputs[1], knownLayersValue))
+                        return;
+
+                    float[] padsFloat = knownLayersValue[layer.inputs[1]].ToReadOnlyArray();
+                    layer.inputs = new[] { layer.inputs[0] };
+                    var pads = Array.ConvertAll(padsFloat, x => (int)x);
+
+                    // Skip non-spatial dimensions N, C (NCHW layout)
+                    var starts = pads.Take(pads.Length / 2).ToArray();
+                    var ends = pads.Skip(pads.Length / 2).ToArray();
+                    starts = starts.Skip(2).ToArray();
+                    ends = ends.Skip(2).ToArray();
+                    switch (starts.Length)
+                    {
+                        case 1: layer.pad = new [] { starts[0], 0, ends[0], 0 }; break; // 1D W => W_
+                        case 2: layer.pad = new [] { starts[1], starts[0], ends[1],   ends[0] }; break; // 2D HW => WH
+                        default: layer.pad = new [] { starts[2], starts[1], starts[0], ends[2],   ends[1],   ends[0] }; break; // 3D DHW => WHD
+                    }
+
+                    float value = 0.0f;
+                    if (layer.inputs.Length >= 3 && IsLayerKnown(layer.inputs[2], knownLayersValue))
+                        value = knownLayersValue[layer.inputs[2]].ToReadOnlyArray()[0];
+
+                    layer.beta = value;
+                    return;
+                }
                 case Layer.Type.Upsample2D:
                 {
                     if (layer.inputs.Length <= 1 || !IsLayerKnown(layer.inputs[1], knownLayersValue))
@@ -296,13 +327,13 @@ namespace Unity.Barracuda.Compiler.Passes
 
                     float[] scales = knownLayersValue[layer.inputs[1]].ToReadOnlyArray();
 
-                    if (scales[0] == 1 && scales[1] == 1 && scales[2] < 1.0f && scales[3] < 1.0f)
+                    if (scales[0] == 1 && scales[1] == 1 && scales[2] < 1.0f && scales[3] < 1.0f && layer.axis >= 0.0f)
                     {
                         scales = new[] { scales[2], scales[3] };
                         layer.type = Layer.Type.AvgPool2D;
-                        layer.pad = new[] { 0, 0 };
+                        layer.pad = new[] { 0, 0, 0, 0 };
                         var inverseScalesRoundedToInt = scales.Select(x => (int)Mathf.Round(1f / x)).ToArray();
-                        layer.stride = new[] { 1, 1 };
+                        layer.stride = inverseScalesRoundedToInt;
                         layer.pool = inverseScalesRoundedToInt;
                     }
                     else
@@ -479,6 +510,40 @@ namespace Unity.Barracuda.Compiler.Passes
                         layer.inputs = new string[0];
                     }
 
+                    return;
+                }
+                case Layer.Type.Range:
+                {
+                    if (layer.inputs.Length < 3 || !IsLayerKnown(layer.inputs[0], knownLayersValue) || !IsLayerKnown(layer.inputs[1], knownLayersValue) || !IsLayerKnown(layer.inputs[2], knownLayersValue))
+                        return;
+
+                    Tensor input0 = knownLayersValue[layer.inputs[0]];
+                    Tensor input1 = knownLayersValue[layer.inputs[1]];
+                    Tensor input2 = knownLayersValue[layer.inputs[2]];
+
+                    var start = input0[0];
+                    var limit = input1[0];
+                    var delta = input2[0];
+
+                    int nbOfElements = Mathf.Max((int)Mathf.Ceil((limit - start) / delta), 0);
+
+                    layer.type = Layer.Type.Load;
+
+                    layer.axis = 1;
+                    layer.datasets = new Layer.DataSet[1];
+                    layer.datasets[0].name = layer.name;
+                    layer.datasets[0].shape = new TensorShape(nbOfElements, 1);
+                    layer.datasets[0].itemSizeInBytes = 4;
+                    layer.datasets[0].length = nbOfElements;
+                    layer.datasets[0].offset = 0;
+                    layer.weights = new float[nbOfElements];
+
+                    for(int i=0; i < nbOfElements; ++i)
+                    {
+                        layer.weights[i] = start + (i * delta);
+                    }
+
+                    layer.inputs = new string[0];
                     return;
                 }
                 case Layer.Type.StridedSlice:

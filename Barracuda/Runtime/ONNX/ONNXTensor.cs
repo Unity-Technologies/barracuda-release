@@ -369,6 +369,18 @@ namespace Unity.Barracuda.ONNX
             return outTensor;
         }
 
+        internal static ONNXTensor Range(float start, float limit, float delta)
+        {
+            int nbElements = Mathf.Max((int)Mathf.Ceil((limit - start) / delta), 0);
+            Tensor output = new Tensor(nbElements, 1);
+
+            for (int i = 0; i < nbElements; ++i)
+            {
+                output[i] = start + (i * delta);
+            }
+            return new ONNXTensor(output, new[] { nbElements });
+        }
+
         internal static Tensor Permute(Tensor inTensor, int[] permutations) // TODO: unify Permute() arguments
         {
             var padPermutationsToBarracudaRank = TensorShape.MaxRank - permutations.Length;

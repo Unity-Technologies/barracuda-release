@@ -6,6 +6,92 @@ namespace Unity.Barracuda.Compiler.Passes
 {
     partial class NCHWToNHWCPass
     {
+        int[] GetPermutationForBroadcast(int targetRank, int rank, bool isNHWC = false)
+        {
+            int[] permutations = new[] { 0, 1, 2, 3 };
+
+            if (rank == 0 || targetRank == 1)
+                return permutations;
+
+            switch (targetRank)
+            {
+                case 2:
+                    // ONNX: 5,7 + 7
+                    // Barracuda: 5,_,_,7 + 7,_,_,- => _,_,_,7
+                    permutations = new[] { 1, 2, 3, 0 };
+                    break;
+                case 3:
+                    // ONNX: 5,7,3 + 3
+                    // Barracuda: 5,_,3,7 + 3,_,_,_  => _,_,3,_
+                    if (rank == 1)
+                        permutations = new[] { 1, 2, 0, 3 };
+
+                    // ONNX: 5,7,3 + 7,3
+                    // Barracuda: 5,_,3,7 + 7,_,_,3 => _,_,3,7
+                    else if (rank == 2)
+                        permutations = new[] { 1, 2, 3, 0 };
+
+                    break;
+                case 4:
+                    // ONNX: 2,5,7,3 + 3
+                    // Barracuda: 2,7,3,5 + 3,_,_,_  => _,_,3,_
+                    if (rank == 1)
+                        permutations = new[] { 1, 2, 0, 3 };
+
+                    // ONNX: 2,5,7,3 + 7,3
+                    // Barracuda: 2,7,3,5 + 7,_,_,3  => _,7,3,_
+                    else if (rank == 2)
+                        permutations = new[] { 2, 0, 1, 3 };
+
+                    // ONNX: 2,5,7,3 + 5,7,3
+                    // Barracuda: 2,7,3,5 + 5,_,3,7  => _,7,3,5
+                    else if (rank == 3)
+                        permutations = new[] { 1, 3, 2, 0 };
+                    break;
+            }
+
+            if (isNHWC)
+            {
+                switch (targetRank)
+                {
+                    case 2:
+                        // ONNX: 5,7 + 7
+                        // Barracuda: 5,_,_,7 + 7,_,_,- => _,_,_,7
+                        permutations = new[] { 1, 2, 3, 0 };
+                        break;
+                    case 3:
+                        // ONNX: 5,7,3 + 3
+                        // Barracuda: 5,_,7,3 + 3,_,_,_  => _,_,_,3
+                        if (rank == 1)
+                            permutations = new[] { 1, 2, 3, 0 };
+
+                        // ONNX: 5,7,3 + 7,3
+                        // Barracuda: 5,_,7,3 + 7,_,_,3 => _,_,7,3
+                        else if (rank == 2)
+                            permutations = new[] { 2, 3, 0, 1 };
+
+                        break;
+                    case 4:
+                        // ONNX: 2,5,7,3 + 3
+                        // Barracuda: 2,5,7,3 + 3,_,_,_  => _,_,_,3
+                        if (rank == 1)
+                            permutations = new[] { 1, 2, 3, 0 };
+
+                        // ONNX: 2,5,7,3 + 7,3
+                        // Barracuda: 2,5,7,3 + 7,_,_,3  => _,_,7,3,
+                        else if (rank == 2)
+                            permutations = new[] { 2, 3, 0, 1 };
+
+                        // ONNX: 2,5,7,3 + 5,7,3
+                        // Barracuda: 2,5,7,3 + 5,_,7,3  => _,5,7,3
+                        else if (rank == 3)
+                            permutations = new[] { 1, 0, 2, 3 };
+                        break;
+                }
+            }
+            return permutations;
+        }
+
         void CorrectConstantsForBroadCast(ref Model nhwc)
         {
             List<Layer> correctedConstants = new List<Layer>();
@@ -50,93 +136,18 @@ namespace Unity.Barracuda.Compiler.Passes
 
                     var X = inputLayer.DataSetToTensor(0);
 
-                    int[] permutations = new[] { 0, 1, 2, 3 };
                     var rank = m_RanksByName[layer.name].Value;
 
-                    switch (rank)
-                    {
-                        case 2:
-                            // ONNX: 5,7 + 7
-                            // Barracuda: 5,_,_,7 + 7,_,_,- => _,_,_,7
-                            permutations = new[] { 1, 2, 3, 0 };
-                            break;
-                        case 3:
-                            // ONNX: 5,7,3 + 3
-                            // Barracuda: 5,_,3,7 + 3,_,_,_  => _,_,3,_
-                            if (m_RanksByName[input] == 1)
-                                permutations = new[] { 1, 2, 0, 3 };
-
-                            // ONNX: 5,7,3 + 7,3
-                            // Barracuda: 5,_,3,7 + 7,_,_,3 => _,_,3,7
-                            else if (m_RanksByName[input] == 2)
-                                permutations = new[] { 1, 2, 3, 0 };
-
-                            break;
-                        case 4:
-                            // ONNX: 2,5,7,3 + 3
-                            // Barracuda: 2,7,3,5 + 3,_,_,_  => _,_,3,_
-                            if (m_RanksByName[input] == 1)
-                                permutations = new[] { 1, 2, 0, 3 };
-
-                            // ONNX: 2,5,7,3 + 7,3
-                            // Barracuda: 2,7,3,5 + 7,_,_,3  => _,7,3,_
-                            else if (m_RanksByName[input] == 2)
-                                permutations = new[] { 2, 0, 1, 3 };
-
-                            // ONNX: 2,5,7,3 + 5,7,3
-                            // Barracuda: 2,7,3,5 + 5,_,3,7  => _,7,3,5
-                            else if (m_RanksByName[input] == 3)
-                                permutations = new[] { 1, 3, 2, 0 };
-                            break;
-                    }
-
-                    if (m_isModelExportedFromNHWC && (m_layersChannelOrder[layer.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC))
-                    {
-                        switch (rank)
-                        {
-                            case 2:
-                                // ONNX: 5,7 + 7
-                                // Barracuda: 5,_,_,7 + 7,_,_,- => _,_,_,7
-                                permutations = new[] { 1, 2, 3, 0 };
-                                break;
-                            case 3:
-                                // ONNX: 5,7,3 + 3
-                                // Barracuda: 5,_,7,3 + 3,_,_,_  => _,_,_,3
-                                if (m_RanksByName[input] == 1)
-                                    permutations = new[] { 1, 2, 3, 0 };
-
-                                // ONNX: 5,7,3 + 7,3
-                                // Barracuda: 5,_,7,3 + 7,_,_,3 => _,_,7,3
-                                else if (m_RanksByName[input] == 2)
-                                    permutations = new[] { 2, 3, 0, 1 };
-
-                                break;
-                            case 4:
-                                // ONNX: 2,5,7,3 + 3
-                                // Barracuda: 2,5,7,3 + 3,_,_,_  => _,_,_,3
-                                if (m_RanksByName[input] == 1)
-                                    permutations = new[] { 1, 2, 3, 0 };
-
-                                // ONNX: 2,5,7,3 + 7,3
-                                // Barracuda: 2,5,7,3 + 7,_,_,3  => _,_,7,3,
-                                else if (m_RanksByName[input] == 2)
-                                    permutations = new[] { 2, 3, 0, 1 };
-
-                                // ONNX: 2,5,7,3 + 5,7,3
-                                // Barracuda: 2,5,7,3 + 5,_,7,3  => _,5,7,3
-                                else if (m_RanksByName[input] == 3)
-                                    permutations = new[] { 1, 0, 2, 3 };
-                                break;
-                        }
-                    }
+                    var inputRank = m_RanksByName[input].Value;
+                    int[] permutations = GetPermutationForBroadcast(rank, inputRank, (m_isModelExportedFromNHWC && (m_layersChannelOrder[layer.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC)));
 
                     var O = m_Ops.Transpose(X, permutations);
                     correctedConstLayer.ApplyTensorToDataSet(O, 0);
+                    O.Dispose();
+                    X.Dispose();
+
                     correctedConstants.Add(correctedConstLayer);
                     layer.inputs[i] = correctedConstLayer.name;
-
-                    X.Dispose();
-                    O.Dispose();
                 }
 
                 nhwc.layers[l] = layer;
@@ -145,6 +156,47 @@ namespace Unity.Barracuda.Compiler.Passes
             foreach (var l in correctedConstants)
             {
                 nhwc.layers.Insert(0, l);
+            }
+        }
+
+        void CorrectDynamicInputsForBroadCast(ref Model nhwc)
+        {
+            // insert transposes before broadcastalbe ops
+            for (int l = 0; l < nhwc.layers.Count; l++)
+            {
+                Layer layer = nhwc.layers[l];
+                if (!ModelAnalyzer.IsLayerBroacastable(layer))
+                    continue;
+
+                if (!m_RanksByName.ContainsKey(layer.name) || m_RanksByName[layer.name] == null)
+                    continue;
+
+                int maxRank = m_RanksByName[layer.name].Value;
+                if (maxRank <= 1)
+                    continue;
+
+                for (int i = 0; i < layer.inputs.Length; i++)
+                {
+                    string input = layer.inputs[i];
+
+                    if (!m_RanksByName.ContainsKey(input) || m_RanksByName[input] == null)
+                        continue;
+
+                    int inputRank = m_RanksByName[input].Value;
+
+                    if (inputRank < 1 || inputRank == maxRank)
+                        continue;
+
+                    int[] permutations = GetPermutationForBroadcast(maxRank, inputRank, (m_isModelExportedFromNHWC && (m_layersChannelOrder[layer.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC)));
+
+                    Layer transpose = new Layer("transpose_forbroadcast_" + layer.name + "_" + input, Layer.Type.Transpose);
+                    transpose.inputs = new[] { input };
+                    transpose.pool = permutations;
+
+                    nhwc.layers[l].inputs[i] = transpose.name;
+                    nhwc.layers.Insert(l, transpose);
+                    l += 1;
+                }
             }
         }
     }

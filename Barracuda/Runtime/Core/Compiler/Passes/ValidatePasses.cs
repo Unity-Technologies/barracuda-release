@@ -117,6 +117,10 @@ namespace Unity.Barracuda.Compiler.Passes
                         ValidationHelper.AppendWarning((sizes[0] == 1) && (sizes[1] == 1), name, "ValidateIntermediateNCHWModelLayers:Upsample3D Only spatial(H and W) resizing is currently supported." +
                                                                                                  " Non spatial sizes (N and C) will be ignored and default to identity.", ref warnings);
                 }
+                else if (type == Layer.Type.Range)
+                {
+                    ValidationHelper.AppendWarning(true, name, "ValidateIntermediateNCHWModelLayers::Range only const inputs supported", ref warnings, MessageType.Error);
+                }
             }
         }
     }

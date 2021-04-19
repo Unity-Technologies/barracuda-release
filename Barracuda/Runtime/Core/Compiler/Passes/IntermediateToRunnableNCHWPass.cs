@@ -174,7 +174,6 @@ namespace Unity.Barracuda.Compiler.Passes
             rewriters.Add(Layer.Type.StridedSlice, SliceToBarracuda);
             rewriters.Add(Layer.Type.Gather, AxisToBarracuda);
             rewriters.Add(Layer.Type.Concat, AxisToBarracuda);
-            rewriters.Add(Layer.Type.ReduceMean, AxisToBarracuda);
             rewriters.Add(Layer.Type.Tile, ShapeToBarracuda);
             rewriters.Add(Layer.Type.Reshape, ShapeToBarracuda);
             rewriters.Add(Layer.Type.Transpose, TransposeToBarracuda);
@@ -220,6 +219,18 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 return false;
             });
+
+            // Reduce
+            rewriters.Add(Layer.Type.ReduceL1, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceL2, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceMax, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceMean, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceMin, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceProd, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceSum, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceLogSum, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceSumSquare, AxisToBarracuda);
+            rewriters.Add(Layer.Type.ReduceLogSumExp, AxisToBarracuda);
 
             foreach (var l in model.layers)
             {

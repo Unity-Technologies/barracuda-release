@@ -1,5 +1,18 @@
 # Release notes
 
+## [1.4.0] - 2021-04-01
+- Breaking Change: Barracuda now requires Unity 2019.4 LTS or later (was 2018.4 LTS)
+- Fix: Implicitly initialize memories for `LSTM`; Add documentation about usage
+- Fix: Allocator disposal in GenericWorker
+- Fix: ML-Agents 1.9 (Release 15) LSTMs (broken in 1.3.3)
+- Fix: Fixed crash in Tensor cleanup for `CSharpBurst` backend  
+- Improvement: Improved memory usage with `LSTM`
+- ONNX: Added support for TF custom ONNX node `MirrorPad`
+- ONNX: Fixed `Resize` when downsampling (need to be by a 1/int factor still) + support for const path for scale.
+- ONNX: Fixed `ReduceXXX` ops axis import.
+- ONNX: Added support ops set 11 and 13 for `Pad` operator
+- UI: Added a button to open Barracuda imported model in `netron`
+
 ## [1.3.3] - 2021-03-04
 - ONNX: Improved `LSTM` support.
 - ONNX: better dynamic op shape support

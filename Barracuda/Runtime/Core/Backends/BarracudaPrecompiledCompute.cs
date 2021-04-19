@@ -444,7 +444,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 var instructions = new List<CompiledInstruction>();
                 var Xr = X;
-                while (Xr.height * Xr.width >= 8*8*2)
+                while (Xr.height * Xr.width >= 8*8*2*2)
                 {
                     var lastLength = Xr.length;
                     var pool = new[] { 8, 8 };
@@ -570,6 +570,67 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 }
 
                 m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
+                continue;
+            }
+            else if (l.type == Layer.Type.ReduceMax ||
+                     l.type == Layer.Type.ReduceMean ||
+                     l.type == Layer.Type.ReduceMin ||
+                     l.type == Layer.Type.ReduceProd ||
+                     l.type == Layer.Type.ReduceSum)
+            {
+                Layer.Type kernelName = l.type;
+
+                int axis = l.axis;
+                axis = X.Axis(axis);
+                int baseReducedDim = X[axis];
+
+                int flatHeight, reducedDim, flatWidth;
+                int unrolledH, unrolledW;
+
+                var instructions = new List<CompiledInstruction>();
+                var Xr = X;
+                while (Xr[axis] >= 64*4)
+                {
+                    var lastLength = Xr.length;
+
+                    var Or = Xr;
+                    Or[axis] = ComputeHelper.IDivC(ComputeHelper.IDivC(Xr[axis], 64), 4);
+
+                    ComputeReduceDispatchDim(Xr, Or, axis, out flatHeight, out reducedDim, out flatWidth);
+
+                    s_PartialReduceSumDimensions[0] = flatHeight;
+                    s_PartialReduceSumDimensions[1] = flatWidth;
+                    s_PartialReduceSumDimensions[2] = reducedDim;
+
+                    unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+                    unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+                    var poolKernel = BestKernel(ComputeKernelLibrary.PartialReduce(kernelName, flatHeight, reducedDim, flatWidth));
+
+                    instructions.Add(new CompiledInstruction { kernel = poolKernel, shape = Or });
+                  
+                    Xr = Or;
+                    Assert.IsTrue(Xr.length < lastLength);
+                }
+
+                ComputeReduceDispatchDim(Xr, O, axis, out flatHeight, out reducedDim, out flatWidth);
+
+
+                s_GlobalReduceSumDimensions[0] = flatHeight;
+                s_GlobalReduceSumDimensions[1] = flatWidth;
+                s_GlobalReduceSumDimensions[2] = baseReducedDim;
+
+
+                unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+                unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+                var globalKernel = BestKernel(
+                    ComputeKernelLibrary.GlobalReduce(kernelName, flatHeight, reducedDim, flatWidth));
+
+                instructions.Add(new CompiledInstruction { kernel = globalKernel, shape = O });
+
+                m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
+
                 continue;
             }
             // Activations
@@ -981,12 +1042,18 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     /// <inheritdoc/>
     public override Tensor GlobalMaxPool2D(Tensor X)
     {
+        if (m_Compiled.instructions == null)
+            return base.GlobalMaxPool2D(X);
+
         return GlobalPool2D(X);
     }
 
     /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
+        if (m_Compiled.instructions == null)
+            return base.GlobalAvgPool2D(X);
+
         return GlobalPool2D(X);
     }
 
@@ -1081,6 +1148,75 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
+
+    /// <inheritdoc/>
+    protected override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    {
+        if (m_Compiled.instructions == null)
+            return base.Reduce(kernelName, X, axis);
+
+        axis = X.shape.Axis(axis);
+        int baseReducedDim = X.shape[axis];
+
+        int flatHeight, reducedDim, flatWidth;
+        int unrolledH, unrolledW;
+
+        for (var i = 0; i < m_Compiled.instructions.Length-1; ++i)
+        {      
+            CompiledInstruction instructionPool = m_Compiled.instructions[i];
+            Assert.IsNotNull(instructionPool.kernel.shader);
+
+            ComputeReduceDispatchDim(X.shape, instructionPool.shape, axis, out flatHeight, out reducedDim, out flatWidth);
+
+            s_PartialReduceSumDimensions[0] = flatHeight;
+            s_PartialReduceSumDimensions[1] = flatWidth;
+            s_PartialReduceSumDimensions[2] = reducedDim;
+
+            unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+            unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+       
+            var Or = NewTensor(instructionPool.shape);
+            var fnPool = instructionPool.kernel;
+       
+            fnPool.SetTensor("X", X.shape, Pin(X).buffer);
+            fnPool.SetTensor("O", Or.shape, Pin(Or).buffer);
+            fnPool.shader.SetInt("_UnrolledH", unrolledH);
+            fnPool.shader.SetInt("_UnrolledW", unrolledW);
+            fnPool.shader.SetInt("_ReducedDim", instructionPool.shape[axis]);
+            fnPool.shader.SetInts("_Pool", s_PartialReduceSumDimensions);
+       
+            fnPool.Dispatch();
+            X = Or;
+        }
+
+        CompiledInstruction instructionGlobalPool = m_Compiled.instructions[m_Compiled.instructions.Length - 1];
+        Assert.IsNotNull(instructionGlobalPool.kernel.shader);
+
+        ComputeReduceDispatchDim(X.shape, instructionGlobalPool.shape, axis, out flatHeight, out reducedDim, out flatWidth);
+
+
+        s_GlobalReduceSumDimensions[0] = flatHeight;
+        s_GlobalReduceSumDimensions[1] = flatWidth;
+        s_GlobalReduceSumDimensions[2] = baseReducedDim;
+
+
+        unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+        unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
+
+        var O = NewTensor(instructionGlobalPool.shape);
+        var fnGlobalPool = instructionGlobalPool.kernel;
+
+        fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
+        fnGlobalPool.SetTensor("O", O.shape, Pin(O).buffer);
+        fnGlobalPool.shader.SetInt("_UnrolledH", unrolledH);
+        fnGlobalPool.shader.SetInt("_UnrolledW", unrolledW);
+        fnGlobalPool.shader.SetInt("_ReducedDim", reducedDim);
+        fnGlobalPool.shader.SetInts("_Pool", s_GlobalReduceSumDimensions);
+
+        fnGlobalPool.Dispatch();
+        return O;
+    }
+
 
     /// <inheritdoc/>
     protected override Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)

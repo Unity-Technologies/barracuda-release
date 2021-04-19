@@ -587,36 +587,47 @@ internal class TextureFormatUtils
         return 4;
     }
 
-    public static Color FormatToChannelMask(Texture tex, int interpretPixelAsChannels)
+    public static int[] FormatToChannelMask(Texture tex, int interpretPixelAsChannels)
     {
         switch (interpretPixelAsChannels)
         {
             case 1:
                 if (IsRedOnly(tex))
-                    return new Color(1,0,0,0);
+                    return new [] { 1,0,0,0 };
                 if (IsAlphaOnly(tex))
-                    return new Color(0,0,0,1);
+                    return new [] { 0,0,0,1 };
                 // TODO: known issue, doesn't handle RG textures properly
-                return new Color(0,0,0,0); // see specialCaseWhenChannelMaskIsEmptyStoresAverage
+                return new [] { 0,0,0,0 }; // see specialCaseWhenChannelMaskIsEmptyStoresAverage
             case 2:
-                return new Color(1,1,0,0);
+                return new [] { 1,1,0,0 };
             case 3:
-                return new Color(1,1,1,0);
-            case 4:
+                return new [] { 1,1,1,0 };
             default:
-                return new Color(1,1,1,1);
+                return new [] { 1,1,1,1 };
         }
     }
 
-    public static Color FormatToChannelMask(Texture tex)
+    public static int[] FormatToChannelReadMap(Texture tex, int interpretPixelAsChannels)
     {
+        // -1 == use default channel value, otherwise channel index
+
         if (IsRedOnly(tex))
-            return new Color(1,0,0,1);
-        if (IsRedGreen(tex))
-            return new Color(1,1,0,1);
+            return new[] { 0, -1, -1, -1 };
         if (IsAlphaOnly(tex))
-            return new Color(0,0,0,1);
-        return new Color(1,1,1,1);
+            return new[] { -1, -1, -1, 3 };
+
+        switch (interpretPixelAsChannels)
+        {
+            case 1:
+                // TODO: known issue, doesn't handle RG textures properly
+                return new [] { -1,-1,-1,-1 }; // see specialCaseWhenChannelMaskIsEmptyStoresAverage
+            case 2:
+                return new[] { 0, 1, -1, -1 };
+            case 3:
+                return new[] { 0, 1, 2, -1 };
+            default:
+                return new[] { 0, 1, 2, 3 };
+        }
     }
 }
 
@@ -921,12 +932,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
             else if (rt)
                 texDepth = rt.volumeDepth;
 
-            var srcChannelMask = TextureFormatUtils.FormatToChannelMask(tex, texData.interpretPixelAsChannels);
-
             fn.SetTexture("X", tex);
             fn.shader.SetInts("_Pool", new int [] {tex.width, tex.height});
             fn.shader.SetInts("_Pad", offsets);
-            fn.shader.SetInts("_ChannelWriteMask", new [] {(int)srcChannelMask[0], (int)srcChannelMask[1], (int)srcChannelMask[2], (int)srcChannelMask[3] });
+            fn.shader.SetInts("_ChannelWriteMask",
+                TextureFormatUtils.FormatToChannelMask(tex, texData.interpretPixelAsChannels));
+            fn.shader.SetInts("_ChannelReadMap",
+                TextureFormatUtils.FormatToChannelReadMap(tex, texData.interpretPixelAsChannels));
 
             fn.Dispatch(texData.shape.width, texData.shape.height, texDepth);
 
@@ -2154,7 +2166,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         bool isInput1D = (X.flatWidth == 1);
 
-        TensorShape O = new TensorShape(); 
+        TensorShape O = new TensorShape();
         if (isInput1D)
             O = new TensorShape(X.flatHeight, depth);
         else

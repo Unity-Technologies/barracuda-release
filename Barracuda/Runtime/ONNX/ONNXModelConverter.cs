@@ -100,19 +100,37 @@ namespace Unity.Barracuda.ONNX
         {
             GraphProto graph = onnxModel.Graph;
             // Hallway-lstm.onnx - legacy importer splits recurrent_in to recurrent_in_c and recurrent_in_h
+            // adds output node recurrent_out_c and recurrent_out_h
             if (onnxModel.ProducerName == "tf2onnx"
                 && graph.Input.Any(i => i.Name.Contains("recurrent_in"))
                 && graph.Output.Any(o => o.Name.Contains("recurrent_out")))
                 return true;
 
-            // Hallway.onnx - legacy importer splits memories to memories_c and memories_h;
+            // Hallway.onnx / Hallway-no-workaround.onnx - legacy importer splits memories to memories_c and memories_h;
             // adds output node recurrent_out_<nn>_c and recurrent_out_<nn>_h
             NodeProto lstmNode = graph.Node.FirstOrDefault(n => n.OpType == "LSTM");
             if (onnxModel.ProducerName == "pytorch"
                 && graph.Input.Any(i => i.Name.Contains("memories"))
+                && lstmNode != null
                 && lstmNode.Output.Count == 3
                 && !graph.Node.Any(n => n.Name == lstmNode.Output[1]) // missing output cell and hidden nodes
                 && !graph.Node.Any(n => n.Name == lstmNode.Output[2]))
+                return true;
+
+            // Hallway_1_9.onnx - This was supposed to be the candidate for ML-Agents 2.0, but did not have transposes
+            // in the network, so we will have to import using legacy importer and support during the 1.x ML-Agents
+            // lifecycle since this already shipped.
+            lstmNode = graph.Node.FirstOrDefault(n => n.OpType == "LSTM");
+            if (onnxModel.ProducerName == "pytorch"
+                && graph.Input.Any(i => i.Name.Contains("recurrent_in"))
+                && graph.Output.Any(i => i.Name.Contains("recurrent_out"))
+                // Input to LSTM node is incorrectly coming directly from a Slice w/o a Transpose
+                && lstmNode != null
+                && lstmNode.Input.Any(i =>
+                {
+                    var inputNode = graph.Node.FirstOrDefault(n => n.Output.FirstOrDefault() == i);
+                    return inputNode != null && inputNode.Input.Contains("recurrent_in") && inputNode.OpType == "Slice";
+                }))
                 return true;
 
             return false;
@@ -666,24 +684,40 @@ namespace Unity.Barracuda.ONNX
             Add("Where", (net, node)   => { net.Where(node.Name, node.Input0, node.Input1, node.Input2); });
 
             // Padding ops
+            Add("MirrorPad", (net, node) =>
+            {
+                //Note: MirrorPad is not in onnx spec, it is a custom op from tensorflow implementing there own padding (aka symmetric).
+                node.UnsupportedAttribute("mode", "symmetric");
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                if (node.InputCount > 1)
+                    net.Pad(Layer.Type.Pad2DSymmetric, node.Name, node.Input0, node.Input1, null);
+                else
+                    net.Pad(Layer.Type.Pad2DSymmetric, node.Name, node.Input0, node.Pads);
+            });
             Add("Pad", (net, node) =>
             {
                 var mode = node.ModeOptional("constant");
-                var pads = node.Pads;
-
-                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                var value = node.GetOptionalFloat("value", 0.0f);
+                Layer.Type paddingLayerType = Layer.Type.Border2D;
                 switch (mode)
                 {
                     case "constant":
-                        var value = node.GetOptionalFloat("value", 0.0f);
-                        if (pads.Length > 4)
-                            net.Border3D(node.Name, node.Input0, pads, value);
-                        else
-                            net.Border2D(node.Name, node.Input0, pads, value);
+                        if (node.Pads.Length > 4)//TODO 3D padding for ops set 11 and up where pads is from a tensor
+                            paddingLayerType = Layer.Type.Border3D;
                         break;
-                    case "reflect": net.Pad2DReflect(node.Name, node.Input0, node.Pads); break;
-                    case "edge": net.Pad2DEdge(node.Name, node.Input0, node.Pads); break;
+                    case "reflect":
+                        paddingLayerType = Layer.Type.Pad2DReflect;
+                        break;
+                    case "edge":
+                        paddingLayerType = Layer.Type.Pad2DEdge;
+                        break;
                 }
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                if (node.InputCount == 1)
+                    net.Pad(paddingLayerType, node.Name, node.Input0, node.Pads, value);
+                else
+                    net.Pad(paddingLayerType, node.Name, node.Input0, node.Input1, node.Input2Optional);
             });
 
             // Pooling ops
@@ -720,24 +754,14 @@ namespace Unity.Barracuda.ONNX
                 // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
                 net.GlobalMaxPool2D(node.Name, node.Input0);
             });
-            Add("Upsample", (net, node) => {
-                // @TODO: the same for Resize node
-                string mode = node.ModeOptional("nearest");
-
-                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
-                if (node.InputCount == 2 && !node.IsInput1Const)
-                {
-                    // TODO: Input1 make be rank 1, which means that this would require a swizzle in the actual data
-                    if (node.Input0Rank <= 4)
-                        net.Upsample2D(node.Name, node.Input0, node.Input1, IsModeBilinear(net, node, mode));
-                    else
-                        net.Upsample3D(node.Name, node.Input0, node.Input1, IsModeBilinear(net, node, mode));
-                }
-                else
-                    ResampleNCHW(net, node, node.Name, node.Input0, node.ConvertScales(), mode);
+            Add("Upsample", (net, node) =>
+            {
+                UpsampleNCHW(net, node, 1);
             });
             Add("Resize", (net, node) => {
-                if (node.InputCount > 2) // Resize-11
+                var mode = node.ModeOptional("nearest");
+                var bilinear = IsModeBilinear(net, node, mode);
+                if (node.InputCount > 2) // Resize-11/13
                 {
                     node.UnsupportedAttribute("coordinate_transformation_mode", "half_pixel");
                     node.UnsupportedAttribute("cubic_coeff_a", -0.75f);
@@ -750,25 +774,19 @@ namespace Unity.Barracuda.ONNX
                     // roi : T2, It only takes effect when coordinate_transformation_mode is "tf_crop_and_resize"
                     // scales : tensor(float)
                     // sizes (optional) : tensor(int64)
-
                     // TODO: cropping via roi input
-                    // TODO: support sizes
                 }
 
                 // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default and size as constants, so this is non-runnable as-is
-                var mode = node.ModeOptional("nearest");
-                var bilinear = IsModeBilinear(net, node, mode);
-                if (node.InputCount > 3)
+                if (node.InputCount == 4)
                 {
+                    //Resize-11/13 using target size
                     net.Resample2D(node.Name, node.Input0, node.Input3, bilinear);
-                }
-                else if (node.InputCount == 2)
-                {
-                    net.Upsample2D(node.Name, node.Input0, node.Input1, bilinear);
                 }
                 else
                 {
-                    ResampleNCHW(net, node, node.Name, node.Input0, node.ConvertScales(), mode);
+                    //Resize using scales
+                    UpsampleNCHW(net, node, node.InputCount-1);
                 }
             });
             Add("Transpose", (net, node) =>
@@ -982,7 +1000,30 @@ namespace Unity.Barracuda.ONNX
                 int samples    = node.GetOptionalInt("sample_size", 1);
                 net.Multinomial(node.Name, node.Input0, samples, node.Seed);
             });
+            Add("Range", (net, node) =>
+            {
+                if (node.IsInput0Const && node.IsInput1Const && node.IsInput2Const)
+                {
+                    var startTensor = node.GetRequiredInputAsConstant(node.Input0, "N", "start");
+                    var limitTensor = node.GetRequiredInputAsConstant(node.Input1, "N", "start");
+                    var deltaTensor = node.GetRequiredInputAsConstant(node.Input2, "N", "start");
 
+                    Assert.AreEqual(startTensor.length, 1);
+                    Assert.AreEqual(limitTensor.length, 1);
+                    Assert.AreEqual(deltaTensor.length, 1);
+
+                    float start = startTensor[0];
+                    float limit = limitTensor[0];
+                    float delta = deltaTensor[0];
+
+                    var range = ONNXTensor.Range(start, limit, delta);
+                    Const(node, range);
+                }
+                else
+                {
+                    net.Range(node.Name, node.Input0, node.Input1, node.Input2);
+                }
+            });
             // Reduce ops
             Add("ReduceMax", (net, node)  => {
                 ReduceNCHW(net, node, Layer.Type.ReduceMax);
@@ -2361,20 +2402,43 @@ namespace Unity.Barracuda.ONNX
             return bilinear;
         }
 
-        internal static Layer ResampleNCHW(ModelBuilder net, ONNXNodeWrapper node, string name, object input, float[] scales, string mode)
+        internal static Layer UpsampleNCHW(ModelBuilder net, ONNXNodeWrapper node, int scaleInputIndex)
+        {
+            string mode = node.ModeOptional("nearest");
+            var bilinear = IsModeBilinear(net, node, mode);
+
+            // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+            if (scaleInputIndex != 0 && node.InputCount > scaleInputIndex && !node.IsInputConst(scaleInputIndex))
+            {
+                // TODO: Input1 may be rank 1, which means that this would require a swizzle in the actual data
+                if (node.Input0Rank <= 4)
+                    return net.Upsample2D(node.Name, node.Input0, node.GetRequiredInput(scaleInputIndex), bilinear);
+                else
+                    return net.Upsample3D(node.Name, node.Input0, node.GetRequiredInput(scaleInputIndex), bilinear);
+            }
+            else
+                return UpsampleFromConstNCHW(net, node, node.Name, node.Input0, node.ConvertScales(), mode);
+        }
+
+        internal static Layer UpsampleFromConstNCHW(ModelBuilder net, ONNXNodeWrapper node, string name, object input, float[] scales, string mode)
         {
             if (!scales.All(x => x > 0.0f))
                 Warn(net, node, $"Only positive scale values are supported.");
 
-            if (scales.All(x => x < 1.0f))
+            if (scales.Length == 4 &&
+                scales[0] == 1.0f &&
+                scales[1] == 1.0f &&
+                scales[2] < 1.0f &&
+                scales[3] < 1.0f &&
+                IsModeBilinear(net, node, mode))
             {
-                if (!scales.All(x => Mathf.Approximately(1f / x, Mathf.Round(1f / x))))
+                var scales2D = scales.Skip(2);
+                if (!scales2D.All(x => Mathf.Approximately(1f / x, Mathf.Round(1f / x))))
                     Warn(net, node, $"Only inverse of scale values which produce integer are currently supported. Inverse of scale value will be rounded to closest integer.");
 
-                var noStride = new[] { 1, 1 };
-                var noPad = new[] { 0, 0 };
-                var inverseScalesRoundedToInt = scales.Select(x => (int)Mathf.Round(1f / x)).ToArray();
-                return net.AvgPool2D(name, input, inverseScalesRoundedToInt, noStride, noPad);
+                var noPad = new[] { 0, 0, 0, 0 };
+                var inverseScalesRoundedToInt = scales2D.Select(x => (int)Mathf.Round(1f / x)).ToArray();
+                return net.AvgPool2D(name, input, inverseScalesRoundedToInt, inverseScalesRoundedToInt, noPad);
             }
             else
             {
@@ -2401,13 +2465,12 @@ namespace Unity.Barracuda.ONNX
                 if (!scales.All(x => Mathf.Approximately(1f/x, Mathf.Round(1f/x))))
                     Warn(net, node, $"Only inverse of scale values which produce integer are currently supported. Inverse of scale value will be rounded to closest integer.");
 
-                var noStride = new[] {1, 1};
-                var noPad = new[] {0, 0};
+                var noPad = new[] {0, 0, 0, 0};
                 var inverseScalesRoundedToInt = scales.Select(x => (int)Mathf.Round(1f/x)).ToArray();
                 // @TODO: nearest, actually this is bilinear downsampling
                 if (scales.Length > 2)
                     Warn(net, node, ">2D downsampling are not supported yet!");
-                return net.AvgPool2D(name, input, inverseScalesRoundedToInt, noStride, noPad);
+                return net.AvgPool2D(name, input, inverseScalesRoundedToInt, inverseScalesRoundedToInt, noPad);
             }
             else
             {

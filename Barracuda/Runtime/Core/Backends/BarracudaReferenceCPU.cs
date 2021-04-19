@@ -3196,10 +3196,6 @@ public class ReferenceCPUOps : IOps
 
         Tensor O = null;
 
-        // It's necessary to copy because this is a working memory and we don't want to overwrite the input tensors
-        hidden = Copy(hidden);
-        cell = Copy(cell);
-
         for (int s = 0; s < sequenceLength; s++)
         {
             using (var td = new TensorScope()) // This will dispose every sequence iteration
@@ -3244,9 +3240,9 @@ public class ReferenceCPUOps : IOps
                 else
                     O = Concat(new[] { _(O), _(reshaped_state_h) }, TensorShape.DataBatch);
 
-                // If this is not the last sequence, then collect previous memories before assigning new ones
-                // (i.e. keep the final memories)
-                if (s < sequenceLength - 1)
+                // Collect previous memories before assigning new ones.
+                // Don't dispose the original hidden / cell memories since those were input tensors
+                if (s != 0)
                 {
                     _(hidden);
                     _(cell);

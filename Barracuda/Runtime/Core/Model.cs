@@ -183,6 +183,11 @@ public class Layer
         NonZero = 70,
 
         /// <summary>
+        /// Range layer
+        /// </summary>
+        Range = 71,
+
+        /// <summary>
         /// Addition layer
         /// </summary>
         Add = 100,

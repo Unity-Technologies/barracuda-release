@@ -968,6 +968,12 @@ public interface IVars : IDisposable
     void PrepareStorage(Layer forLayer);
 
     /// <summary>
+    /// Dispose storage that can be deleted after layer
+    /// </summary>
+    /// <param name="forLayer">layer</param>
+    void DisposeAfterLayer(Layer forLayer);
+
+    /// <summary>
     /// Store `result` for layer
     /// </summary>
     /// <param name="fromLayer">layer</param>

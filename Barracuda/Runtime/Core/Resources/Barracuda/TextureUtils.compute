@@ -46,6 +46,7 @@ float4 _Scale;
 float4 _Bias;
 float2 _LutParams;
 bool _FlipY;
+int4 _ChannelReadMap;
 
 // TODO: call TextureToTensor(v, dispatchThreadID) from Tex2DToTensor() { v = Xtex2D.SampleLevel }
 [numthreads(8,8,1)]
@@ -77,9 +78,14 @@ void KERNEL_FUNC(TextureToTensor)(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         if (_ChannelWriteMask[i] == 1)
         {
-            O.Set(b, y, x, c, v[i]);
-            c += 1;
+            int readFrom = _ChannelReadMap[i];
+            float value = i < 3 ? 0 : 1; // default values for channels R,G,B=0 and A=1
+            if (readFrom >= 0)
+                value = v[readFrom];
+
+            O.Set(b, y, x, c, value);
             specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+            c += 1;
         }
     }
 

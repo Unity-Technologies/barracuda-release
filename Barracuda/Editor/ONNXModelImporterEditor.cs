@@ -11,6 +11,7 @@ using UnityEditor.Experimental.AssetImporters;
 #endif
 using UnityEngine;
 using System;
+using System.IO;
 using System.Reflection;
 using ImportMode=Unity.Barracuda.ONNX.ONNXModelConverter.ImportMode;
 
@@ -268,6 +269,23 @@ public class NNModelEditor : UnityEditor.Editor
         }
     }
 
+    private void OpenNNModelAsTempFileButton(NNModel nnModel)
+    {
+        if (nnModel == null)
+            return;
+        if (nnModel.modelData == null)
+            return;
+
+        if (GUILayout.Button("Open imported NN model as temp file"))
+        {
+            string tempPath = Application.temporaryCachePath;
+            string filePath = Path.Combine(tempPath, nnModel.name);
+            string filePathWithExtension = Path.ChangeExtension(filePath, "nn");
+            File.WriteAllBytes(filePathWithExtension, nnModel.modelData.Value);
+            System.Diagnostics.Process.Start(filePathWithExtension);
+        }
+    }
+
     /// <summary>
     /// Editor UI rendering callback
     /// </summary>
@@ -277,6 +295,7 @@ public class NNModelEditor : UnityEditor.Editor
             return;
 
         GUI.enabled = true;
+        OpenNNModelAsTempFileButton(target as NNModel);
         GUILayout.Label($"Source: {m_Model.IrSource}");
         GUILayout.Label($"Version: {m_Model.IrVersion}");
         GUILayout.Label($"Producer Name: {m_Model.ProducerName}");

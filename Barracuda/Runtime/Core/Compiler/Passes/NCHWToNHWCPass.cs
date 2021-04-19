@@ -149,10 +149,10 @@ namespace Unity.Barracuda.Compiler.Passes
             // We need to correct constants to have broadcast work correctly
             // ONNX: 1,64,32 + c:32
             // Barracuda: 1,_32,64 + c:_,_,32,64 and not c:32,_,_,_
-            // TODO: need to insert transpose if rank(X) < rank(c)
             // X:5,7 + c: 6,9,5,7 = 6,9,5,7
             // X: 5,_,_,7 + c: 6,5,7,9 = ???
             CorrectConstantsForBroadCast(ref nhwc);
+            CorrectDynamicInputsForBroadCast(ref nhwc);
 
             // for NHWC importers, perform slightly more aggressive output shape check
             // => add transposes to match onnx layout

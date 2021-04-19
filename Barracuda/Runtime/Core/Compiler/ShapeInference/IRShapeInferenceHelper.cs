@@ -244,6 +244,9 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.Pad2DSymmetric:
                 case Layer.Type.Pad2DEdge:
                 {
+                    if (inputShapes.Length > 1)
+                        return null;
+
                     TensorShape X = inputShapes[0];
                     X = new TensorShape(X.batch, X.width, X.channels, X.height);
                     Assert.IsNotNull(layer.pad);
@@ -252,33 +255,26 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Upsample2D:
                 {
-                    TensorShape X = inputShapes[0];
+
                     if (inputShapes.Length > 1)
-                    {
                         return null;
-                    }
-                    else
-                    {
-                        // pool size is treated as upsample coefficient here
-                        Assert.IsNotNull(layer.pool);
-                        Assert.AreEqual(layer.pool.Length, 4);
-                        return new TensorShape(X.batch * layer.pool[0], X.height * layer.pool[1], X.width * layer.pool[2], X.channels * layer.pool[3]);
-                    }
+
+                    TensorShape X = inputShapes[0];
+                    // pool size is treated as upsample coefficient here
+                    Assert.IsNotNull(layer.pool);
+                    Assert.AreEqual(layer.pool.Length, 4);
+                    return new TensorShape(X.batch * layer.pool[0], X.height * layer.pool[1], X.width * layer.pool[2], X.channels * layer.pool[3]);
                 }
                 case Layer.Type.Upsample3D:
                 {
-                    TensorShape X = inputShapes[0];
                     if (inputShapes.Length > 1)
-                    {
                         return null;
-                    }
-                    else
-                    {
-                        // pool size is treated as upsample coefficient here
-                        Assert.IsNotNull(layer.pool);
-                        Assert.AreEqual(layer.pool.Length, 5);
-                        return new TensorShape(X.batch * layer.pool[0], X.depth * layer.pool[1], X.height * layer.pool[2], X.width * layer.pool[3], X.channels * layer.pool[4]);
-                    }
+
+                    TensorShape X = inputShapes[0];
+                    // pool size is treated as upsample coefficient here
+                    Assert.IsNotNull(layer.pool);
+                    Assert.AreEqual(layer.pool.Length, 5);
+                    return new TensorShape(X.batch * layer.pool[0], X.depth * layer.pool[1], X.height * layer.pool[2], X.width * layer.pool[3], X.channels * layer.pool[4]);
                 }
                 case Layer.Type.Resample2D:
                 {
@@ -356,6 +352,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     }
 
                     return OnnxLayoutToTensorShape(O.ToArray());
+                }
+                case Layer.Type.Range:
+                {
+                    return null; // only const support
                 }
                 case Layer.Type.ReduceL1:
                 case Layer.Type.ReduceL2:

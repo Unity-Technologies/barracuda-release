@@ -35,6 +35,52 @@ namespace Unity.Barracuda.Compiler.Passes
                         layer.pool = new[] { size[0], size[1], size[2], size[3], size[4], size[5], size[6], size[7] }; // [S,R,N,T,D,H,W,C]
                 }
             });
+            rewritersNHWC.Add(Layer.Type.Transpose, (layer, net) =>
+            {
+                var size = layer.pool;
+                if (size.Length == 1)
+                {
+                    layer.pool = new[] { 0, 1, 2, 3 }; // [N,_,_,_]
+                    layer.pool[0] = size[0];
+                }
+                else if (size.Length == 2)
+                {
+                    layer.pool = new[] { 0, 1, 2, 3 }; // [N, _, _, C]
+                    layer.pool[0] = size[0] == 0 ? 0 : size[0] + 2;
+                    layer.pool[3] = size[1] == 0 ? 0 : size[1] + 2;
+                }
+                else if (size.Length == 3)
+                {
+                    layer.pool = new[] { 0, 1, 2, 3 }; // [N, _, W, C]
+                    layer.pool[0] = size[0] == 0 ? 0 : size[0] + 1;
+                    layer.pool[2] = size[1] == 0 ? 0 : size[1] + 1;
+                    layer.pool[3] = size[2] == 0 ? 0 : size[2] + 1;
+                }
+                else if (size.Length == 4)
+                    layer.pool = size; // [N,H,W,C]
+                else if (size.Length == 5)
+                {
+                    layer.pool = new[] { 0, 1, 2, 3, 4, 5, 6, 7 }; // [_,_,N,_,D,H,W,C]
+                    layer.pool[2] = size[0] == 0 ? 2 : size[0] + 3;
+                    layer.pool[4] = size[1] == 0 ? 2 : size[1] + 3;
+                    layer.pool[5] = size[2] == 0 ? 2 : size[2] + 3;
+                    layer.pool[6] = size[3] == 0 ? 2 : size[3] + 3;
+                    layer.pool[7] = size[4] == 0 ? 2 : size[4] + 3;
+                }
+                else if (size.Length == 6)
+                {
+                    layer.pool = new[] { 0, 1, 2, 3, 4, 5, 6, 7 }; // [1,1,N,T,D,H,W,C]
+                    layer.pool[2] = size[0] + 2;
+                    layer.pool[3] = size[1] + 2;
+                    layer.pool[4] = size[2] + 2;
+                    layer.pool[5] = size[3] + 2;
+                    layer.pool[6] = size[4] + 2;
+                    layer.pool[7] = size[5] + 2;
+                }
+                else
+                    layer.pool = new[] { size[0], size[1], size[2], size[3], size[4], size[5], size[6], size[7] }; // [S,R,N,T,D,H,W,C]
+            });
+            rewritersNHWC.Add(Layer.Type.Gather, ConvertAxisNHWC);
             rewritersNHWC.Add(Layer.Type.Concat, ConvertAxisNHWC);
             rewritersNHWC.Add(Layer.Type.ReduceMax, ConvertAxisNHWC);
             rewritersNHWC.Add(Layer.Type.ReduceMean, ConvertAxisNHWC);
@@ -112,6 +158,14 @@ namespace Unity.Barracuda.Compiler.Passes
                 }
             });
             rewritersNHWC.Add(Layer.Type.Flatten, (layer, net) =>
+            {
+                layer.type = Layer.Type.Nop;
+            });
+            rewritersNHWC.Add(Layer.Type.Squeeze, (layer, net) =>
+            {
+                layer.type = Layer.Type.Nop;
+            });
+            rewritersNHWC.Add(Layer.Type.Unsqueeze, (layer, net) =>
             {
                 layer.type = Layer.Type.Nop;
             });

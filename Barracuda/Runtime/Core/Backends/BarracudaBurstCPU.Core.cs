@@ -1,3 +1,4 @@
+using System.Threading;
 using UnityEngine;
 using Unity.Jobs;
 
@@ -76,15 +77,9 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     /// </summary>
     public override void Dispose()
     {
-        try
-        {
+        // It isn't safe to Complete jobs from a finalizer thread, so
+        if (Thread.CurrentThread == BurstCPUOps.MainThread)
             CompleteAllPendingOperations();
-        }
-        catch (UnityException)
-        {
-            // if Dispose() is called from the finalizer thread, exception will be thrown from Complete()
-            // @TODO: rethrow exception, if Dispose was called from the user code
-        }
 
         base.Dispose();
     }

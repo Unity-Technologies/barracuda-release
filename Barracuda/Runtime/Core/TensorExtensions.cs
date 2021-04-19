@@ -152,7 +152,9 @@ public static class TensorExtensions
             count = X.length;
         for (int i = 0; i < count; ++i)
         {
-            if (Mathf.Abs(X[i] - Y[i]) > epsilon)
+            // If one of the values is NaN, the comparison against epislon will return false.
+            // But if tensor has NaN and the other doesn't, they shouldn't be considered "close".
+            if (Mathf.Abs(X[i] - Y[i]) > epsilon || float.IsNaN(X[i]) != float.IsNaN(Y[i]))
             {
                 // @TODO: move logging into dedicated function
                 D.Log("First mismatch @ [" + i + "]: " + X[i] + " != " + Y[i]);

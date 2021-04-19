@@ -281,7 +281,7 @@ Barracuda currently supports the following [ONNX operators](https://github.com/o
 * Unsupported attribute: <tt>input_forget</tt><br>
 * Unsupported attribute: <tt>activation_beta</tt><br>
 * Maps to Barracuda op: <tt>LSTM</tt><br>
-* Notes: ML-Agents models only are supported<br>
+* Notes: Only ML-Agents models are supported.<br>See additional information about [execution](ModelExecution.md#LSTM-Execution).<br>
 
 
 ##### <a name="MatMul">MatMul</a>
