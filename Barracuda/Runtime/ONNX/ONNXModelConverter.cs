@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Google.Protobuf;
+using Google.Protobuf.Collections;
 using Onnx;
 using Unity.Barracuda.Compiler.Passes;
 using UnityEngine;
@@ -27,6 +28,7 @@ namespace Unity.Barracuda.ONNX
 
             // Additional options
             KeepAsNCHW     = 1 << 16,
+            SkipMetadataImport = 1 << 17,
         }
 
         // Configuration
@@ -166,7 +168,10 @@ namespace Unity.Barracuda.ONNX
                 }
                 else
                 {
-                    var runnableNHWCPass = new IntermediateToRunnableNHWCPass();
+                    var runnableNHWCPass = new IntermediateToRunnableNHWCPass()
+                    {
+                        Optimize = m_OptimizeModel
+                    };
                     runnableNHWCPass.Run(ref model);
                 }
             }
@@ -216,10 +221,11 @@ namespace Unity.Barracuda.ONNX
                 if (node.IsInput0Const)
                 {
                     var onnxShape = node.Input0Constant("ONNX").AsInts();
+                    int onnxRank = onnxShape.Length;
                     onnxShape = ONNXLayout.ConvertSymbolicShapeToBarracuda(onnxShape, "ONNX");
                     var tensor = new Tensor(onnxShape);
                     tensor.Fill(value);
-                    net.Const(node.Name, tensor);
+                    net.Const(node.Name, tensor, -1, onnxRank);
                 }
                 else
                 {
@@ -1673,17 +1679,22 @@ namespace Unity.Barracuda.ONNX
                 string input = node.Input0;
                 string output = node.Name;
 
-                if (axis != 1)
+                int rank = node.Input0Rank;
+                if(rank == 2)
                 {
-                    Layer transposeLayer = net.Transpose($"Transpose_For_{node.Name}", input, toNCHW);
-                    input = transposeLayer.name;
-                    output = $"{node.Name}_NCHW"; // Use an intermediate node name since the original name will now be final transpose
+                    axis = axis == 0 ? 0 : 3; // NC => N__C
+                }
+                else if (rank == 3)
+                {
+                    axis = axis == 0 ? 0 : (axis == 1 ? 3 : axis); // NCW => N_WC
+                }
+                else
+                {
+                    axis = axis == 0 ? 0 : (axis == 1 ? 3 : axis-1); // NCHW => NHWC
                 }
 
-                Layer layer = net.Softmax(output, input, axis);
 
-                if (axis != 1)
-                    net.Transpose(node.Name, layer.name, toNHWC);
+                Layer layer = net.Softmax(output, input, axis);
             });
             Add("Tanh", (net, node)     => { net.Tanh(node.Name, node.Input0); });
             Add("Sqrt", (net, node)     => { net.Sqrt(node.Name, node.Input0); });
@@ -2726,6 +2737,18 @@ namespace Unity.Barracuda.ONNX
 
             // Builds list of nodes that should not be included into the final Barracuda Model, mostly for LSTMs
             var nodesToSkip = standardImport ? new HashSet<string>() : BuildNodeSkipList(onnxModel.Graph);
+
+            // Import any (optional) metadata properties
+            if (!m_ImportMode.HasFlag(ImportMode.SkipMetadataImport))
+            {
+                RepeatedField<StringStringEntryProto> metadataProps = onnxModel.MetadataProps;
+                Dictionary<string, string> metadata = model.Metadata;
+                for (int p = 0; p < metadataProps.Count; p++)
+                {
+                    StringStringEntryProto prop = metadataProps[p];
+                    metadata.Add(prop.Key, prop.Value);
+                }
+            }
 
             // Convert graph inputs & outputs
             var initializersByName = onnxModel.Graph.Initializer.ToDictionary(i => i.Name, i => true);

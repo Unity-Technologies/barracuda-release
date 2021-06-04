@@ -15,6 +15,7 @@
 #pragma kernel BroadcastLogicalAnd_NHWC CHANNELS_FIRST=0
 #pragma kernel BroadcastLogicalXor_NHWC CHANNELS_FIRST=0
 #pragma kernel BroadcastWhere_NHWC CHANNELS_FIRST=0
+#pragma kernel BroadcastDivExpSub_NHWC CHANNELS_FIRST=0
 
 #include "Broadcast.cginc"
 

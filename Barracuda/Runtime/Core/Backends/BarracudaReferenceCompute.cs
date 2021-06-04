@@ -27,7 +27,7 @@ internal static class ComputeHelper
 /// <summary>
 /// `Tensor` data storage for GPU backends
 /// </summary>
-public class ComputeTensorData : ITensorData
+public class ComputeTensorData : UniqueResource, ITensorData
 {
     private bool m_DisposeBufferAfterUse;
     private ComputeBuffer m_Buffer;
@@ -403,6 +403,18 @@ public class ComputeTensorData : ITensorData
         return m_Buffer.count;
     } }
 
+    /// <inheritdoc/>
+    public virtual bool inUse { get
+    {
+        return true;
+    } }
+
+    /// <inheritdoc/>
+    public virtual bool isGPUMem { get
+    {
+        return true;
+    } }
+
     /// <summary>
     /// Summary
     /// </summary>
@@ -634,7 +646,7 @@ internal class TextureFormatUtils
 /// <summary>
 /// Texture based `Tensor` storage
 /// </summary>
-public class TextureAsTensorData : ITensorData
+public class TextureAsTensorData : UniqueResource, ITensorData
 {
     /// <summary>
     /// Flip flag enum
@@ -840,6 +852,18 @@ public class TextureAsTensorData : ITensorData
         return m_Shape.length;
     } }
 
+    /// <inheritdoc/>
+    public virtual bool inUse { get
+    {
+        return true;
+    } }
+
+    /// <inheritdoc/>
+    public virtual bool isGPUMem { get
+    {
+        return true;
+    } }
+
     /// <summary>
     /// Dispose
     /// </summary>
@@ -863,13 +887,15 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     /// <summary>
-    /// Pin `Tensor` to GPU compute device
+    /// Pin `Tensor` to GPU compute device, if `uploadCache` is false, data is not uploaded to device and `Tensor` is not 0-filled
     /// </summary>
     /// <param name="X">`Tensor`</param>
+    /// <param name="uploadCache">`bool`</param>
     /// <returns>`ComputeTensorData`</returns>
-    public ComputeTensorData Pin(Tensor X)
+    /// <summary>
+    public ComputeTensorData Pin(Tensor X, bool uploadCache = true)
     {
-        X.FlushCache();
+        X.FlushCache(uploadCache);
 
         var onDevice = X.tensorOnDevice as ComputeTensorData;
         if (onDevice == null)
@@ -878,7 +904,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
             if (asTexture != null)
                 X.AttachToDevice(TextureToTensorData(asTexture, X.name));
             else
-                X.UploadToDevice(new ComputeTensorData(X.shape, X.name, ComputeInfo.channelsOrder));
+            {
+                if (uploadCache)
+                    X.UploadToDevice(new ComputeTensorData(X.shape, X.name, ComputeInfo.channelsOrder)); // device is not compatible, create new array and upload
+                else
+                    X.AllocateOnDevice(new ComputeTensorData(X.shape, X.name, ComputeInfo.channelsOrder, false)); // device is not compatible, create new array but do not upload nor 0-fill
+            }
         }
 
         Assert.IsNotNull(X.tensorOnDevice as ComputeTensorData);
@@ -911,7 +942,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
     internal ITensorData TextureToTensorData(TextureAsTensorData texData, string name)
     {
-        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "TextureToTensor");
+        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "TextureToTensor", GetModelExecutionsReporter());
         var tensorData = new ComputeTensorData(texData.shape, name, ComputeInfo.channelsOrder, false);
 
         fn.SetTensor("O", texData.shape, tensorData.buffer);
@@ -970,7 +1001,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             target.Create();
         }
 
-        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "TensorToTexture"+ (lut == null?"NoLUT":"3DLUT"));
+        var fn = new ComputeFunc(ComputeShaderContext.Optimized, "TensorToTexture"+ (lut == null?"NoLUT":"3DLUT"), GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         fn.SetTexture("O", target);
         fn.shader.SetVector("_Scale", scale);
@@ -1071,7 +1102,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = new TensorShape(X.flatHeight, W.flatWidth);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dense");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dense", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", W);
@@ -1091,7 +1122,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     {
         var Oshape = new TensorShape(X.batch, 1, W.channels, X.channels);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dense3");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dense3", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", W);
@@ -1123,7 +1154,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2DWinograd_2x2_3x3");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2DWinograd_2x2_3x3", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1152,7 +1183,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv3D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv3D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1187,7 +1218,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return Conv2DWinograd(X, K, B, stride, pad, fusedActivation);
         }
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1220,7 +1251,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var Oshape = X.shape.ApplyKernel(K.shape, stride, pad);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "DepthwiseConv2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "DepthwiseConv2D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1256,7 +1287,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             K.kernelWidth - pad[2] - 1, K.kernelHeight - pad[3] - 1
         };
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2DTrans");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Conv2DTrans", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", K);
@@ -1281,7 +1312,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(X.batch, X.height*scale[1], X.width*scale[0], X.channels);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, bilinear ? "UpsampleBilinear2D": "Upsample2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, bilinear ? "UpsampleBilinear2D": "Upsample2D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1301,7 +1332,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(1, 1, X.batch, 1, X.depth*scale[2], X.height*scale[1], X.width*scale[0], X.channels);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, trilinear ? "UpsampleTrilinear3D": "Upsample3D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, trilinear ? "UpsampleTrilinear3D": "Upsample3D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1321,7 +1352,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(X.batch, size[1], size[0], X.channels);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, bilinear ? "ResampleBilinear2D" : "Resample2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, bilinear ? "ResampleBilinear2D" : "Resample2D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1336,7 +1367,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(X.batch, X.height * blocksize[1], X.width * blocksize[0], X.channels / (blocksize[0] * blocksize[1]));
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "DepthToSpace_" + mode);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "DepthToSpace_" + mode, GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1353,7 +1384,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = new TensorShape(X.batch, X.height / blocksize[1], X.width / blocksize[0], X.channels * (blocksize[0] * blocksize[1]));
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "SpaceToDepth");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "SpaceToDepth", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1371,7 +1402,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyPool(pool, stride, pad);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName, GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pool", pool);
@@ -1404,7 +1435,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(X.shape.Is4D());
         var O = new TensorShape(X.batch, 1, 1, X.channels);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName, GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1429,7 +1460,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(X.shape.Is4D());
         var O = new TensorShape(X.batch, 2, 1, X.channels);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "GlobalAvgVariancePool2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "GlobalAvgVariancePool2D", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1451,7 +1482,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyBorder(pad);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName, GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1489,7 +1520,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape.ApplyBorder(pad);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName, GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1550,7 +1581,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "ScaleBias");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "ScaleBias", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", S);
@@ -1575,7 +1606,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             pool = X.batch;
 
         var Oshape = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "InstanceNorm");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "InstanceNorm", GetModelExecutionsReporter());
         fn.shader.SetFloat("_Epsilon", epsilon);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
@@ -1595,7 +1626,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
     {
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "LRN");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "LRN", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         fn.shader.SetFloat("_Alpha", alpha);
@@ -1613,7 +1644,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(alpha >= 0f && alpha <= 1f);
 
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dropout");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Dropout", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1638,7 +1669,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     protected virtual Tensor Activation(string kernelName, Tensor X, float alpha = 0f, float beta = 0f)
     {
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName, GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         fn.shader.SetFloat("_Alpha", alpha);
@@ -1659,7 +1690,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "PRelu");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "PRelu", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", S);
@@ -1670,16 +1701,42 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1 || axis > X.shape.FirstNotIdentityFeatureDimensionIndex())
-            return base.Softmax(X, axis);
+        axis = X.shape.Axis(axis);
+        var Oshape = X.shape;
 
-        var O = X.shape;
+        int reducedDim = X.shape[axis];
+        var XShape = X.shape.ToArray();
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Softmax");
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+        {
+            XShape[TensorShape.DataBatch + 1] = Oshape[TensorShape.C];
+            for (int i = TensorShape.DataBatch + 1; i < TensorShape.C; i++)
+                XShape[i + 1] = Oshape[i];
+
+            if (axis == TensorShape.C)
+                axis = TensorShape.DataBatch + 1;
+            else if (axis > TensorShape.DataBatch)
+                axis += 1;
+        }
+
+        int height = 1;
+        for (var i = 0; i < axis; i++)
+            height *= XShape[i];
+
+        int width = 1;
+        for (var i = axis + 1; i < X.shape.rank; i++)
+            width *= XShape[i];
+
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Softmax", GetModelExecutionsReporter());
+
+        var strides = new[] { height, reducedDim, width, 0, 0 };
+        fn.shader.SetInts("_Stride", strides);
 
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
+        var O =  Dispatch(fn, Oshape, height, width, 1);
+
+        return O;
     }
 
     /// <inheritdoc/>
@@ -1690,7 +1747,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var O = X.shape;
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "LogSoftmax");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "LogSoftmax", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
 
@@ -1889,7 +1946,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(newShape.width == X.width || X.width == 1);
         Assert.IsTrue(newShape.channels == X.channels || X.channels == 1);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Expand");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Expand", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
 
         return Dispatch(fn, newShape, newShape.channels, newShape.width, newShape.height);
@@ -1911,7 +1968,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(tensors.Length > 0);
         var X = tensors[0];
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, kernelName, GetModelExecutionsReporter());
         bool isFirstDispatch = true;
         for (int t = 1; t < tensors.Length; ++t)
         {
@@ -2005,7 +2062,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
         {Layer.Type.ReduceSum, "ReduceSum"}, {Layer.Type.ArgMax, "ArgMax"},
         {Layer.Type.ArgMin, "ArgMin"}
     };
-    protected virtual Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+
+    internal virtual Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
 
@@ -2018,7 +2076,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var oShape = X.shape.Reduce(TensorShape.C);
         Assert.AreEqual(oShape.channels, 1);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, s_ReduceRefKernelNames[kernelName]);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, s_ReduceRefKernelNames[kernelName], GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
 
         var O = Dispatch(fn, oShape, oShape.width, oShape.height, 1);
@@ -2150,15 +2208,18 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "BroadcastWhere");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "BroadcastWhere", GetModelExecutionsReporter());
+
+        var O = TensorExtensions.MaxShape(new[] { C, A, B });
 
         SetTensor(fn, "X", C);
         SetTensor(fn, "W", A);
         SetTensor(fn, "K", B);
 
-        return Dispatch(fn, C.shape, C.channels, C.width, C.height);
+        return Dispatch(fn, O, O.channels, O.width, O.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
     {
         if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
@@ -2172,7 +2233,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         else
             O = new TensorShape(X.flatHeight, 1, depth, X.flatWidth);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "OneHot");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "OneHot", GetModelExecutionsReporter());
 
         SetTensor(fn, "X", X);
         fn.shader.SetFloat("_Alpha", onValue);
@@ -2197,14 +2258,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         if (X.shape.Is4D() && newShape.Is4D())
         {
-            var fn = new ComputeFunc(ComputeShaderContext.Reference, "ReshapeFromNHWCModel_NCHW");
+            var fn = new ComputeFunc(ComputeShaderContext.Reference, "ReshapeFromNHWCModel_NCHW", GetModelExecutionsReporter());
             SetTensor(fn, "X", X);
             SetTensor(fn, "O", O);
             fn.Dispatch( O.width, O.height, O.channels);
         }
         else
         {
-            var fn = new ComputeFunc(ComputeShaderContext.Reference, "Reshape8DFromChannelFirstModel_NCHW");
+            var fn = new ComputeFunc(ComputeShaderContext.Reference, "Reshape8DFromChannelFirstModel_NCHW", GetModelExecutionsReporter());
             SetTensor(fn, "X", X);
             SetTensor(fn, "O", O);
             var xD  = new[] {X.shape[0], X.shape[1],X.shape[3],X.shape[4]};
@@ -2233,7 +2294,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
         var O = NewTensor(newShape, "O");
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, isNHWCCopy?"Copy":"Copy8D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, isNHWCCopy?"Copy":"Copy8D", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         var copyShape = X.shape;
         fn.SetTensor("O", copyShape, Pin(O).buffer);
@@ -2282,7 +2343,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(X.dimensions <= 2);
         var O = new TensorShape(X.flatWidth, X.flatHeight);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose2D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose2D", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
     }
@@ -2358,7 +2419,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var outStride0_3 = new[] {outStride[0],outStride[1],outStride[2],outStride[3]};
         var outStride4_7 = new[] {outStride[4],outStride[5],outStride[6],outStride[7]};
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose8D");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose8D", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pad", d0_3);
         fn.shader.SetInts("_Pool", d4_7);
@@ -2383,13 +2444,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
         X = GetTensorInCurrentMemoryLayout(X);
         var O = X.shape.Permute(permutations);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pool", permutations);
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
-    protected Tensor GetTensorInCurrentMemoryLayout(Tensor tensor)
+    internal Tensor GetTensorInCurrentMemoryLayout(Tensor tensor)
     {
         //Return a tensor in the current memory layout from ComputeInfo.channelsOrder.
         //Noop in the general case it will transpose constant tensor when ComputeInfo.channelsOrder == NCHW
@@ -2402,10 +2463,10 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return tensor;
     }
 
-    protected virtual Tensor TransposeToChannelFirst(Tensor X)
+    internal virtual Tensor TransposeToChannelFirst(Tensor X)
     {
         var O = X.shape;
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToChannelFirst");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToChannelFirst", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
@@ -2426,7 +2487,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         axis = O.Axis(axis);
         var axisNCHW = TensorExtensions.Convert8DAxisTo4D(axis);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy", GetModelExecutionsReporter());
         var result = NewTensor(fn, "O", O);
         foreach (var inputTensor in tensors)
         {
@@ -2493,15 +2554,15 @@ public class ReferenceComputeOps : ReferenceCPUOps
             var O = X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides);
 
             for (int i = 0; i < TensorShape.MaxRank; ++i)
-                starts[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
+                starts[i] = Math.Min(TensorExtensions.WrapIndex(starts[i], X.shape[i]), X.shape[i] - 1);
 
             Set8DParamsForShader(strides, s_StridedSliceStride, s_StridedSliceStride8D);
             Set8DParamsForShader(starts, s_StridedSliceStart, s_StridedSliceStart8D);
 
-            var fn = new ComputeFunc(ComputeShaderContext.Reference, "StridedSlice");
+            var fn = new ComputeFunc(ComputeShaderContext.Reference, "StridedSlice", GetModelExecutionsReporter());
             SetTensor(fn, "X", X);
-            fn.shader.SetInts("_Stride", s_StridedSliceStride);
-            fn.shader.SetInts("_ChannelWriteMask", s_StridedSliceStride8D);
+            fn.shader.SetInts("_Stride4D", s_StridedSliceStride);
+            fn.shader.SetInts("_Stride8D", s_StridedSliceStride8D);
             fn.shader.SetInts("_Pad", s_StridedSliceStart);
             fn.shader.SetInts("_Pool", s_StridedSliceStart8D);
 
@@ -2513,7 +2574,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor Tile(Tensor X, int[] repeats)
     {
         var O = X.shape.Scale(repeats);
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Tile");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Tile", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
 
         return Dispatch(fn, O, O.channels, O.width, O.height);
@@ -2528,7 +2589,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var outputShape = X.shape;
         outputShape[axis] = indices.length;
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Gather");
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Gather", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", indices);
         fn.shader.SetInt("_Axis", axis);
@@ -2546,6 +2607,13 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);
+        return X;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor PrepareNoAlloc(Tensor X)
+    {
+        Pin(X, uploadCache: false);
         return X;
     }
 }
@@ -2569,8 +2637,10 @@ internal struct ComputeFunc
         }
     }
 
+    private readonly IModelExecutionsReporter executionReporter;
     readonly public ComputeShader shader;
     readonly public string kernelName;
+    readonly public ComputeShaderContext computeShaderContext;
     readonly public int kernelIndex;
     readonly public uint threadGroupSizeX;
     readonly public uint threadGroupSizeY;
@@ -2626,17 +2696,9 @@ internal struct ComputeFunc
     }
 
     // ---------------------------------------------------------------------------------
-
-
-
-
-    public ComputeFunc(ComputeShaderContext ctx, string[] kns, int x, int y = 1, int z = 1)
-        : this(ctx, FindBestKernelMatchingDimensions(ctx, kns, x, y, z))
+    public ComputeFunc(ComputeShaderContext ctx, string kn, IModelExecutionsReporter reporter)
     {
-    }
-
-    public ComputeFunc(ComputeShaderContext ctx, string kn)
-    {
+        executionReporter = reporter;
         string kernelNameWithChannelsOrder = s_StringCache.Lookup(kn,
                             (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC) ? "_NHWC" : "_NCHW");
 
@@ -2647,6 +2709,7 @@ internal struct ComputeFunc
         {
             shader = s;
             kernelName = s.HasKernel(kernelNameWithChannelsOrder)?kernelNameWithChannelsOrder:kn;
+            computeShaderContext = ctx;
             kernelIndex = shader.FindKernel(kernelName);
             shader.GetKernelThreadGroupSizes(kernelIndex, out threadGroupSizeX, out threadGroupSizeY, out threadGroupSizeZ);
             return;
@@ -2752,6 +2815,12 @@ internal struct ComputeFunc
 
         ComputeDebugUtils.PrepareDispatch();
 
+        if (executionReporter != null)
+        {
+            var dispatchInfo = DispatchInfo.CreateFromComputeFunc(this, workItemsX, workItemsY, workItemsZ);
+            executionReporter.AddLayerDispatch(dispatchInfo);
+        }
+
         shader.Dispatch(kernelIndex, x, y, z);
 
         ComputeDebugUtils.VerifyDispatch(kernelName);
@@ -2764,27 +2833,6 @@ internal struct ComputeFunc
     static public int IntDivCeil(int v, int div)
     {
         return (v + div - 1) / div;
-    }
-
-    static public string FindBestKernelMatchingDimensions(ComputeShaderContext ctx, string[] kns, int x, int y = 1, int z = 1)
-    {
-        Assert.IsTrue(kns.Length > 0);
-
-        foreach (var kernelName in kns)
-        {
-            var shader = ComputeShaderSingleton.Instance.FindComputeShader(ctx, kernelName);
-
-            int kernelIndex = shader.FindKernel(kernelName);
-            uint threadGroupSizeX, threadGroupSizeY, threadGroupSizeZ;
-            shader.GetKernelThreadGroupSizes(kernelIndex, out threadGroupSizeX, out threadGroupSizeY, out threadGroupSizeZ);
-
-            if (x % threadGroupSizeX == 0 &&
-                y % threadGroupSizeY == 0 &&
-                z % threadGroupSizeZ == 0)
-                return kernelName;
-        }
-        // pick the last one
-        return kns[kns.Length - 1];
     }
 }
 

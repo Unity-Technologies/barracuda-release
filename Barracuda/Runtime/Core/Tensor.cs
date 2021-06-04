@@ -1032,7 +1032,7 @@ public struct TensorIterator
 /// <summary>
 /// Multidimensional array-like data storage
 /// </summary>
-public class Tensor : IDisposable
+public class Tensor : UniqueResource, IDisposable, ITensorStatistics
 {
     private ITensorData m_TensorOnDevice;
     private ITensorAllocator m_TensorAllocator;
@@ -1043,10 +1043,10 @@ public class Tensor : IDisposable
     public static event Action<Tensor> tensorDisposed;
 
     #region Debug
-    /// <summary>
-    /// Return this tensor name.
-    /// </summary>
-    public string name;
+
+    /// <inheritdoc/>
+    public string name { get; set; }
+
     /// <summary>
     /// Return if tensor was already disposed.
     /// </summary>
@@ -1059,10 +1059,10 @@ public class Tensor : IDisposable
     public ITensorAllocator allocator { get { return m_TensorAllocator; } }
 
     #region Shape
-    /// <summary>
-    /// Return this tensor shape as [S,R,N,T,D,H,W,C].
-    /// </summary>
-    public readonly TensorShape shape;
+
+    /// <inheritdoc/>
+    public TensorShape shape { get; }
+
     /// <summary>
     /// Return the number of sequences.
     /// </summary>
@@ -1652,6 +1652,22 @@ public class Tensor : IDisposable
     }
 
     /// <summary>
+    /// Upload tensor values to the device.
+    /// This call allocates `destination` tensor on a target device. Previous contents of `destination` will be overwritten after this call.
+    /// No content will be copied/initialized from the tensor regardless of the current cache/data on device
+    /// </summary>
+    /// <param name="destination">destination</param>
+    public void AllocateOnDevice(ITensorData destination)
+    {
+        if (m_TensorOnDevice == destination)
+            return;
+
+        PinToDevice(destination, disposeUnpinned: true);
+        m_Cache = null;
+        m_CacheIsDirty = false;
+    }
+
+    /// <summary>
     /// Associates tensor with the block of data residing on a device.
     /// Tensor values will be downloaded from the `source` upon the first access.
     /// `source` should contain initialized and valid data representing tensor values.
@@ -1690,10 +1706,8 @@ public class Tensor : IDisposable
         m_CacheIsDirty = false;
     }
 
-    private void UploadAndInvalidateCache()
+    public void InvalidateCache()
     {
-        UploadIfDirty();
-
         // remove cache only, if pinned to device
         // otherwise cache holds the only copy of the tensor data and we can not loose it
         if (m_TensorOnDevice == null)
@@ -1701,6 +1715,12 @@ public class Tensor : IDisposable
 
         m_Cache = null;
         m_CacheIsDirty = false;
+    }
+
+    private void UploadAndInvalidateCache()
+    {
+        UploadIfDirty();
+        InvalidateCache();
     }
 
     /// <summary>
@@ -1732,9 +1752,12 @@ public class Tensor : IDisposable
     /// <summary>
     /// Upload cache to device memory and delete it.
     /// </summary>
-    public void FlushCache()
+    public void FlushCache(bool uploadCache)
     {
-        UploadAndInvalidateCache();
+        if(uploadCache)
+            UploadAndInvalidateCache();
+        else
+            InvalidateCache();
     }
 
     // @TODO: choose approach to handle case when tensors after Flatten/Reshape are written into OR taken ownership of
@@ -2164,6 +2187,12 @@ public class Tensor : IDisposable
             return m_TensorOnDevice;
         }
     }
+
+    /// <inheritdoc/>
+    public int cacheBytes => m_Cache?.Length * sizeof(float) ?? 0;
+
+    /// <inheritdoc/>
+    public ITensorDataStatistics GetTensorDataStatistics() { return m_TensorOnDevice; }
 
     /// <summary>
     /// Tensor metadata summary

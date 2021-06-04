@@ -1280,31 +1280,38 @@ void KERNEL_FUNC(Softmax)(uint3 dispatchThreadID : SV_DispatchThreadID)
     //DISPATCH ARGS(O.flatWidth, O.flatHeight, 1);
     TENSOR_ARGS2_8D(X, O);
 
-    uint x = dispatchThreadID.x;
-    uint y = dispatchThreadID.y;
+    uint y = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
 
-    if (x >= O.GetFlatWidth8D()) return;
-    if (y >= O.GetFlatHeight()) return;
+    int height     = _Stride[0];
+    int reducedDim = _Stride[1];
+    int width      = _Stride[2];
+
+    if (y >= height) return;
+    if (x >= width) return;
 
     float maxV = -FLT_MAX;
-    uint i;
-    for (i = 0; i < X.GetFlatWidth8D(); ++i)
+    uint r;
+    for (r = 0; r < reducedDim; ++r)
     {
-        float v = X.Get8D(y, i);
+        float v = X.FastGet(y * width * reducedDim + r * width + x);
         if (v > maxV)
             maxV = v;
     }
 
     float acc = 0.0f;
-    for (i = 0; i < X.GetFlatWidth8D(); ++i)
+    for (r = 0; r < reducedDim; ++r)
     {
-        float v = X.Get8D(y, i);
+        float v = X.FastGet(y * width * reducedDim + r * width + x);
         acc += exp(v - maxV);
     }
 
-    float v = X.Get8D(y, x);
-    v = exp(v - maxV) / acc;
-    O.Set8D(y, x, v);
+    for (r = 0; r < reducedDim; ++r)
+    {
+        float v = X.FastGet(y * width * reducedDim + r * width + x);
+        v = exp(v - maxV) / acc;
+        O.FastSet(y * width * reducedDim + r * width + x, v);
+    }
 }
 
 [numthreads(16, 4, 1)]
@@ -2345,6 +2352,9 @@ void KERNEL_FUNC(Pad2DSymmetric)(uint3 dispatchThreadID : SV_DispatchThreadID)
     }
 }
 
+int4 _Stride4D;
+int4 _Stride8D;
+
 [numthreads(4, 4, 4)]
 void KERNEL_FUNC(StridedSlice)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
@@ -2354,7 +2364,6 @@ void KERNEL_FUNC(StridedSlice)(uint3 dispatchThreadID : SV_DispatchThreadID)
     uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
     if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
 
-    uint4 _Stride8D = _ChannelWriteMask;
     uint4 _Pad8D = _Pool;
 
     for (uint s = 0; s < O.sequenceLength;     ++s)
@@ -2365,12 +2374,12 @@ void KERNEL_FUNC(StridedSlice)(uint3 dispatchThreadID : SV_DispatchThreadID)
     {
         float v = X.Get8D( _Pad8D.x + s * _Stride8D.x,
                            _Pad8D.y + r * _Stride8D.y,
-                           _Pad.x   + n * _Stride.x,
+                           _Pad.x   + n * _Stride4D.x,
                            _Pad8D.z + t * _Stride8D.z,
                            _Pad8D.w + d * _Stride8D.w,
-                           _Pad.y   + h * _Stride.y,
-                           _Pad.z   + w * _Stride.z,
-                           _Pad.w   + c * _Stride.w);
+                           _Pad.y   + h * _Stride4D.y,
+                           _Pad.z   + w * _Stride4D.z,
+                           _Pad.w   + c * _Stride4D.w);
         O.Set8D(s,r,n,t,d,h,w,c,v);
     }
 }

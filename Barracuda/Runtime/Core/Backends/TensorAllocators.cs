@@ -73,6 +73,7 @@ internal class TensorOperatorNewAllocator : ITensorAllocator
         m_AllocatedBuffers.Clear();
     }
 
+    public long usedBytes => busyBytes;
     public long busyBytes
     { get {
         long bytes = 0;
@@ -355,6 +356,7 @@ internal class TensorCachingByShapeAllocator : ITensorAllocator
         m_SharedBuffers.Clear();
     }
 
+    public long usedBytes => busyBytes;
     public long busyBytes
     { get {
         long bytes = 0;
@@ -382,13 +384,21 @@ internal class TensorCachingByShapeAllocator : ITensorAllocator
 /// <summary>
 /// Caching `Tensor` allocator
 /// </summary>
-public class TensorCachingAllocator : ITensorAllocator
+public class TensorCachingAllocator : UniqueResource, ITensorAllocator, IAllocatorStatistics
 {
-    struct Entry
+    public string name { get; set; }
+
+    struct Entry : ITensorDataStatistics
     {
         public int size;
         public ITensorData buffer;
         public bool free;
+
+        //ITensorDataStatistics
+        public int uniqueId => buffer.uniqueId;
+        public int maxCapacity => buffer.maxCapacity;
+        public bool inUse => !free;
+        public bool isGPUMem => buffer.isGPUMem;
     }
     // Sorted by size array of ITensorData
     private List<Entry> m_AllocatedBuffers = new List<Entry>();
@@ -403,6 +413,7 @@ public class TensorCachingAllocator : ITensorAllocator
     /// </summary>
     public TensorCachingAllocator()
     {
+        name = "Caching Allocator";
         disposeAllocatedBufferDelegate = DisposeAllocatedBuffer;
         adoptFreeBufferDelegate = AdoptFreeBuffer;
     }
@@ -664,10 +675,21 @@ public class TensorCachingAllocator : ITensorAllocator
         // Assert no references to tensor are left owned by allocator
         Assert.IsTrue(m_SharedBuffers[buffer] == 1);
         m_SharedBuffers.Remove(buffer);
-        foreach (var freeEntry in m_AllocatedBuffers)
+
+        int countInAllocatedBuffers = 0;
+        for (int i = 0; i < m_AllocatedBuffers.Count; i++)
         {
-            Assert.IsTrue(freeEntry.buffer != buffer);
+            Entry entry = m_AllocatedBuffers[i];
+            if (entry.buffer == buffer)
+            {
+                Assert.IsFalse(entry.free);
+                m_AllocatedBuffers.RemoveAt(i);
+                countInAllocatedBuffers++;
+            }
         }
+        // This entry should have only been in the allocated buffers once at most
+        Assert.IsTrue(countInAllocatedBuffers <= 1);
+
         foreach(var busyEntry in m_BusyTensors)
         {
             Assert.IsTrue(busyEntry.Key != tensor);
@@ -692,9 +714,16 @@ public class TensorCachingAllocator : ITensorAllocator
         m_SharedBuffers.Clear();
     }
 
-    /// <summary>
-    /// Busy bytes
-    /// </summary>
+    /// <inheritdoc/>
+    public long usedBytes
+    { get {
+        long bytes = 0;
+        foreach(var tensor in m_BusyTensors.Keys)
+            bytes += tensor.length  * sizeof(float);
+        return bytes;
+    } }
+
+    /// <inheritdoc/>
     public long busyBytes
     { get {
         long bytes = 0;
@@ -703,9 +732,7 @@ public class TensorCachingAllocator : ITensorAllocator
         return bytes;
     } }
 
-    /// <summary>
-    /// Free bytes
-    /// </summary>
+    /// <inheritdoc/>
     public long freeBytes
     { get {
         long bytes = 0;
@@ -715,13 +742,29 @@ public class TensorCachingAllocator : ITensorAllocator
         return bytes;
     } }
 
-    /// <summary>
-    /// Total bytes
-    /// </summary>
+    /// <inheritdoc/>
     public long totalBytes
     { get {
         return busyBytes + freeBytes;
     } }
+
+    /// <inheritdoc/>
+    public IEnumerable<ITensorStatistics> GetTensorsStatistics()
+    {
+        foreach (var busyTensor in m_BusyTensors)
+        {
+            yield return busyTensor.Key;
+        }
+    }
+
+    /// <inheritdoc/>
+    public IEnumerable<ITensorDataStatistics> GetTensorDatasStatistics()
+    {
+        foreach (var allocatedBuffer in m_AllocatedBuffers)
+        {
+            yield return allocatedBuffer;
+        }
+    }
 
     /// <summary>
     /// Summary

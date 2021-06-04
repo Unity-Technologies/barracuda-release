@@ -334,6 +334,14 @@ namespace Unity.Barracuda
 
             return layer;
         }
+        /// <summary>
+        /// Rank 3 `Dense` layer
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="weight">weight data Tensor</param>
+        /// <param name="bias">bias data Tensor</param>
+        /// <returns>created Layer instance</returns>
         public Layer Dense3(string name, object input, Tensor weight, Tensor bias)
         {
             Layer layer = new Layer(name, Layer.Type.Dense3);
@@ -1152,7 +1160,7 @@ namespace Unity.Barracuda
         /// <summary>
         /// Return the Softmax (normalized exponential) values of the input along provided axis.
         /// Thus output will be of shape of the input.
-        /// If axisIs8D==true axis rank is from [S,R,N,T,D,H,W,C] overwise from [N,H,W,C]
+        /// If axisIs8D==true axis rank is from [S,R,N,T,D,H,W,C] otherwise from [N,H,W,C]
         /// `axis` must be superior to -4
         /// `axis` must be inferior to 8 when axisIs8D==true or inferior to 4 if axisIs8D==false
         /// </summary>
@@ -1161,7 +1169,7 @@ namespace Unity.Barracuda
         /// <param name="axis">axis</param>
         /// <param name="axisIs8D">is axis 8D</param>
         /// <returns>created Layer instance</returns>
-        public Layer Softmax(string name, object input, int axis=1, bool axisIs8D=false)
+        public Layer Softmax(string name, object input, int axis=3, bool axisIs8D=false)
         {
             Layer layer = Activation(Layer.Activation.Softmax, name, input);
             layer.axis = axisIs8D ? axis : TensorExtensions.Convert4DTo8DAxis(axis);

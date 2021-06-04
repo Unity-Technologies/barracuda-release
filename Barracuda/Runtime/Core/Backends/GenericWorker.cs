@@ -208,10 +208,15 @@ public class GenericWorker : IWorker
         ResetAllocatorIfStaleAndNotOccupied();
         m_AllocatorIsStale = true;
 
+        m_Ops.GetModelExecutionsReporter()?.ModelExecutionStarted();
+        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "Before model execution, step1: After Allocator reset");
+
         m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes);
 
         if (m_ModelCompiler != null)
             m_ModelCompiler.PrepareModel(m_Model, m_InputShapes);
+
+        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "Before model execution, step2: After Model preparation");
 
         int idx = 0;
         foreach (var l in m_Model.layers)
@@ -220,7 +225,9 @@ public class GenericWorker : IWorker
 
             m_Progress = idx / (float)m_Model.layers.Count;
 
+            m_Ops.GetModelExecutionsReporter()?.LayerExecutionStarted(l);
             Profiler.BeginSample(l.name);
+
             var inputs = m_Vars.GatherInputs(l);
 
             Tensor X = inputs.Length > 0 ? inputs[0] : m_DummyInput;
@@ -792,6 +799,21 @@ public class GenericWorker : IWorker
             {
                 Profiler.BeginSample ("Barracuda.Gather");
                 X = m_Ops.Gather(inputs, l.axis);
+
+                // Gather assume flat indices, if indices has a rank > 1, we need to expand the generated tensor
+                if (l.pool != null && l.pool.Length == 2 && l.pool[1] > 1)
+                {
+                    int xRank = l.pool[0];
+                    int indicesRank = l.pool[1];
+                    var xShape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToList(X.shape, xRank);
+                    var indicesShape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToList(inputs[1].shape, indicesRank);
+
+                    int axis = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaAxisToTensor(l.axis, xRank);
+                    xShape.InsertRange(axis, indicesShape);
+                    xShape.RemoveAt(axis + indicesShape.Count);
+
+                    X = X.Reshape(new TensorShape(Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaLayoutToTensorShapeLayout(xShape.ToArray())));
+                }
             }
             else if (l.type == Layer.Type.NonMaxSuppression)
             {
@@ -1131,6 +1153,7 @@ public class GenericWorker : IWorker
                 Assert.IsTrue(l.type == Layer.Type.Nop, $"Layer type {l.type} not explicitly handled");
             }
 
+            m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "After layer",l);
             m_Vars.DisposeAfterLayer(l);
             m_Vars.Store(l, X);
             m_SyncTensor = X;
@@ -1141,6 +1164,8 @@ public class GenericWorker : IWorker
             // layer.name
             Profiler.EndSample();
 
+            m_Ops.GetModelExecutionsReporter()?.LayerExecutionCompleted();
+
             yield return null;
         }
 
@@ -1149,6 +1174,9 @@ public class GenericWorker : IWorker
 
         if (m_Verbose)
             D.Log(m_Vars.GetAllocator());
+
+        m_Ops.GetModelExecutionsReporter()?.ModelExecutionCompleted();
+        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "After model execution");
     }
 
     /// <inheritdoc/>
@@ -1197,7 +1225,7 @@ public class GenericWorker : IWorker
 }
 
 
-internal class GenericVars : IVars
+internal class GenericVars : IVars, IVarsStatistics
 {
     private Dictionary<string, Tensor> m_TensorsByName = new Dictionary<string, Tensor>();
     protected HashSet<Tensor> m_ModelTensors = new HashSet<Tensor>();
@@ -1239,10 +1267,40 @@ internal class GenericVars : IVars
         m_Allocator.Dispose();
     }
 
-    private ITensorAllocator m_Allocator = new DefaultTensorAllocator();
+    private TensorCachingAllocator m_Allocator = new DefaultTensorAllocator();
     public virtual ITensorAllocator GetAllocator()
     {
         return m_Allocator;
+    }
+
+    public IEnumerable<IAllocatorStatistics> GetAllocatorsStatistics()
+    {
+        yield return m_Allocator;
+    }
+
+    public IEnumerable<ITensorStatistics> GetTensorsStatistics()
+    {
+        var tensors = new SortedDictionary<int, Tensor>();
+        foreach (var modelTensor in m_ModelTensors)
+        {
+            tensors[modelTensor.uniqueId] = modelTensor;
+        }
+        foreach (var inputTensors in m_InputTensorsByLayer)
+        {
+            foreach (var inputTensor in inputTensors.Value)
+            {
+                tensors[inputTensor.uniqueId] = inputTensor;
+            }
+        }
+        foreach (var tensorByName in m_TensorsByName)
+        {
+            tensors[tensorByName.Value.uniqueId] = tensorByName.Value;
+        }
+
+        foreach (var tensor in tensors)
+        {
+            yield return tensor.Value;
+        }
     }
 
     protected virtual bool IsTensorOwnedByInternalAllocator(Tensor tensor)
@@ -1329,7 +1387,7 @@ internal class GenericVars : IVars
         //   -> 2 -> 3  /     |
         //   -> 7 ------------/
         // latestDownstreamLayer:
-        //  0 -> 7, 1 -> 4, 2 -> 3, 4 -> 5, 5 -> 8, 7 -> 8 
+        //  0 -> 7, 1 -> 4, 2 -> 3, 4 -> 5, 5 -> 8, 7 -> 8
         Dictionary<string, int> latestDownstreamLayer = new Dictionary<string, int>();
         for (var i = 0; i < model.layers.Count; i++)
         {
@@ -1371,7 +1429,7 @@ internal class GenericVars : IVars
             if (m_LayerNameToDisposeWhenDone.ContainsKey(forLayer.name))
                 m_LayerNameToDisposeWhenDone[forLayer.name].Add(m_LayerNameToId[entry.Key]);
             else
-                m_LayerNameToDisposeWhenDone[forLayer.name] = new List<int>(m_LayerNameToId[entry.Key]);
+                m_LayerNameToDisposeWhenDone[forLayer.name] = new List<int>() { m_LayerNameToId[entry.Key] };
         }
     }
 
@@ -1542,12 +1600,24 @@ internal class GenericVarsWithReuse : GenericVars
     }
 }
 
-internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocator
+internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocator, IVarsStatistics
 {
     private Model m_CachedModel;
 
     private DefaultTensorAllocator m_TemporaryAllocator = new DefaultTensorAllocator();
     private DefaultTensorAllocator m_StorageAllocator = new DefaultTensorAllocator();
+
+    public GenericVarsWithPreallocation()
+    {
+        m_TemporaryAllocator.name = "Temporary Allocator";
+        m_StorageAllocator.name = "Storage Allocator";
+    }
+
+    public new IEnumerable<IAllocatorStatistics> GetAllocatorsStatistics()
+    {
+        yield return m_TemporaryAllocator;
+        yield return m_StorageAllocator;
+    }
 
     public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes)
     {
@@ -1561,8 +1631,8 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
             var maxShape = ModelAnalyzer.FindLargestNecessaryTensorShape(model, inputShapes);
             var alloc1 = allocator.Alloc(maxShape);
             var alloc2 = allocator.Alloc(maxShape);
-            alloc1 = ops.Prepare(alloc1);
-            alloc2 = ops.Prepare(alloc2);
+            alloc1 = ops.PrepareNoAlloc(alloc1);
+            alloc2 = ops.PrepareNoAlloc(alloc2);
             allocator.Release(alloc1, false);
             allocator.Release(alloc2, false);
         }
@@ -1620,6 +1690,10 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
         m_StorageAllocator.Dispose();
     }
 
+    public long usedBytes
+    { get {
+        return m_TemporaryAllocator.usedBytes + m_StorageAllocator.usedBytes;
+    } }
     public long busyBytes
     { get {
         return m_TemporaryAllocator.busyBytes + m_StorageAllocator.busyBytes;

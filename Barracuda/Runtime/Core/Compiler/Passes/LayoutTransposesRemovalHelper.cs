@@ -151,8 +151,9 @@ namespace Unity.Barracuda.Compiler.Passes
                 else if (layerChannelOrder[name] == ChannelsOrder.NativeNCHW)
                     continue;
                 // heuristic to stop ping-pong loop, prioritize NHWC over NCHW as it implies less transposes
+                // if incoming is NativeNCHW always propagate that
                 // TODO: count # of transpose swaps
-                else if (layerChannelOrder[name] == ChannelsOrder.NHWC)
+                else if (layerChannelOrder[name] == ChannelsOrder.NHWC && deducedChannelOrder != ChannelsOrder.NativeNCHW)
                     continue;
 
                 Layer layer;

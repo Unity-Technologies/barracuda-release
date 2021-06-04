@@ -50,7 +50,7 @@ public partial class BurstCPUOps
 
         var pinX = Pin(X);
         var pinY = Pin(Y);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         { // O = broadcast(0)
             var job = new ZeroBroadcastJob();
@@ -129,7 +129,7 @@ public partial class BurstCPUOps
 
         var pinX = Pin(X);
         var pinY = Pin(Y);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         unsafe
         {
@@ -175,7 +175,7 @@ public partial class BurstCPUOps
 
         var pinX = Pin(X);
         var pinY = Pin(Y);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         unsafe
         {
@@ -227,7 +227,7 @@ public partial class BurstCPUOps
         var pinX = Pin(X);
         var pinW = Pin(W);
         var pinB = Pin(B);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         unsafe
         {
@@ -277,7 +277,7 @@ public partial class BurstCPUOps
         var pinX = Pin(X);
         var pinW = Pin(W);
         var pinB = Pin(B);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         { // O = broadcast(B)
             // @TODO: move broadcast B directly into MatrixMultiplyJob
@@ -342,7 +342,7 @@ public partial class BurstCPUOps
         var pinT  = pointwiseConvolution ? pinX  : Pin(T);
 
         // output
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         { // O = broadcast(B)
             // @TODO: move broadcast B directly into MatrixMultiplyJob
@@ -773,39 +773,45 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1 || axis > X.shape.FirstNotIdentityFeatureDimensionIndex())
-            return base.Softmax(X, axis);
-
         var O = NewTensor(X.shape);
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
+        axis = X.shape.Axis(axis);
+
         var pinX = Pin(X);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         //Allocate memory
         Allocator memoryAllocator = Allocator.TempJob;
-        var reduceOpMemSize = O.flatHeight * sizeof(float);
+        var reduceOpShape = X.shape.Reduce(axis);
+        var reduceOpMemSize = reduceOpShape.length * sizeof(float);
         s_maxValues.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
         s_expSums.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
+
+        int offsetReduce = 1;
+        for (int i = 7; i >= axis; i--)
+            offsetReduce *= reduceOpShape[i];
 
         // x_max = X.max(axis=1)
         {
             var job = new ReduceMaxJob();
-            job.offsetReduce = 1;
-            job.reduceDim = O.flatWidth;
-            job.ScheduleXO(pinX, s_maxValues, O.flatHeight, 1024);
+            job.offsetReduce = offsetReduce;
+            job.reduceDim = X.shape[axis];
+            job.ScheduleXO(pinX, s_maxValues, reduceOpShape.length, 1024);
         }
         // e_x_sum = Sum[exp(x[:,c] - x_max[:]), c]
         {
             var job = new ExpBiasReduceJob();
-            job.inChannels = O.flatWidth;
-            job.ScheduleXBO(pinX, s_maxValues, s_expSums, O.flatHeight, 1024);
+            job.offsetReduce = offsetReduce;
+            job.reduceDim = X.shape[axis];
+            job.ScheduleXBO(pinX, s_maxValues, s_expSums, reduceOpShape.length, 1024);
         }
         // exp(x[n,c] - x_max[n]) / e_x_sum[n]
         {
             var job = new SoftmaxEndJob();
-            job.inChannels = O.flatWidth;
+            job.offsetReduce = offsetReduce;
+            job.reduceDim = X.shape[axis];
             job.ScheduleXSBO(pinX, s_expSums, s_maxValues, pinO, O.length, 1024);
         }
         // free memory (in job)
@@ -834,7 +840,7 @@ public partial class BurstCPUOps
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         var pinX = Pin(X);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
 
         //Allocate memory
         Allocator memoryAllocator = Allocator.TempJob;
@@ -852,7 +858,8 @@ public partial class BurstCPUOps
         // e_x_sum = Sum[exp(x[:,c] - x_max[:]), c]
         {
             var job = new ExpBiasReduceJob();
-            job.inChannels = O.flatWidth;
+            job.offsetReduce = 1;
+            job.reduceDim = O.flatWidth;
             job.ScheduleXBO(pinX, s_maxValues, s_expSums, O.flatHeight, 1024);
         }
         // exp(x[n,c] - x_max[n]) / e_x_sum[n]
@@ -1476,6 +1483,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
         var concatShape = TensorExtensions.Concat(tensors, axis);
@@ -1496,7 +1504,7 @@ public partial class BurstCPUOps
 
             // copy tensor data interleaved into O
             int takes = (int)GetAggregatedDimLength(concatShape,  0, concatShape.Axis(axis));
-            var pinO = Pin(O);
+            var pinO = Pin(O, uploadCache: false);
             using (var ctx = new ParallelJobsContext(pinO))
             {
                 for (int i = 0; i < tensors.Length; ++i)
@@ -1530,7 +1538,7 @@ public partial class BurstCPUOps
 
             int* wrappedStartsIndices = ends; //reuse buffer to save a stack allocation.
             for (int i = 0; i < TensorShape.MaxRank; ++i)
-                wrappedStartsIndices[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
+                wrappedStartsIndices[i] = Math.Min(TensorExtensions.WrapIndex(starts[i], X.shape[i]), X.shape[i] - 1);
 
             Assert.AreEqual(8, TensorShape.MaxRank);
 
@@ -1555,6 +1563,7 @@ public partial class BurstCPUOps
                 job.strideD = strides[4];
                 job.strideH = strides[5];
                 job.strideW = strides[6];
+                job.strideC = strides[7];
                 int numCopy = O.shape.length / O.shape.channels;
                 job.ScheduleXO(X, O, numCopy, 64);
             }
@@ -1608,7 +1617,7 @@ public partial class BurstCPUOps
         int croppedHeight = X.height - (preCropY + postCropY);
 
         var pinX = Pin(X);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache: false);
         int numItemInARow = O.width * O.channels;
         int numItemInABatch = O.height * numItemInARow;
 
@@ -1679,6 +1688,7 @@ public partial class BurstCPUOps
         return ApplyBorderPadding(X, pad, constant);
     }
 
+    /// <inheritdoc/>
     public override Tensor Transpose(Tensor X, int[] permutations)
     {
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
@@ -1702,13 +1712,14 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceMean(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
         var O = NewTensor(X.shape.Reduce(axis));
 
         int offsetReduce = 1;
-        for (int i = 7; i >= axis; i--)
+        for (int i = TensorShape.MaxRank - 1; i >= axis; i--)
             offsetReduce *= O.shape[i];
 
         var job = new ReduceMeanJob();
@@ -1719,16 +1730,34 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceSum(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
         var O = NewTensor(X.shape.Reduce(axis));
 
         int offsetReduce = 1;
-        for (int i = 7; i >= axis; i--)
+        for (int i = TensorShape.MaxRank - 1; i >= axis; i--)
             offsetReduce *= O.shape[i];
 
         var job = new ReduceSumJob();
+        job.offsetReduce = offsetReduce;
+        job.reduceDim = X.shape[axis];
+        job.ScheduleXO(X, O, O.length, 1024);
+
+        return O;
+    }
+
+    public override Tensor ReduceMax(Tensor X, int axis)
+    {
+        axis = X.shape.Axis(axis);
+        var O = NewTensor(X.shape.Reduce(axis));
+
+        int offsetReduce = 1;
+        for (int i = TensorShape.MaxRank - 1; i >= axis; i--)
+            offsetReduce *= O.shape[i];
+
+        var job = new ReduceMaxJob();
         job.offsetReduce = offsetReduce;
         job.reduceDim = X.shape[axis];
         job.ScheduleXO(X, O, O.length, 1024);
@@ -1797,6 +1826,233 @@ public partial class BurstCPUOps
         job.ScheduleXO(X, O, O.length, 1024);
 
         return O;
+    }
+
+    Tensor LSTMDense3(Tensor X, Tensor W, Tensor B)
+    {
+        int xb = X.batch, xh = X.width, xw = X.channels;
+        int yh = W.batch, yw = W.channels;
+
+        Assert.AreEqual(xw, yh);
+        var O = NewTensor(xb, 1, xh, yw);
+
+        var pinX = Pin(X);
+        var pinW = Pin(W);
+        var pinB = Pin(B);
+        var pinO = Pin(O, uploadCache: false);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrW = &pinW.array[pinW.offset],
+                ptrB = &pinB.array[pinB.offset],
+                ptrO = &pinO.array[pinO.offset])
+                {
+                    var job = new LSTMDense3Job();
+                    job.A = ptrX;
+                    job.AB = xb;
+                    job.AN = xh;
+                    job.AM = xw;
+                    job.B = ptrW;
+                    job.BN = yh;
+                    job.BM = yw;
+                    job.C = ptrB;
+                    job.CN = B.batch;
+                    job.CM = B.channels;
+                    job.S = ptrO;
+                    job.SN = xh;
+                    job.SM = yw;
+
+                    job.dispatchThreadX = ((xh + LSTMDense3Job.blockSize - 1) / LSTMDense3Job.blockSize);
+                    job.dispatchThreadY = ((yw + LSTMDense3Job.blockSize - 1) / LSTMDense3Job.blockSize);
+                    job.dispatchThreadZ = xb;
+
+                    pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
+                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
+            }
+        }
+
+        return O;
+    }
+
+    Tensor LSTMDense(Tensor X, Tensor W, Tensor B)
+    {
+        int xw = X.channels, xh = X.batch;
+        int yw = W.channels, yh = W.batch;
+
+        Assert.AreEqual(xw, yh);
+        var O = NewTensor(xh, yw);
+
+        var pinX = Pin(X);
+        var pinW = Pin(W);
+        var pinB = Pin(B);
+        var pinO = Pin(O, uploadCache: false);
+
+        unsafe
+        {
+            fixed (float*
+                ptrX = &pinX.array[pinX.offset],
+                ptrW = &pinW.array[pinW.offset],
+                ptrB = &pinB.array[pinB.offset],
+                ptrO = &pinO.array[pinO.offset])
+                {
+                    var job = new LSTMDenseJob();
+                    job.A = ptrX;
+                    job.AN = xh;
+                    job.AM = xw;
+                    job.B = ptrW;
+                    job.BN = yh;
+                    job.BM = yw;
+                    job.C = ptrB;
+                    job.CN = B.batch;
+                    job.CM = B.channels;
+                    job.S = ptrO;
+                    job.SN = xh;
+                    job.SM = yw;
+
+                    job.dispatchThreadX = ((xh + LSTMDenseJob.blockSize - 1) / LSTMDenseJob.blockSize);
+                    job.dispatchThreadY = ((yw + LSTMDenseJob.blockSize - 1) / LSTMDenseJob.blockSize);
+
+                    pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
+                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
+            }
+        }
+
+        return O;
+    }
+
+    public override Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell)
+    {
+        // Gate indices [iofj]
+        const int g_i = 0, g_o = 1, g_f = 2, g_j = 3;
+
+        TensorShape xShape = X.shape; // X shape is [seq_length, batch_size, input_size]
+        int sequenceLength = xShape.batch; 
+        int batchSize = xShape.channels;
+        int inputSize = xShape.width;
+        int hiddenSize = cell.channels;
+
+        Tensor O = NewTensor(sequenceLength, batchSize, hiddenSize, 1);
+        var pinO = Pin(O, uploadCache: false);
+
+        var cell_out = NewTensor(batchSize, hiddenSize);
+        var hidden_out = NewTensor(batchSize, hiddenSize);
+        var pinCellOut = Pin(cell_out, uploadCache: false); var pinHiddenOut = Pin(hidden_out, uploadCache: false);
+
+        Tensor i_mad_w = null;
+        Tensor j_mad_w = null;
+        Tensor f_mad_w = null;
+        Tensor o_mad_w = null;
+
+        // if platforms supports Blas, favor that path, this is faster than our Dense3 implem atm
+
+        // transpose once for sequential Dense access
+        Tensor Xt = Transpose(X, new[] { 0, 1, 3, 2 });
+        if (!m_UseBlas)
+        {
+            i_mad_w = LSTMDense3(Xt, W[g_i], Wb[g_i]);
+            j_mad_w = LSTMDense3(Xt, W[g_j], Wb[g_j]);
+            f_mad_w = LSTMDense3(Xt, W[g_f], Wb[g_f]);
+            o_mad_w = LSTMDense3(Xt, W[g_o], Wb[g_o]);
+        }
+
+        JobHandle jobFence = new JobHandle();
+        for (int s = 0; s < sequenceLength; s++)
+        {
+            Tensor X_sequence = null;
+            if (m_UseBlas)
+            {
+                X_sequence = StridedSlice(Xt, new[] { s, 0, 0, 0 }, new[] { s + 1, int.MaxValue, int.MaxValue, int.MaxValue }, new[] { 1, 1, 1, 1 });
+                X_sequence = X_sequence.Reshape(new TensorShape(batchSize, inputSize));
+
+                i_mad_w = Add(new[]{MatMul(X_sequence, false, W[g_i], false), Wb[g_i]});
+                j_mad_w = Add(new[]{MatMul(X_sequence, false, W[g_j], false), Wb[g_j]});
+                f_mad_w = Add(new[]{MatMul(X_sequence, false, W[g_f], false), Wb[g_f]});
+                o_mad_w = Add(new[]{MatMul(X_sequence, false, W[g_o], false), Wb[g_o]});
+            }
+
+            var i_mad_r = LSTMDense(hidden, R[g_i], Rb[g_i]);
+            var j_mad_r = LSTMDense(hidden, R[g_j], Rb[g_j]);
+            var f_mad_r = LSTMDense(hidden, R[g_f], Rb[g_f]);
+            var o_mad_r = LSTMDense(hidden, R[g_o], Rb[g_o]);
+
+            var pinCell = Pin(cell); var pinHidden = Pin(hidden);
+            var pinImadW = Pin(i_mad_w); var pinImadR = Pin(i_mad_r);
+            var pinJmadW = Pin(j_mad_w); var pinJmadR = Pin(j_mad_r);
+            var pinFmadW = Pin(f_mad_w); var pinFmadR = Pin(f_mad_r);
+            var pinOmadW = Pin(o_mad_w); var pinOmadR = Pin(o_mad_r);
+
+            unsafe
+            {
+                fixed (float*
+                    ptrCell = &pinCell.array[pinCell.offset],
+                    ptrImadW = &pinImadW.array[pinImadW.offset], ptrImadR = &pinImadR.array[pinImadR.offset],
+                    ptrJmadW = &pinJmadW.array[pinJmadW.offset], ptrJmadR = &pinJmadR.array[pinJmadR.offset],
+                    ptrFmadW = &pinFmadW.array[pinFmadW.offset], ptrFmadR = &pinFmadR.array[pinFmadR.offset],
+                    ptrOmadW = &pinOmadW.array[pinOmadW.offset], ptrOmadR = &pinOmadR.array[pinOmadR.offset],
+                    ptrCellOut = &pinCellOut.array[pinCellOut.offset], ptrHiddenOut = &pinHiddenOut.array[pinHiddenOut.offset],
+                    ptrO = &pinO.array[pinO.offset])
+                {
+                    var job = new LSTMEndJob();
+                    job.cell_out = ptrCellOut;
+                    job.hidden_out = ptrHiddenOut;
+                    job.i_mad_w = ptrImadW;
+                    job.j_mad_w = ptrJmadW;
+                    job.f_mad_w = ptrFmadW;
+                    job.o_mad_w = ptrOmadW;
+                    job.i_mad_r = ptrImadR;
+                    job.j_mad_r = ptrJmadR;
+                    job.f_mad_r = ptrFmadR;
+                    job.o_mad_r = ptrOmadR;
+                    job.cell = ptrCell;
+                    job.O = ptrO;
+                    job.sequenceIndexO = s;
+                    job.sequenceIndexI = m_UseBlas ? 0 : s;
+                    job.batchSize = batchSize;
+                    job.hiddenSize = hiddenSize;
+                    job.batchSizeR = hidden.batch;
+
+                    jobFence = pinCellOut.fence = pinHiddenOut.fence =
+                    pinHidden.reuse = pinCell.reuse =
+                    pinImadW.reuse = pinJmadW.reuse = pinFmadW.reuse = pinOmadW.reuse =
+                    pinImadR.reuse = pinJmadR.reuse = pinFmadR.reuse = pinOmadR.reuse =
+                        job.Schedule(batchSize*hiddenSize, 1024, JobHandle.CombineDependencies(pinO.reuse, pinCellOut.reuse, JobHandle.CombineDependencies(pinHiddenOut.reuse,
+                                    pinImadW.fence, JobHandle.CombineDependencies(pinJmadW.fence, pinFmadW.fence, JobHandle.CombineDependencies(pinOmadW.fence,
+                                    pinImadR.fence, JobHandle.CombineDependencies(pinJmadR.fence, pinFmadR.fence, JobHandle.CombineDependencies(pinOmadR.fence, pinCell.fence, pinHidden.fence)))))));
+                }
+            }
+
+            hidden = hidden_out;
+            cell = cell_out;
+
+            i_mad_r.Dispose();
+            j_mad_r.Dispose();
+            f_mad_r.Dispose();
+            o_mad_r.Dispose();
+
+            if (m_UseBlas)
+            {
+                X_sequence.Dispose();
+                i_mad_w.Dispose();
+                j_mad_w.Dispose();
+                f_mad_w.Dispose();
+                o_mad_w.Dispose();
+            }
+        }
+
+        pinO.fence = jobFence;
+
+        Xt.Dispose();
+        if (!m_UseBlas)
+        {
+            i_mad_w.Dispose();
+            j_mad_w.Dispose();
+            f_mad_w.Dispose();
+            o_mad_w.Dispose();
+        }
+
+        return new[] { O, hidden, cell };
     }
 }
 

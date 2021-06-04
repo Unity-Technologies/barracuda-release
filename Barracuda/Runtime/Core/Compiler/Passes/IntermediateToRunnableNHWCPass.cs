@@ -6,25 +6,30 @@ namespace Unity.Barracuda.Compiler.Passes
 {
     class IntermediateToRunnableNHWCPass : IModelPass
     {
+        public bool Optimize { get; set; } = false;
+
         public void Run(ref Model model)
         {
+            var warnings = new List<Model.ImporterWarning>();
             var shapeInferencePass = new IRShapeInferenceAndConstantFusing();
-            shapeInferencePass.Run(ref model);
+            shapeInferencePass.Run(ref model, warnings);
 
-            // Optimization
-            var linearLayerFusingPass = new Optimization.FuseLinearLayersPass();
-            linearLayerFusingPass.Run(ref model);
-            var activationFusingPass = new Optimization.FuseActivationPass();
-            activationFusingPass.Run(ref model);
+            if (Optimize)
+            {
+                // Optimization
+                var linearLayerFusingPass = new Optimization.FuseLinearLayersPass();
+                linearLayerFusingPass.Run(ref model);
+                var activationFusingPass = new Optimization.FuseActivationPass();
+                activationFusingPass.Run(ref model);
 
-            // Cleanup
-            var removeUnusedPass = new Cleanup.RemoveUnusedLayersPass();
-            removeUnusedPass.Run(ref model);
-            var removeNoOpPass = new Cleanup.RemoveNoOpsPass();
-            removeNoOpPass.Run(ref model);
+                // Cleanup
+                var removeUnusedPass = new Cleanup.RemoveUnusedLayersPass();
+                removeUnusedPass.Run(ref model);
+                var removeNoOpPass = new Cleanup.RemoveNoOpsPass();
+                removeNoOpPass.Run(ref model);
+            }
 
             // TODO, put asserts in ImporterWarning?
-            var warnings = new List<Model.ImporterWarning>();
             var validateNCHWPass = new ValidateNCHWPass();
             validateNCHWPass.Run(model, ref warnings);
 
@@ -32,8 +37,11 @@ namespace Unity.Barracuda.Compiler.Passes
             var nhwcPass = new NCHWToNHWCPass();
             nhwcPass.Run(ref model);
 
-            var dense3FusingPass = new Optimization.FuseDense3Pass();
-            dense3FusingPass.Run(ref model);
+            if (Optimize)
+            {
+                var dense3FusingPass = new Optimization.FuseDense3Pass();
+                dense3FusingPass.Run(ref model);
+            }
 
             var validateNHWCPass = new ValidateNHWCPass();
             validateNHWCPass.Run(model, ref warnings);

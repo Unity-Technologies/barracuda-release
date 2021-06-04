@@ -460,7 +460,7 @@ internal static class BurstSchedulingHelper
         where T : struct, IJob, BurstCPUOps.IJobResourceDeclarationXO
     {
         var pinX = BurstCPUOps.Pin(X);
-        var pinO = BurstCPUOps.Pin(O);
+        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
         jobData.ScheduleXO(pinX, pinO);
     }
 
@@ -469,7 +469,7 @@ internal static class BurstSchedulingHelper
         where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXO
     {
         var pinX = BurstCPUOps.Pin(X);
-        var pinO = BurstCPUOps.Pin(O);
+        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
         jobData.ScheduleXO(pinX, pinO, arrayLength, innerloopBatchCount);
     }
 
@@ -479,7 +479,7 @@ internal static class BurstSchedulingHelper
     {
         var pinX = BurstCPUOps.Pin(X);
         var pinB = BurstCPUOps.Pin(B);
-        var pinO = BurstCPUOps.Pin(O);
+        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
         jobData.ScheduleXBO(pinX, pinB, pinO, arrayLength, innerloopBatchCount);
     }
 
@@ -490,7 +490,7 @@ internal static class BurstSchedulingHelper
         var pinX = BurstCPUOps.Pin(X);
         var pinS = BurstCPUOps.Pin(S);
         var pinB = BurstCPUOps.Pin(B);
-        var pinO = BurstCPUOps.Pin(O);
+        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
         jobData.ScheduleXSBO(pinX, pinS, pinB, pinO, arrayLength, innerloopBatchCount);
     }
     #endregion

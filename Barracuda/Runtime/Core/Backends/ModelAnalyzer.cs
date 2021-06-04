@@ -342,7 +342,8 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.Equal ||
                 l.type == Layer.Type.LogicalOr ||
                 l.type == Layer.Type.LogicalAnd ||
-                l.type == Layer.Type.LogicalXor)
+                l.type == Layer.Type.LogicalXor ||
+                l.type == Layer.Type.Where)
             {
                 // gather shapes by names
                 var list = new List<TensorShape>(l.inputs.Length);
@@ -500,8 +501,7 @@ internal class ModelAnalyzer
                 l.type == Layer.Type.LRN ||
                 l.type == Layer.Type.Dropout ||
                 l.type == Layer.Type.LogicalNot ||
-                l.type == Layer.Type.Sign ||
-                l.type == Layer.Type.Where)
+                l.type == Layer.Type.Sign)
             {
                 // works in place, keeps the same shape size
                 O = X;

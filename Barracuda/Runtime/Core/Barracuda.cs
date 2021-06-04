@@ -272,7 +272,7 @@ public static class WorkerExtensions
 /// <summary>
 /// Interface for device dependent representation of Tensor data.
 /// </summary>
-public interface ITensorData : IDisposable
+public interface ITensorData : IDisposable, ITensorDataStatistics
 {
     /// <summary>
     /// Reserve uninitialized memory.
@@ -315,13 +315,11 @@ public interface ITensorData : IDisposable
     /// <param name="offset">This function outputs `offset` from the beginning of the array to location of values for specific tensor. `offset` parameters is specified in float elements</param>
     /// <returns>array filled with the values of multiple tensors that share the same tensorData on device</returns>
     float[] SharedAccess(out int offset);
-
-    /// <summary>
-    /// Returns the maximum number of element this tensorData can contain.
-    /// </summary>
-    int maxCapacity { get; }
 }
 
+/// <summary>
+/// Job system dependency fences for the memory resource
+/// </summary>
 public interface IDependableMemoryResource
 {
     /// <summary>
@@ -626,10 +624,11 @@ public class WorkerFactory
     /// <param name="additionalOutputs">the additional outputs to track but not directly specified by the model</param>
     /// <param name="trimOutputs">by specifying this list of outputs, all other non-specified outputs will be discarded</param>
     /// <param name="workerConfiguration">define configurations such as logging and comparison backend, see WorkerConfiguration API docs</param>
+    /// <param name="modelExecutionsReporter">execution reporter to use to track models executions</param>
     /// <returns>Worker instance</returns>
-    public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerConfiguration workerConfiguration)
+    public static IWorker CreateWorker(Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerConfiguration workerConfiguration, IModelExecutionsReporter modelExecutionsReporter = null)
     {
-        return BarracudaBackendsFactory.CreateWorker(type, model, additionalOutputs, trimOutputs, workerConfiguration);
+        return BarracudaBackendsFactory.CreateWorker(type, model, additionalOutputs, trimOutputs, workerConfiguration, modelExecutionsReporter);
     }
 
     /// <summary>

@@ -67,7 +67,7 @@ internal class BarracudaBackendsFactory
         }
     }
 
-    internal static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerFactory.WorkerConfiguration workerConfiguration)
+    internal static IWorker CreateWorker(WorkerFactory.Type type, Model model, string[] additionalOutputs, string[] trimOutputs, WorkerFactory.WorkerConfiguration workerConfiguration, IModelExecutionsReporter modelExecutionsReporter = null)
     {
         type = ResolveAutoType(type);
         var compareAgainstType = ResolveAutoType(workerConfiguration.compareAgainstType);
@@ -99,15 +99,16 @@ internal class BarracudaBackendsFactory
             ops = new CompareOps(ops,
                 CreateOps(compareAgainstType, allocator, workerConfiguration.verbose), workerConfiguration.compareLogLevel, workerConfiguration.compareEpsilon);
 
-        if (workerConfiguration.verbose)
-            ops = new VerboseOps(ops);
+        if (workerConfiguration.verbose || modelExecutionsReporter != null)
+            ops = new VerboseOps(ops, workerConfiguration.verbose);
 
-        if (Application.isEditor)
+        if (Application.isEditor || modelExecutionsReporter != null)
             ops = new StatsOps(ops);
 
         model = ValidateModel(
             PatchModel(model, additionalOutputs, trimOutputs));
 
+        ops.SetModelExecutionsReporter(modelExecutionsReporter);
         return new GenericWorker(model, ops, vars, workerConfiguration.verbose);
     }
 

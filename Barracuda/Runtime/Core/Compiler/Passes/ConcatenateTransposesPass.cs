@@ -24,7 +24,7 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
             var remap = new Dictionary<string, string>();
 
             var layerReferences = new Dictionary<string, int>();
-            for (int l = 0; l < model.layers.Count - 1; ++l)
+            for (int l = 0; l < model.layers.Count; ++l)
             {
                 Layer layer = model.layers[l];
                 string[] layerInputs = layer.inputs;
@@ -37,6 +37,15 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                         count = 0;
 
                     layerReferences[layerInputs[i]] = count;
+                }
+
+                if (model.outputs.Contains(layer.name))
+                {
+                    if (layerReferences.TryGetValue(layer.name, out int count))
+                        count++;
+                    else
+                        count = 0;
+                    layerReferences[layer.name] = count;
                 }
             }
 
@@ -55,8 +64,10 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                         layerInputs[i] = replacement;
                 }
 
-                if (layer.flags.HasFlag(Layer.Flags.Preserve) || nextLayer.flags.HasFlag(Layer.Flags.Preserve))
+                if (layer.flags.HasFlag(Layer.Flags.Preserve))
                     continue;
+
+                bool reverseMerge = nextLayer.flags.HasFlag(Layer.Flags.Preserve);
 
                 // Only concatenate serial transpose layers
                 if (layer.type == Layer.Type.Transpose
@@ -107,11 +118,19 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                         combinePermutations[7] = nextLayer.pool[7];
                     }
 
-
                     permutations = TensorExtensions.Permute(permutations, combinePermutations);
-                    layer.pool = permutations;
 
-                    remap[nextLayer.name] = layer.name;
+                    if (reverseMerge)
+                    {
+                        remap[layer.name] = nextLayer.name;
+                        nextLayer.pool = permutations;
+                        nextLayer.inputs = layer.inputs.ToArray();
+                    }
+                    else
+                    {
+                        layer.pool = permutations;
+                        remap[nextLayer.name] = layer.name;
+                    }
                 }
             }
 

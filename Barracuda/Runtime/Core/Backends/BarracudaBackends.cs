@@ -778,7 +778,7 @@ public interface IOps
     /// Sign
     /// </summary>
     /// <param name="x">input</param>
-    /// <returns>Tensor with 1 if x > 0 -1 if < 0 and 0 if == 0 values</returns>
+    /// <returns>Tensor with 1 if x &gt; 0 -1 if &lt; 0 and 0 if == 0 values</returns>
     Tensor Sign(Tensor x);
 
     /// <summary>
@@ -908,10 +908,29 @@ public interface IOps
     Tensor Prepare(Tensor x);
 
     /// <summary>
+    /// Prepares tensor for use without uploading internal data to device
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <returns>Tensor</returns>
+    Tensor PrepareNoAlloc(Tensor x);
+
+    /// <summary>
     /// Reset internal allocator
     /// </summary>
     /// <param name="keepCachedMemory">keep cached memory flag</param>
     void ResetAllocator(bool keepCachedMemory = true);
+
+    /// <summary>
+    /// Set model executions reporter
+    /// <param name="executionsReporter">model executions reporter</param>
+    /// </summary>
+    void SetModelExecutionsReporter(IModelExecutionsReporter executionsReporter);
+
+    /// <summary>
+    /// Get model executions reporter
+    /// </summary>
+    /// <returns>model executions reporter</returns>
+    IModelExecutionsReporter GetModelExecutionsReporter();
 }
 
 /// <summary>
@@ -999,6 +1018,167 @@ public interface IVars : IDisposable
     /// </summary>
     /// <returns>current `ITensorAllocator`</returns>
     ITensorAllocator GetAllocator();
+}
+
+/// <summary>
+/// Interfaces for model execution reporter
+/// use .ToString() to convert to text representation
+/// </summary>
+public interface IModelExecutionsReporter
+{
+    /// <summary>
+    /// Mark the model execution as started
+    /// </summary>
+    void ModelExecutionStarted();
+
+    /// <summary>
+    /// Mark the model execution as completed
+    /// </summary>
+    void ModelExecutionCompleted();
+
+    /// <summary>
+    /// Mark a layer execution as started
+    /// <param name="layer">layer</param>
+    /// </summary>
+    void LayerExecutionStarted(Layer layer);
+
+    /// <summary>
+    /// Mark a layer execution as completed
+    /// </summary>
+    void LayerExecutionCompleted();
+
+    /// <summary>
+    /// Set a layer operation summary
+    /// <param name="message">layer summary</param>
+    /// </summary>
+    void SetLayerSummary(string message);
+
+    /// <summary>
+    /// Set a layer theoretical numbers of ALU and memory bandwidth
+    /// <param name="alu">number of theoretical ALU operations</param>
+    /// <param name="bytes">number of theoretical bandwidth in bytes</param>
+    /// </summary>
+    void SetLayerALUAndMemStats(long alu, long bytes);
+
+    /// <summary>
+    /// Add a dispatch to current layer
+    /// <param name="dispatchInfo">dispatch information</param>
+    /// </summary>
+    void AddLayerDispatch(DispatchInfo dispatchInfo);
+
+    /// <summary>
+    /// Take a memory snapshot
+    /// <param name="vars">IVars containing memory information</param>
+    /// <param name="context">context of the snapshot</param>
+    /// <param name="layer">optional layer of the snapshot</param>
+    /// </summary>
+    void TakeMemorySnapshot(IVars vars, string context, Layer layer=null);
+
+    /// <summary>
+    /// Return a string representation of the executions tracked so far.
+    /// <param name="spreadSheetFormat">if true report will be formatted as a spreadSheet.</param>
+    /// </summary>
+    string GenerateStringReport(bool spreadSheetFormat);
+}
+
+public interface IUniqueResource
+{
+    /// <summary>
+    /// Returns a unique id for identification.
+    /// </summary>
+    int uniqueId { get; }
+}
+
+public interface ITensorDataStatistics : IUniqueResource
+{
+    /// <summary>
+    /// Returns the maximum number of element this tensorData can contain.
+    /// </summary>
+    int maxCapacity { get; }
+
+    /// <summary>
+    /// Returns true if this tensor data is attached to any tensor.
+    /// </summary>
+    bool inUse { get; }
+
+    /// <summary>
+    /// Returns true if this tensor data is reserved as GPU memory.
+    /// </summary>
+    bool isGPUMem { get; }
+}
+
+public interface ITensorStatistics: IUniqueResource
+{
+    /// <summary>
+    /// Return this tensor name.
+    /// </summary>
+    string name { get; }
+
+    /// <summary>
+    /// Return the shape of this tensor.
+    /// </summary>
+    TensorShape shape  { get; }
+
+    /// <summary>
+    /// Return amount of internal tensor cache in bytes.
+    /// </summary>
+    int cacheBytes { get; }
+
+    /// <summary>
+    /// Return this tensor tensor data statistics if any or null.
+    /// </summary>
+    ITensorDataStatistics GetTensorDataStatistics();
+}
+
+public interface IAllocatorStatistics: IUniqueResource
+{
+    /// <summary>
+    /// Return this allocator name.
+    /// </summary>
+    string name { get; }
+
+    /// <summary>
+    /// Bytes used by busy tensors.
+    /// </summary>
+    long usedBytes { get; }
+
+    /// <summary>
+    /// Busy bytes (used bytes + bytes lost to fragmentation)
+    /// </summary>
+    long busyBytes { get; }
+
+    /// <summary>
+    /// Free bytes
+    /// </summary>
+    long freeBytes { get; }
+
+    /// <summary>
+    /// Total bytes (busy + free)
+    /// </summary>
+    long totalBytes { get; }
+
+    /// <summary>
+    /// Enumerator for tensors statistics.
+    /// </summary>
+    IEnumerable<ITensorStatistics> GetTensorsStatistics();
+
+    /// <summary>
+    /// Enumerator for tensors data statistics.
+    /// </summary>
+    IEnumerable<ITensorDataStatistics> GetTensorDatasStatistics();
+}
+
+public interface IVarsStatistics
+{
+    /// <summary>
+    /// Enumerator for allocators statistics.
+    /// </summary>
+    IEnumerable<IAllocatorStatistics> GetAllocatorsStatistics();
+
+    /// <summary>
+    /// Enumerator for tensors statistics.
+    /// </summary>
+    IEnumerable<ITensorStatistics> GetTensorsStatistics();
 }
 
 /// <summary>

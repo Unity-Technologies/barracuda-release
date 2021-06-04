@@ -152,7 +152,12 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint threadI
     #if CHANNELS_FIRST
         [unroll] for (tg_X = 0; tg_X < BLOCK_SIZE; ++tg_X)
             [unroll] for (tg_W = 0; tg_W < BLOCK_SIZE; ++tg_W)
-                O.FastSet(dzO + ((bx + 8 * (ti % 8)) + tg_X) + O.width * ((by + 8 * (ti / 8)) + tg_W), dstO[BLOCK_SIZE * tg_W + tg_X]);
+            {
+                uint writeXId = ((bx + 8 * (ti % 8)) + tg_X);
+                uint writeWId = ((by + 8 * (ti / 8)) + tg_W);
+                if (writeWId < O.channels && writeXId < O.width)
+                    O.FastSet(dzO + writeXId + O.width * writeWId, dstO[BLOCK_SIZE * tg_W + tg_X]);
+            }
     #else
         [unroll] for (uint tg_XOffset = 0; tg_XOffset < BLOCK_SIZE; tg_XOffset += 2)
         {
@@ -177,7 +182,8 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE)(uint3 groupID : SV_GroupID, uint threadI
                 // bx + tg_!%4 + (tgA/4)*8 + tg_AOffset
                 uint writeXId = bx + (tg_X & 1) + ((tg_X >> 1) << 3) + tg_XOffset;
                 uint writeIndex = dzO + O.channels * writeXId + (by + ti);
-                O.FastSet(writeIndex, LDS_[readIndex]);
+                if ((by + ti) < O.channels && writeXId < O.width)
+                    O.FastSet(writeIndex, LDS_[readIndex]);
             }
         }
     #endif

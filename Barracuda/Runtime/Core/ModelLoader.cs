@@ -200,10 +200,19 @@ public static class ModelLoader
                 model.IrSource = ReadString(file);
                 model.IrVersion = ReadString(file);
                 model.ProducerName = ReadString(file);
-                var numWarnings = file.ReadInt32();
+                int numWarnings = file.ReadInt32();
                 for (var i = 0; i < numWarnings; ++i)
                 {
                     model.Warnings.Add(new Model.ImporterWarning(ReadString(file), ReadString(file)));
+                }
+
+                if (version >= 18)
+                {
+                    int numMetadataProps = file.ReadInt32();
+                    for (var i = 0; i < numMetadataProps; ++i)
+                    {
+                        model.Metadata.Add(ReadString(file), ReadString(file));
+                    }
                 }
             }
             catch (EndOfStreamException)

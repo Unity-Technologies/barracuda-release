@@ -192,13 +192,14 @@ public partial class BurstCPUOps : UnsafeArrayCPUOps
     }
 
     /// <summary>
-    /// Pin `Tensor` to Burst backend device
+    /// Pin `Tensor` to Burst backend device, if `uploadCache` is false, data is not uploaded to device
     /// </summary>
     /// <param name="X">`Tensor`</param>
+    /// <param name="uploadCache">`bool`</param>
     /// <returns>`BurstTensorData`</returns>
-    new public static BurstTensorData Pin(Tensor X)
+    new public static BurstTensorData Pin(Tensor X, bool uploadCache = true)
     {
-        X.FlushCache();
+        X.FlushCache(uploadCache);
 
         var onDevice = X.tensorOnDevice as BurstTensorData;
         if (onDevice == null)
@@ -211,7 +212,12 @@ public partial class BurstCPUOps : UnsafeArrayCPUOps
             else if (asSharedArray != null) X.AttachToDevice(new BurstTensorData(asSharedArray));
             else if (asArray != null) X.AttachToDevice(new BurstTensorData(asArray));
             else
-                X.UploadToDevice(new BurstTensorData(X.shape)); // device is not compatible, create new array and upload
+            {
+                if (uploadCache)
+                    X.UploadToDevice(new BurstTensorData(X.shape)); // device is not compatible, create new array and upload
+                else
+                    X.AllocateOnDevice(new BurstTensorData(X.shape)); // device is not compatible, create new array but do not upload
+            }
         }
 
         return X.tensorOnDevice as BurstTensorData;
@@ -225,6 +231,12 @@ public partial class BurstCPUOps : UnsafeArrayCPUOps
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);
+        return X;
+    }
+
+    public override Tensor PrepareNoAlloc(Tensor X)
+    {
+        Pin(X, uploadCache: false);
         return X;
     }
 }

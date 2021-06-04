@@ -1033,11 +1033,35 @@ public class CompareOps : IOps, IModelCompiler
         return Y;
     }
 
+
+    /// <inheritdoc/>
+
+    Tensor IOps.PrepareNoAlloc(Tensor X)
+    {
+        var Y = m_Ops1.PrepareNoAlloc(X);
+        var Z = m_Ops2.PrepareNoAlloc(X);
+        CheckSame(Y, Z, "PrepareNoAlloc");
+        return Y;
+    }
+
     /// <inheritdoc/>
     void IOps.ResetAllocator(bool keepCachedMemory)
     {
         m_Ops1.ResetAllocator(keepCachedMemory);
         m_Ops2.ResetAllocator(keepCachedMemory);
+    }
+
+    /// <inheritdoc/>
+    void IOps.SetModelExecutionsReporter(IModelExecutionsReporter executionsReporter)
+    {
+        m_Ops1.SetModelExecutionsReporter(executionsReporter);
+        m_Ops2.SetModelExecutionsReporter(null);
+    }
+
+    /// <inheritdoc/>
+    IModelExecutionsReporter IOps.GetModelExecutionsReporter()
+    {
+        return m_Ops1.GetModelExecutionsReporter();
     }
 
     private void CheckSame(Tensor X, Tensor Y, Layer.Type layerType, params Tensor[] inputs)

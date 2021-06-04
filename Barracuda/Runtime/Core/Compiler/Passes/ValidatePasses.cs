@@ -20,7 +20,7 @@ namespace Unity.Barracuda.Compiler.Passes
         public static void AppendWarning(bool condition, string layer, string message, ref List<Model.ImporterWarning> warnings, MessageType level = MessageType.Info)
         {
             if (!condition)
-                warnings.Add(new Model.ImporterWarning(layer, $"MessageType.{(int)level}" + message));
+                warnings?.Add(new Model.ImporterWarning(layer, $"MessageType.{(int)level}" + message));
         }
     }
 
@@ -120,6 +120,17 @@ namespace Unity.Barracuda.Compiler.Passes
                 else if (type == Layer.Type.Range)
                 {
                     ValidationHelper.AppendWarning(true, name, "ValidateIntermediateNCHWModelLayers::Range only const inputs supported", ref warnings, MessageType.Error);
+                }
+                else if (type == Layer.Type.StridedSlice)
+                {
+                    int[] starts = l.pad; int[] ends = l.pool; int[] strides = l.stride;
+                    for (int i = 0; i < starts.Length; i++)
+                    {
+                        if (strides[i] == 0)
+                            ValidationHelper.AppendWarning(true, name, "ValidateIntermediateNCHWModelLayers::StridedSlice strides=0 will result in slicing the whole tensor", ref warnings, MessageType.Warning);
+                        if(starts[i] == 0 && ends[i] == 0)
+                            ValidationHelper.AppendWarning(true, name, "ValidateIntermediateNCHWModelLayers::StridedSlice starts=0 && ends=0 will result in slicing whole tensor and not empty tensor", ref warnings, MessageType.Warning);
+                    }
                 }
             }
         }

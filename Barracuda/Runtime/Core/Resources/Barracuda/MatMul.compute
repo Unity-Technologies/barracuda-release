@@ -78,14 +78,14 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE, RANKA, RANKB)(uint3 groupID : SV_GroupID
             LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 7] = A.MaskedGet(((by + ti) < strideA) && ((i + 7) < A.width), dzA + (i + 7) + A.width * (by + ti));
         #else
             //LDS_[A_OFFSET + ti + 8 * 8 * [0..7]] = A.FastGet(A.channels * (i + [0..7]) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 0] = A.MaskedGet(((by + ti) < strideA) && (i + 0) < A.width, dzA + A.channels * (i + 0) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 1] = A.MaskedGet(((by + ti) < strideA) && (i + 1) < A.width, dzA + A.channels * (i + 1) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 2] = A.MaskedGet(((by + ti) < strideA) && (i + 2) < A.width, dzA + A.channels * (i + 2) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 3] = A.MaskedGet(((by + ti) < strideA) && (i + 3) < A.width, dzA + A.channels * (i + 3) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 4] = A.MaskedGet(((by + ti) < strideA) && (i + 4) < A.width, dzA + A.channels * (i + 4) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 5] = A.MaskedGet(((by + ti) < strideA) && (i + 5) < A.width, dzA + A.channels * (i + 5) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 6] = A.MaskedGet(((by + ti) < strideA) && (i + 6) < A.width, dzA + A.channels * (i + 6) + by + ti);
-            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 7] = A.MaskedGet(((by + ti) < strideA) && (i + 7) < A.width, dzA + A.channels * (i + 7) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 0] = A.MaskedGet(((by + ti) < A.channels) && (i + 0) < A.width, dzA + A.channels * (i + 0) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 1] = A.MaskedGet(((by + ti) < A.channels) && (i + 1) < A.width, dzA + A.channels * (i + 1) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 2] = A.MaskedGet(((by + ti) < A.channels) && (i + 2) < A.width, dzA + A.channels * (i + 2) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 3] = A.MaskedGet(((by + ti) < A.channels) && (i + 3) < A.width, dzA + A.channels * (i + 3) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 4] = A.MaskedGet(((by + ti) < A.channels) && (i + 4) < A.width, dzA + A.channels * (i + 4) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 5] = A.MaskedGet(((by + ti) < A.channels) && (i + 5) < A.width, dzA + A.channels * (i + 5) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 6] = A.MaskedGet(((by + ti) < A.channels) && (i + 6) < A.width, dzA + A.channels * (i + 6) + by + ti);
+            LDS_[A_OFFSET + ti + CACHE_WIDTH_A * 7] = A.MaskedGet(((by + ti) < A.channels) && (i + 7) < A.width, dzA + A.channels * (i + 7) + by + ti);
         #endif
 
                       
@@ -147,7 +147,12 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE, RANKA, RANKB)(uint3 groupID : SV_GroupID
     #if CHANNELS_FIRST
         [unroll] for (tg_A = 0; tg_A < BLOCK_SIZE; ++tg_A)
             [unroll] for (tg_B = 0; tg_B < BLOCK_SIZE; ++tg_B)
-            O.FastSet(dzO + ((bx + 8 * (ti % 8)) + tg_A) + O.width * ((by + 8 * (ti / 8)) + tg_B), dstO[BLOCK_SIZE * tg_B + tg_A]);
+            {
+                uint writeAId = ((bx + 8 * (ti % 8)) + tg_A);
+                uint writeBId = ((by + 8 * (ti / 8)) + tg_B);
+                if (writeBId < O.channels && writeAId < O.width)
+                    O.FastSet(dzO + writeAId + O.width * writeBId, dstO[BLOCK_SIZE * tg_B + tg_A]);
+            }
     #else
         [unroll] for (uint tg_AOffset = 0; tg_AOffset < BLOCK_SIZE; tg_AOffset += 2)
         {
@@ -172,7 +177,8 @@ void FUNC_NAME(KERNEL_NAME, BLOCK_SIZE, RANKA, RANKB)(uint3 groupID : SV_GroupID
                 // bx + tg_!%4 + (tgA/4)*8 + tg_AOffset
                 uint writeXId = bx + (tg_A & 1) + ((tg_A >> 1) << 3) + tg_AOffset;
                 uint writeIndex = dzO + O.channels * writeXId + (by + ti);
-                O.FastSet(writeIndex, LDS_[readIndex]);
+                if ((by+ti) < O.channels && writeXId < O.width)
+                    O.FastSet(writeIndex, LDS_[readIndex]);
             }
         }
     #endif

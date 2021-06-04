@@ -589,7 +589,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 var instructions = new List<CompiledInstruction>();
                 var Xr = X;
-                while (Xr[axis] >= 64*4)
+                while (Xr[axis] > 64*4)
                 {
                     var lastLength = Xr.length;
 
@@ -598,27 +598,18 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                     ComputeReduceDispatchDim(Xr, Or, axis, out flatHeight, out reducedDim, out flatWidth);
 
-                    s_PartialReduceSumDimensions[0] = flatHeight;
-                    s_PartialReduceSumDimensions[1] = flatWidth;
-                    s_PartialReduceSumDimensions[2] = reducedDim;
-
                     unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
                     unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
                     var poolKernel = BestKernel(ComputeKernelLibrary.PartialReduce(kernelName, flatHeight, reducedDim, flatWidth));
 
                     instructions.Add(new CompiledInstruction { kernel = poolKernel, shape = Or });
-                  
+
                     Xr = Or;
                     Assert.IsTrue(Xr.length < lastLength);
                 }
 
                 ComputeReduceDispatchDim(Xr, O, axis, out flatHeight, out reducedDim, out flatWidth);
-
-
-                s_GlobalReduceSumDimensions[0] = flatHeight;
-                s_GlobalReduceSumDimensions[1] = flatWidth;
-                s_GlobalReduceSumDimensions[2] = baseReducedDim;
 
 
                 unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
@@ -640,11 +631,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                     //8D activation are not supported on compute path atm, will fallback.
                     continue;
 
-                if (l.activation == Layer.Activation.Softmax)
-                {
-                    kernel = BestKernel(
-                        ComputeKernelLibrary.Softmax(X, O));
-                } else if (l.activation == Layer.Activation.LogSoftmax)
+                // Softmax implemented with ReduceSum/Max: TODO pre-allocate shaders
+                if (l.activation == Layer.Activation.LogSoftmax)
                 {
                     kernel = BestKernel(
                         ComputeKernelLibrary.LogSoftmax(X, O));
@@ -696,7 +684,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             var Oactivation = NewTensor(O.shape);
 
             fnActivation.SetTensor("X", O.shape, Pin(O).buffer);
-            fnActivation.SetTensor("O", Oactivation.shape, Pin(Oactivation).buffer);
+            fnActivation.SetTensor("O", Oactivation.shape, Pin(Oactivation, uploadCache: false).buffer);
 
             fnActivation.shader.SetFloat(_Alpha, 0.0f);
             fnActivation.shader.SetFloat(_Beta, 0.0f);
@@ -725,7 +713,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             var flattenFn = m_Compiled.instructions[1].kernel;
 
             flattenFn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-            flattenFn.SetTensor(_DeclO, _DataO, flattenedX.shape, Pin(flattenedX).buffer);
+            flattenFn.SetTensor(_DeclO, _DataO, flattenedX.shape, Pin(flattenedX, uploadCache: false).buffer);
             flattenFn.Dispatch();
 
             X = flattenedX;
@@ -736,7 +724,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
         fn.SetTensorDecl(_DeclW, W.shape, Pin(W).offset);
         fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(W).buffer, Pin(B).buffer);
@@ -759,7 +747,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
         fn.SetTensorDecl(_DeclW, W.shape, Pin(W).offset);
         fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(W).buffer, Pin(B).buffer);
@@ -788,7 +776,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         if (m_Compiled.instructions[0].tensors?.Length == 2)
         {
@@ -829,7 +817,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
         fn.SetTensorDecl(_DeclK, K.shape, Pin(K).offset);
         fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(K).buffer, Pin(B).buffer);
@@ -869,7 +857,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn0PadX = instruction0PadX.kernel;
 
         fn0PadX.SetTensor("X", X.shape, Pin(X).buffer);
-        fn0PadX.SetTensor("O", Xpadded.shape, Pin(Xpadded).buffer);
+        fn0PadX.SetTensor("O", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
         fn0PadX.shader.SetInts("_Stride", stride);
         fn0PadX.shader.SetInts("_Pad", outputAdjustment);
         fn0PadX.Dispatch();
@@ -901,8 +889,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         var O = NewTensor(instructionConv.shape);
 
-        fnConv.SetTensor("X", Xpadded.shape, Pin(Xpadded).buffer);
-        fnConv.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fnConv.SetTensor("X", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
+        fnConv.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         if(instructionConv.tensors?.Length == 2)
         {
@@ -940,7 +928,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         fn.shader.SetInts(_Pool, scale);
 
@@ -962,7 +950,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         fn.shader.SetInts(_Pool, pool);
         fn.shader.SetInts(_Stride, stride);
@@ -986,7 +974,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
         fn.SetTensorDecl(_DeclW, S.shape, Pin(S).offset);
         fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(S).buffer, Pin(B).buffer);
@@ -1015,7 +1003,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
-            fnPool.SetTensor("O", Or.shape, Pin(Or).buffer);
+            fnPool.SetTensor("O", Or.shape, Pin(Or, uploadCache: false).buffer);
 
             fnPool.shader.SetInts("_Pool", pool);
             fnPool.shader.SetInts("_Stride", stride);
@@ -1032,7 +1020,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
-        fnGlobalPool.SetTensor("O", O.shape, Pin(O).buffer);
+        fnGlobalPool.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
         fnGlobalPool.shader.SetInts("_Pool", s_GlobalPool2DInputDim);
 
         fnGlobalPool.Dispatch();
@@ -1098,8 +1086,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
             fnPool.SetTensor("X", Xr.shape, Pin(Xr).buffer);
             fnPool.SetTensor("X2", X2r.shape, Pin(X2r).buffer);
-            fnPool.SetTensor("O", Or.shape, Pin(Or).buffer);
-            fnPool.SetTensor("O2", O2r.shape, Pin(O2r).buffer);
+            fnPool.SetTensor("O", Or.shape, Pin(Or, uploadCache: false).buffer);
+            fnPool.SetTensor("O2", O2r.shape, Pin(O2r, uploadCache: false).buffer);
 
             fnPool.shader.SetInts("_Pool", poolReduce);
             fnPool.shader.SetInts("_Stride", stride);
@@ -1121,7 +1109,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         fnGlobalPool.SetTensor("X", Xr.shape, Pin(Xr).buffer);
         fnGlobalPool.SetTensor("X2", X2r.shape, Pin(X2r).buffer);
-        fnGlobalPool.SetTensor("O", meanVariance.shape, Pin(meanVariance).buffer);
+        fnGlobalPool.SetTensor("O", meanVariance.shape, Pin(meanVariance, uploadCache: false).buffer);
         fnGlobalPool.shader.SetInts("_Pool", inputDim);
         fnGlobalPool.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
@@ -1135,8 +1123,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var O = NewTensor(X.shape);
         var fnNormalize = instructionNormalize.kernel;
         fnNormalize.SetTensor("X", X.shape, Pin(X).buffer);
-        fnNormalize.SetTensor("O", O.shape, Pin(O).buffer);
-        fnNormalize.SetTensor("W", meanVariance.shape, Pin(meanVariance).buffer);
+        fnNormalize.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fnNormalize.SetTensor("W", meanVariance.shape, Pin(meanVariance, uploadCache: false).buffer);
         fnNormalize.SetTensorDecl("S", S.shape, Pin(S).offset);
         fnNormalize.SetTensorDecl("B", B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(S).buffer, Pin(B).buffer);
@@ -1149,8 +1137,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
-    /// <inheritdoc/>
-    protected override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    internal override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
     {
         if (m_Compiled.instructions == null)
             return base.Reduce(kernelName, X, axis);
@@ -1162,7 +1149,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         int unrolledH, unrolledW;
 
         for (var i = 0; i < m_Compiled.instructions.Length-1; ++i)
-        {      
+        {
             CompiledInstruction instructionPool = m_Compiled.instructions[i];
             Assert.IsNotNull(instructionPool.kernel.shader);
 
@@ -1174,17 +1161,17 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
             unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
             unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
-       
+
             var Or = NewTensor(instructionPool.shape);
             var fnPool = instructionPool.kernel;
-       
+
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
-            fnPool.SetTensor("O", Or.shape, Pin(Or).buffer);
+            fnPool.SetTensor("O", Or.shape, Pin(Or, uploadCache: false).buffer);
             fnPool.shader.SetInt("_UnrolledH", unrolledH);
             fnPool.shader.SetInt("_UnrolledW", unrolledW);
             fnPool.shader.SetInt("_ReducedDim", instructionPool.shape[axis]);
             fnPool.shader.SetInts("_Pool", s_PartialReduceSumDimensions);
-       
+
             fnPool.Dispatch();
             X = Or;
         }
@@ -1207,7 +1194,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
-        fnGlobalPool.SetTensor("O", O.shape, Pin(O).buffer);
+        fnGlobalPool.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
         fnGlobalPool.shader.SetInt("_UnrolledH", unrolledH);
         fnGlobalPool.shader.SetInt("_UnrolledW", unrolledW);
         fnGlobalPool.shader.SetInt("_ReducedDim", reducedDim);
@@ -1229,7 +1216,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         fn.shader.SetFloat(_Alpha, alpha);
         fn.shader.SetFloat(_Beta,  beta);
@@ -1251,30 +1238,15 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
         fn.SetTensor(_DeclW, _DataW, S.shape, Pin(S).buffer);
 
         fn.Dispatch();
         return O;
     }
 
-    /// <inheritdoc/>
-    public override Tensor Softmax(Tensor X, int axis)
-    {
-        if (m_Compiled.kernel.shader == null || X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1 || axis > X.shape.FirstNotIdentityFeatureDimensionIndex())
-            return base.Softmax(X, axis);
-
-        Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
-        var fn = m_Compiled.kernel;
-
-        fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
-
-        fn.Dispatch();
-        return O;
-    }
-
+    //  TODO
+    //  public override Tensor Softmax(Tensor X, int axis)
     /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X)
     {
@@ -1286,7 +1258,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         fn.Dispatch();
         return O;
@@ -1317,7 +1289,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             O = (t % 2 == 1) ? outputTensor1 : outputTensor2;
 
             fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-            fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O).buffer);
+            fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
             fn.SetTensor(_DeclB, _DataB, B.shape, Pin(B).buffer, Pin(B).offset);
             fn.shader.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
@@ -1373,7 +1345,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             var fn = instruction.kernel;
 
             fn.SetTensor("X", X.shape, Pin(X).buffer);
-            fn.SetTensor("O", O.shape, Pin(O).buffer);
+            fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
 
             fn.shader.SetInts("_Pad", offsets);
 

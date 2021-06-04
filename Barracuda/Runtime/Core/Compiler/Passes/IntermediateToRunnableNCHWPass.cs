@@ -172,7 +172,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
 
             rewriters.Add(Layer.Type.StridedSlice, SliceToBarracuda);
-            rewriters.Add(Layer.Type.Gather, AxisToBarracuda);
+            rewriters.Add(Layer.Type.Gather, GatherToBarracuda);
             rewriters.Add(Layer.Type.Concat, AxisToBarracuda);
             rewriters.Add(Layer.Type.Tile, ShapeToBarracuda);
             rewriters.Add(Layer.Type.Reshape, ShapeToBarracuda);
@@ -269,6 +269,19 @@ namespace Unity.Barracuda.Compiler.Passes
             }
 
             return true;
+        }
+
+        bool GatherToBarracuda(Layer layer, ModelBuilder net)
+        {
+            string input0 = layer.inputs[0];
+            Model.Input input0Info = net.model.inputs.First(i => i.name == layer.inputs[0]);
+
+            string input1 = layer.inputs[1];
+            Model.Input input1Info = net.model.inputs.First(i => i.name == layer.inputs[1]);
+
+            layer.pool = new[] { input0Info.rank, input1Info.rank };
+
+            return AxisToBarracuda(layer, net);
         }
 
         bool TransposeToBarracuda(Layer layer, ModelBuilder net)

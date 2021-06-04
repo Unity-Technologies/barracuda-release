@@ -372,3 +372,21 @@ void KERNEL_FUNC(BroadcastWhere)(uint3 dispatchThreadID : SV_DispatchThreadID)
         O.Set(n, y, x, c, v);
     }
 }
+
+NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))
+void KERNEL_FUNC(BroadcastDivExpSub)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    TENSOR_THREEINPUTS(X, B, S, O);
+    uint c, x, y;
+    DispatchThreadIdToTensorIndices(dispatchThreadID, c, x, y);
+    if (c >= O.channels) return;    if (x >= O.width) return;       if (y >= O.height) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float v =
+            X.FastGet(dot(uint4(n, y, x, c), _XStrides)) -
+            B.FastGet(dot(uint4(n, y, x, c), _BStrides));
+        v = exp(v) / S.FastGet(dot(uint4(n, y, x, c), _SStrides));
+        O.Set(n, y, x, c, v);
+    }
+}

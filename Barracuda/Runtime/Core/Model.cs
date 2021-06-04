@@ -1014,7 +1014,7 @@ public class Model
     /// <summary>
     /// Model version, incremented with each data structure change
     /// </summary>
-    public const int Version = 17;
+    public const int Version = 18;
     internal const int LastVersionWithout8DSupport = 16;
 
     /// <summary>
@@ -1141,6 +1141,11 @@ public class Model
             LayerName = layer;
         }
     }
+
+    /// <summary>
+    /// Metadata properties associated with the model
+    /// </summary>
+    public Dictionary<string, string> Metadata { get; private set; } = new Dictionary<string, string>();
     #endregion
 
     /// <summary>
@@ -1159,6 +1164,7 @@ public class Model
         model.IrVersion = IrVersion;
         model.ProducerName = ProducerName;
         model.Warnings.AddRange(Warnings);
+        model.Metadata = new Dictionary<string, string>(Metadata);
         return model;
     }
 

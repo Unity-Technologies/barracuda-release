@@ -126,6 +126,14 @@ namespace Unity.Barracuda {
                 WriteString(writer, model.Warnings[i].Message);
             }
 
+            int numMetadataProps = model.Metadata.Count;
+            writer.Write(numMetadataProps);
+            foreach (KeyValuePair<string, string> kvp in model.Metadata)
+            {
+                WriteString(writer, kvp.Key);
+                WriteString(writer, kvp.Value);
+            }
+
             Profiler.EndSample();
         }
 

@@ -10,6 +10,13 @@ namespace Unity.Barracuda.Compiler.Passes
     {
         public void Run(ref Model model)
         {
+            Run(ref model, null);
+        }
+
+        //TODO this pass is handling data transformation in a destructive way and thus loss validation information.
+        //find a cleaner way to report import warnings.
+        public void Run(ref Model model, List<Model.ImporterWarning> warnings)
+        {
             IDictionary<string, TensorShape?> inputShapes = new Dictionary<string, TensorShape?>();
             IDictionary<string, int?> inputRanks = new Dictionary<string, int?>();
             List<Model.Input> inputs = model.inputs;
@@ -20,7 +27,7 @@ namespace Unity.Barracuda.Compiler.Passes
                     continue;
                 inputShapes[i.name] = new TensorShape(i.shape);
             }
-            FuseShapesIntoConstants(ref model, inputShapes, inputRanks);
+            FuseShapesIntoConstants(ref model, inputShapes, inputRanks, ref warnings);
         }
 
         private static Tensor ShapeToNCHWTensor(TensorShape shape, int rank)
@@ -44,7 +51,7 @@ namespace Unity.Barracuda.Compiler.Passes
             }
         }
 
-        private void FuseShapesIntoConstants(ref Model model, IDictionary<string, TensorShape?> shapesByName, IDictionary<string, int?> ranksByName)
+        private void FuseShapesIntoConstants(ref Model model, IDictionary<string, TensorShape?> shapesByName, IDictionary<string, int?> ranksByName, ref List<Model.ImporterWarning> warnings)
         {
             var toRunnableNCHW = new IntermediateToRunnableNCHWPass();
 
@@ -60,7 +67,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 // NN is a directed graph, if we just fused constants + shapes, update following nodes
                 // re-evaluate shapes
-                FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName);
+                FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName, warnings);
                 // TODO optimization, pass in index, or add shape
                 IRShapeInferenceHelper.RankInference.UpdateKnownTensorRanks(model, ranksByName);
                 IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
@@ -190,7 +197,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 // NN is a directed graph, if we just fused constants + shapes, update following nodes
                 // re-evaluate shapes
-                FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName);
+                FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName, null);//TODO handle potential folding errors/warnings
                 // TODO optimization, pass in index, or add shape
                 IRShapeInferenceHelper.RankInference.UpdateKnownTensorRanks(model, ranksByName);
                 IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
@@ -284,7 +291,7 @@ namespace Unity.Barracuda.Compiler.Passes
             return knownLayersValue.ContainsKey(name) && (name != null);
         }
 
-        public void FuseInputsIntoLayer(ref Layer layer, Dictionary<string, Tensor> knownLayersValue, IDictionary<string, int?> ranksByName)
+        public void FuseInputsIntoLayer(ref Layer layer, Dictionary<string, Tensor> knownLayersValue, IDictionary<string, int?> ranksByName, List<Model.ImporterWarning> warnings)
         {
             switch (layer.type)
             {
@@ -329,6 +336,9 @@ namespace Unity.Barracuda.Compiler.Passes
 
                     if (scales[0] == 1 && scales[1] == 1 && scales[2] < 1.0f && scales[3] < 1.0f && layer.axis >= 0.0f)
                     {
+                        ValidationHelper.AppendWarning(scales.All(x => Mathf.Approximately(1f / x, Mathf.Round(1f / x))),
+                            layer.name, $"Only inverse of scale values which produce integer are currently supported. Inverse of scale value will be rounded to closest integer.", ref warnings, MessageType.Warning);
+
                         scales = new[] { scales[2], scales[3] };
                         layer.type = Layer.Type.AvgPool2D;
                         layer.pad = new[] { 0, 0, 0, 0 };
@@ -338,6 +348,9 @@ namespace Unity.Barracuda.Compiler.Passes
                     }
                     else
                     {
+                        ValidationHelper.AppendWarning(scales.All(x => Mathf.Approximately(x, Mathf.Round(x))),
+                            layer.name, $"Only integer scale values are currently supported. Scale value will be rounded to closest integer value.", ref warnings, MessageType.Warning);
+
                         layer.inputs = new[] { layer.inputs[0] };
                         layer.pool = Array.ConvertAll(scales, x => (int)x);
                     }

@@ -43,17 +43,26 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
         if (s_InspectorModeInfo != null)
             inspectorMode = (InspectorMode)s_InspectorModeInfo.GetValue(assetSerializedObject);
 
-        SerializedProperty iterator = serializedObject.GetIterator();
+        serializedObject.Update();
+
         bool debugView = inspectorMode != InspectorMode.Normal;
+        SerializedProperty iterator = serializedObject.GetIterator();
         for (bool enterChildren = true; iterator.NextVisible(enterChildren); enterChildren = false)
         {
             if (iterator.propertyPath != "m_Script")
                 EditorGUILayout.PropertyField(iterator, true);
         }
 
+        // Additional options exposed from ImportMode
+        SerializedProperty importModeProperty = serializedObject.FindProperty(nameof(onnxModelImporter.importMode));
+        bool skipMetadataImport = ((ImportMode)importModeProperty.intValue).HasFlag(ImportMode.SkipMetadataImport);
+        if (EditorGUILayout.Toggle("Skip Metadata Import", skipMetadataImport) != skipMetadataImport)
+        {
+            importModeProperty.intValue ^= (int)ImportMode.SkipMetadataImport;
+        }
+
         if (debugView)
         {
-            SerializedProperty importModeProperty = serializedObject.FindProperty(nameof(onnxModelImporter.importMode));
             importModeProperty.intValue = (int)(ImportMode)EditorGUILayout.EnumFlagsField("Import Mode", (ImportMode)importModeProperty.intValue);
         }
         else
@@ -65,6 +74,8 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
                 EditorGUILayout.HelpBox("Legacy importer is in use", MessageType.Warning);
         }
 
+        serializedObject.ApplyModifiedProperties();
+
         ApplyRevertGUI();
     }
 }
@@ -75,6 +86,9 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
 [CustomEditor(typeof(NNModel))]
 public class NNModelEditor : UnityEditor.Editor
 {
+    // Use a static store for the foldouts, so it applies to all inspectors
+    static Dictionary<string, bool> s_UIHelperFoldouts = new Dictionary<string, bool>();
+
     private Model m_Model;
     private List<string> m_Inputs = new List<string>();
     private List<string> m_InputsDesc = new List<string>();
@@ -86,6 +100,9 @@ public class NNModelEditor : UnityEditor.Editor
     private List<string> m_LayersDesc = new List<string>();
     private List<string> m_Constants = new List<string>();
     private List<string> m_ConstantsDesc = new List<string>();
+
+    Dictionary<string, string> m_Metadata = new Dictionary<string, string>();
+    Vector2 m_MetadataScrollPosition = Vector2.zero;
     // warnings
     private Dictionary<string, string> m_WarningsNeutral = new Dictionary<string, string>();
     private Dictionary<string, string> m_WarningsInfo = new Dictionary<string, string>();
@@ -182,7 +199,7 @@ public class NNModelEditor : UnityEditor.Editor
         if (nnModel.modelData == null)
             return;
 
-        m_Model = ModelLoader.Load(nnModel, verbose:false, skipWeights:true);
+        m_Model = nnModel.GetDeserializedModel();
         if (m_Model == null)
             return;
 
@@ -240,6 +257,8 @@ public class NNModelEditor : UnityEditor.Editor
             for (var d = 0; d < m_Model.layers[l].datasets.Length; ++d)
                 m_TotalWeightsSizeInBytes += m_Model.layers[l].datasets[d].length;
 
+        m_Metadata = new Dictionary<string, string>(m_Model.Metadata);
+
         for (int i = 0; i < m_Model.Warnings.Count; i++)
         {
             var warning = m_Model.Warnings[i].LayerName;
@@ -294,11 +313,23 @@ public class NNModelEditor : UnityEditor.Editor
         if (m_Model == null)
             return;
 
+        // HACK: When inspector settings are applied and the file is re-imported there doesn't seem to be a clean way to
+        // get a notification from Unity, so we detect this change
+        var nnModel = target as NNModel;
+        if (nnModel && m_Model != nnModel.GetDeserializedModel())
+            OnEnable(); // Model data changed underneath while inspector was active, so reload
+
         GUI.enabled = true;
-        OpenNNModelAsTempFileButton(target as NNModel);
+        OpenNNModelAsTempFileButton(nnModel);
         GUILayout.Label($"Source: {m_Model.IrSource}");
         GUILayout.Label($"Version: {m_Model.IrVersion}");
         GUILayout.Label($"Producer Name: {m_Model.ProducerName}");
+
+        if (m_Metadata.Any())
+        {
+            ListUIHelper($"Metadata {m_Metadata.Count}",
+                m_Metadata.Keys.ToList(), m_Metadata.Values.ToList(), ref m_MetadataScrollPosition);
+        }
 
         if(m_WarningsError.Any())
         {
@@ -337,74 +368,86 @@ public class NNModelEditor : UnityEditor.Editor
             return;
 
         GUILayout.Space(k_Space);
-        GUILayout.Label(sectionTitle, EditorStyles.boldLabel);
-        float height = Mathf.Min(n * 20f + 2f, 150f * maxHeightMultiplier);
-        if (n == 0)
-            return;
+        if (!s_UIHelperFoldouts.TryGetValue(sectionTitle, out bool foldout))
+            foldout = true;
 
-        scrollPosition = GUILayout.BeginScrollView(scrollPosition, GUI.skin.box, GUILayout.MinHeight(height));
-        Event e = Event.current;
-        float lineHeight = 16.0f;
-
-        StringBuilder fullText = new StringBuilder();
-        fullText.Append(sectionTitle);
-        fullText.AppendLine();
-        for (int i = 0; i < n; ++i)
+        foldout = EditorGUILayout.Foldout(foldout, sectionTitle, true, EditorStyles.foldoutHeader);
+        s_UIHelperFoldouts[sectionTitle] = foldout;
+        if (foldout)
         {
-            string name = names[i];
-            string description = descriptions[i];
-            fullText.Append($"{name} {description}");
+            // GUILayout.Label(sectionTitle, EditorStyles.boldLabel);
+            float height = Mathf.Min(n * 20f + 2f, 150f * maxHeightMultiplier);
+            if (n == 0)
+                return;
+
+            scrollPosition = GUILayout.BeginScrollView(scrollPosition, GUI.skin.box, GUILayout.MinHeight(height));
+            Event e = Event.current;
+            float lineHeight = 16.0f;
+
+            StringBuilder fullText = new StringBuilder();
+            fullText.Append(sectionTitle);
             fullText.AppendLine();
-        }
-
-        for (int i = 0; i < n; ++i)
-        {
-            Rect r = EditorGUILayout.GetControlRect(false, lineHeight);
-
-            string name = names[i];
-            string description = descriptions[i];
-
-            // Context menu, "Copy"
-            if (e.type == EventType.ContextClick && r.Contains(e.mousePosition))
+            for (int i = 0; i < n; ++i)
             {
-                e.Use();
-                var menu = new GenericMenu();
-                // need to copy current value to be used in delegate
-                // (C# closures close over variables, not their values)
-                menu.AddItem(new GUIContent($"Copy current line"), false, delegate {
-                    EditorGUIUtility.systemCopyBuffer = $"{name} {description}";
-                });
-                menu.AddItem(new GUIContent($"Copy section"), false, delegate {
-                    EditorGUIUtility.systemCopyBuffer = fullText.ToString();
-                });
-                menu.ShowAsContext();
+                string name = names[i];
+                string description = descriptions[i];
+                fullText.Append($"{name} {description}");
+                fullText.AppendLine();
             }
 
-            // Color even line for readability
-            if (e.type == EventType.Repaint)
+            for (int i = 0; i < n; ++i)
             {
-                GUIStyle st = "CN EntryBackEven";
-                if ((i & 1) == 0)
-                    st.Draw(r, false, false, false, false);
+                Rect r = EditorGUILayout.GetControlRect(false, lineHeight);
+
+                string name = names[i];
+                string description = descriptions[i];
+
+                // Context menu, "Copy"
+                if (e.type == EventType.ContextClick && r.Contains(e.mousePosition))
+                {
+                    e.Use();
+                    var menu = new GenericMenu();
+
+                    // need to copy current value to be used in delegate
+                    // (C# closures close over variables, not their values)
+                    menu.AddItem(new GUIContent($"Copy current line"), false, delegate
+                    {
+                        EditorGUIUtility.systemCopyBuffer = $"{name} {description}";
+                    });
+                    menu.AddItem(new GUIContent($"Copy section"), false, delegate
+                    {
+                        EditorGUIUtility.systemCopyBuffer = fullText.ToString();
+                    });
+                    menu.ShowAsContext();
+                }
+
+                // Color even line for readability
+                if (e.type == EventType.Repaint)
+                {
+                    GUIStyle st = "CN EntryBackEven";
+                    if ((i & 1) == 0)
+                        st.Draw(r, false, false, false, false);
+                }
+
+                // layer name on the right side
+                Rect locRect = r;
+                locRect.xMax = locRect.xMin;
+                GUIContent gc = new GUIContent(name.ToString(CultureInfo.InvariantCulture));
+
+                // calculate size so we can left-align it
+                Vector2 size = EditorStyles.miniBoldLabel.CalcSize(gc);
+                locRect.xMax += size.x;
+                GUI.Label(locRect, gc, EditorStyles.miniBoldLabel);
+                locRect.xMax += 2;
+
+                // message
+                Rect msgRect = r;
+                msgRect.xMin = locRect.xMax;
+                GUI.Label(msgRect, new GUIContent(description.ToString(CultureInfo.InvariantCulture)), EditorStyles.miniLabel);
             }
 
-            // layer name on the right side
-            Rect locRect = r;
-            locRect.xMax = locRect.xMin;
-            GUIContent gc = new GUIContent(name.ToString(CultureInfo.InvariantCulture));
-
-            // calculate size so we can left-align it
-            Vector2 size = EditorStyles.miniBoldLabel.CalcSize(gc);
-            locRect.xMax += size.x;
-            GUI.Label(locRect, gc, EditorStyles.miniBoldLabel);
-            locRect.xMax += 2;
-
-            // message
-            Rect msgRect = r;
-            msgRect.xMin = locRect.xMax;
-            GUI.Label(msgRect, new GUIContent(description.ToString(CultureInfo.InvariantCulture)), EditorStyles.miniLabel);
+            GUILayout.EndScrollView();
         }
-        GUILayout.EndScrollView();
     }
 }
 

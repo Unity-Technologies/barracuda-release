@@ -859,11 +859,9 @@ public static class TensorExtensions
         return new int[] {0, 1, batchOldAxis, 3, 4, channelOldIndex, heightOldIndex, widthOldIndex };
     }
 
-    // TODO: implement negative strides
     static internal unsafe TensorShape ApplyStridedSlice8DUnsafeNoAlloc(this TensorShape shape, int* starts, int* ends,
         int* stride)
     {
-        TensorShape counts = shape;
         TensorShape sliced = shape;
 
         for (int i = 0; i < shape.rank; ++i)
@@ -873,21 +871,29 @@ public static class TensorExtensions
             //       begin=0, end=0, stride=0  <=  new axis OR shrink axis to a single 1st element
             //       begin=N, end=N, stride=0  <=              shrink axis to a single Nth element
 
-            Assert.IsTrue(starts[i] < counts[i]);
-            if (starts[i] != ends[i])
-                sliced[i] = WrapIndex(ends[i], counts[i]) - WrapIndex(starts[i], counts[i]);
+            // take + 1 is si > shape[i]
+            int ei = TensorExtensions.WrapIndex(ends[i], shape[i]);
+            int si = TensorExtensions.WrapIndex(starts[i], shape[i]);
+
+
+            // Barracuda convetion (non ONNX), t[0:0] => t[:]
+            if (si == 0 && ei == 0)
+                ei = shape[i];
+
+            if (stride[i] > 0)
+                sliced[i] = (int)Math.Round((double)(Math.Min(ei, shape[i]) - Math.Min(si, shape[i] - 1)) / (double)(Mathf.Abs(stride[i])), MidpointRounding.AwayFromZero);
+            else if (stride[i] < 0)
+            {
+                bool inclusive = ends[i] < -shape[i]; // edge case when ends is negative and bigger than nchwShape
+                sliced[i] = (int)Math.Round((double)(Math.Min(si, shape[i] - 1) - Math.Min(ei, shape[i]) + (inclusive ? 1 : 0)) / (double)(Mathf.Abs(stride[i])), MidpointRounding.AwayFromZero);
+            }
             else
-                sliced[i] = counts[i];
-            if (stride[i] != 0 && stride[i] < counts[i])
-                sliced[i] = (int)Mathf.Ceil(sliced[i] / (float)stride[i]);
-            else
+            {
+                // Assert.IsTrue(stride[i] != 0); // 0 strides not allowed
+                // breaks legacy implementations
+                D.LogWarning("StridedSlice with 0 strides, not supported! Slicing to 1D dimension");
                 sliced[i] = 1;
-
-            if (sliced[i] < 0)
-                sliced[i] = counts[i] + sliced[i];
-
-            if (sliced[i] < 0)
-                sliced[i] = 0;
+            }
         }
 
         return sliced;

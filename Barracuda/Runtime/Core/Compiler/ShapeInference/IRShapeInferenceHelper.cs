@@ -131,6 +131,46 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 return new TensorShape(size[0], size[1], size[2], size[4], size[5], size[6], size[7], size[3]);
         }
 
+        static public List<int> BarracudaShapeToList(TensorShape X, int rank)
+        {
+            if (rank == 0)
+                return new List<int> { 1 };
+            else if (rank == 1)
+                return new List<int> { X.batch };
+            else if (rank == 2)
+                return new List<int> { X.batch, X.channels };
+            else if (rank == 3)
+                return new List<int> { X.batch, X.width, X.channels };
+            else if (rank == 4)
+                return new List<int> { X.batch, X.height, X.width, X.channels };
+            else if (rank == 5)
+                return new List<int> { X.batch, X.depth, X.height, X.width, X.channels };
+            else if (rank == 6)
+                return new List<int> { X.batch, X.depth, X.extraDimension, X.height, X.width, X.channels };
+            else
+                return new List<int> { X.sequenceLength, X.numberOfDirections, X.batch, X.extraDimension, X.depth, X.height, X.width, X.channels };
+        }
+
+        static public int BarracudaAxisToTensor(int axis, int rank)
+        {
+            if (rank == 0)
+                return 0;
+            else if (rank == 1)
+                return 0;
+            else if (rank == 2)
+                return axis == TensorShape.DataBatch ? 0 : 1;
+            else if (rank == 3)
+                return axis == TensorShape.DataBatch ? 0 : axis - TensorShape.W + 1;
+            else if (rank == 4)
+                return axis == TensorShape.DataBatch ? 0 : axis - TensorShape.H + 1;
+            else if (rank == 5)
+                return axis == TensorShape.DataBatch ? 0 : axis - TensorShape.D + 1;
+            else if (rank == 6)
+                return axis == TensorShape.DataBatch ? 0 : axis - TensorShape.DataFeature3 + 1;
+            else
+                return axis;
+        }
+
         static public TensorShape? InferOutputShapeNCHW(Layer layer, int[] inputRanks, TensorShape[] inputShapes)
         {
             switch (layer.type)
@@ -581,12 +621,15 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 
 
                     int rank0 = inputRanks[0];
+                    int rank1 = inputRanks[1];
                     var shape = ShapeToOnnxLayout(input0Shape, rank0);
+                    var indicies = ShapeToOnnxLayout(input1Shape, rank1);
+
                     var axis = layer.axis;
                     if (axis < 0)
                         axis += rank0;
 
-                    shape[axis] = input1Shape.length;
+                    shape.InsertRange(axis, indicies);
 
                     return OnnxLayoutToTensorShape(shape.ToArray());
                 }
@@ -711,42 +754,26 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                         onnxSteps[axis] = steps[i];
                     }
 
-
-                    var counts = new int[rank];
                     var sliced = new int[rank];
-                    for (int i = 0; i < rank; ++i)
-                    {
-                        counts[i] = nchwShape[i];
-                        sliced[i] = nchwShape[i];
-                    }
-
-
                     for (int i = 0; i < rank; ++i)
                     {
                         // NOTE: begin=0, end=0, stride=1  <=  full range from the existing axis
                         //       begin=0, end=X, stride=1  <=  full range from the existing axis, if X==last element on this axis
                         //       begin=0, end=0, stride=0  <=  new axis OR shrink axis to a single 1st element
                         //       begin=N, end=N, stride=0  <=              shrink axis to a single Nth element
+                        int ei = TensorExtensions.WrapIndex(onnxEnds[i], nchwShape[i]);
+                        int si = TensorExtensions.WrapIndex(onnxStarts[i], nchwShape[i]);
 
-                        Assert.IsTrue(onnxStarts[i] < counts[i]);
-                        if (onnxStarts[i] != onnxEnds[i])
-                            sliced[i] = TensorExtensions.WrapIndex(onnxEnds[i], counts[i]) - TensorExtensions.WrapIndex(onnxStarts[i], counts[i]);
+                        if (onnxSteps[i] > 0)
+                            sliced[i] = (int)Mathf.Round((float)(Math.Min(ei, nchwShape[i]) - Math.Min(si, nchwShape[i] - 1)) / (float)(Mathf.Abs(onnxSteps[i])));
                         else
-                            sliced[i] = counts[i];
-                        if (onnxSteps[i] != 0 && onnxSteps[i] < counts[i])
-                            sliced[i] /= onnxSteps[i];
-                        else
-                            sliced[i] = 1;
-
-                        if (sliced[i] < 0)
-                            sliced[i] = counts[i] + sliced[i];
-
-                        if (sliced[i] < 0)
-                            sliced[i] = 0;
+                        {
+                            bool inclusive = onnxEnds[i] < -nchwShape[i]; // edge case when ends is negative and bigger than nchwShape
+                            sliced[i] = (int)Mathf.Round((float)(Math.Min(si, nchwShape[i] - 1) - Math.Min(ei, nchwShape[i]) + (inclusive ? 1 : 0)) / (float)(Mathf.Abs(onnxSteps[i])));
+                        }
                     }
 
-
-                    return OnnxLayoutToTensorShape(sliced.ToArray());
+                        return OnnxLayoutToTensorShape(sliced.ToArray());
                 }
                 default:
                     throw new NotImplementedException("InferOutputShapeNCHW: Unhandled layer: " + layer.ToString());

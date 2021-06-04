@@ -30,8 +30,23 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     private IOps m_Ops;
-    private long m_Alu;
-    private long m_Mem;
+    private LayerStat m_Alu;
+    private LayerStat m_Mem;
+
+    private readonly struct LayerStat
+    {
+        public readonly long total;
+        public readonly long layer;
+
+        public LayerStat(long totalBeforeLayer, long layer)
+        {
+            this.total = totalBeforeLayer + layer;
+            this.layer = layer;
+        }
+
+        public static implicit operator long(LayerStat d) => d.total;
+        public static LayerStat operator +(LayerStat a, long b) => new LayerStat(a.total, b);
+    };
 
     /// <summary>
     /// Create `StatsOps`
@@ -40,8 +55,8 @@ public class StatsOps : IOps, IModelCompiler
     public StatsOps(IOps ops)
     {
         m_Ops = ops;
-        m_Alu = 0L;
-        m_Mem = 0L;
+        m_Alu = new LayerStat(0L,0L);
+        m_Mem = new LayerStat(0L,0L);
     }
 
     /// <inheritdoc/>
@@ -65,7 +80,7 @@ public class StatsOps : IOps, IModelCompiler
 
         m_Alu += (long)X.height * (long)X.width * (long)Y.width * 2L * (long)X.batch * (long)X.channels;
         m_Mem += (long)X.length + (long)Y.length + (long)O.length;
-
+        RegisterLayerStats();
         return O;
     }
 
@@ -75,6 +90,7 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.MatMul(X, xTranspose, Y, yTranspose);
         m_Alu += (long)X.flatHeight * (long)X.flatWidth * (long)Y.flatWidth * 2L;
         m_Mem += (long)X.length + (long)Y.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -84,15 +100,18 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.Dense(X, W, B, fusedActivation);
         m_Alu += (long)X.flatHeight * (long)X.flatWidth * (long)W.flatWidth * 2L;
         m_Mem += (long)X.length + (long)W.length + (long)B.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Dense3(Tensor X, Tensor W, Tensor B)
     {
         var O = m_Ops.Dense3(X, W, B);
 
         m_Alu += (long)X.height * (long)X.width * (long)W.width * 2L * (long)X.batch * (long)X.channels;
         m_Mem += (long)X.length + (long)W.length + (long)O.length;
-
+        RegisterLayerStats();
         return O;
     }
 
@@ -105,6 +124,7 @@ public class StatsOps : IOps, IModelCompiler
         long k = (long)K.kernelWidth * (long)K.kernelHeight * (long)K.channels;
         m_Alu += m * n * k * 2L;
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -117,6 +137,7 @@ public class StatsOps : IOps, IModelCompiler
         long k = (long)K.kernelSpatialDepth * K.kernelWidth * (long)K.kernelHeight * (long)K.channels;
         m_Alu += m * n * k * 2L;
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -129,6 +150,7 @@ public class StatsOps : IOps, IModelCompiler
         long k = (long)K.kernelWidth * (long)K.kernelHeight;
         m_Alu += m * n * k * 2L;
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -141,6 +163,7 @@ public class StatsOps : IOps, IModelCompiler
         long k = (long)(K.kernelWidth/stride[1]) * (long)(K.kernelHeight/stride[0]) * (long)K.channels;
         m_Alu += m * n * k * 2L;
         m_Mem += (long)X.length + (long)K.length + (long)B.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -150,6 +173,7 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.Upsample2D(X, scale, bilinear);
         m_Alu += (long)O.length * (bilinear ? 8 : 1);
         m_Mem += (long)X.length * (bilinear ? 4 : 1) + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -159,6 +183,7 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.Upsample3D(X, scale, trilinear);
         m_Alu += (long)O.length * (trilinear ? 18 : 1);
         m_Mem += (long)X.length * (trilinear ? 8 : 1) + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -168,6 +193,7 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.Resample2D(X, size, bilinear);
         m_Alu += (long)O.length * (bilinear ? 8 : 1);
         m_Mem += (long)X.length * (bilinear ? 4 : 1) + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -176,6 +202,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.DepthToSpace(X, scale, mode);
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -184,6 +211,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.SpaceToDepth(X, scale);
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -192,6 +220,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.MaxPool2D(X, pool, stride, pad);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -200,6 +229,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.AvgPool2D(X, pool, stride, pad);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -208,6 +238,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.GlobalMaxPool2D(X);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -216,6 +247,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.GlobalAvgPool2D(X);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -225,13 +257,16 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.GlobalAvgVariancePool2D(X);
         m_Alu += (long)X.length * 2L + (long)O.length;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
     /// <inheritdoc/>
     Tensor IOps.Border2D(Tensor X, int[] pad, float value)
     {
         var O = m_Ops.Border2D(X, pad, value);
+        m_Alu += 0;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -239,7 +274,9 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Border3D(Tensor X, int[] pad, float value)
     {
         var O = m_Ops.Border3D(X, pad, value);
+        m_Alu += 0;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -247,7 +284,9 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Pad2DReflect(Tensor X, int[] pad)
     {
         var O = m_Ops.Pad2DReflect(X, pad);
+        m_Alu += 0;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -255,7 +294,9 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Pad2DSymmetric(Tensor X, int[] pad)
     {
         var O = m_Ops.Pad2DSymmetric(X, pad);
+        m_Alu += 0;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -263,7 +304,9 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Pad2DEdge(Tensor X, int[] pad)
     {
         var O = m_Ops.Pad2DEdge(X, pad);
+        m_Alu += 0;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -271,6 +314,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.ScaleBias(Tensor X, Tensor S, Tensor B)
     {
         Elementwise(X, 2L);
+        RegisterLayerStats();
         return m_Ops.ScaleBias(X, S, B);
     }
 
@@ -280,6 +324,7 @@ public class StatsOps : IOps, IModelCompiler
         var O = m_Ops.Normalization(X, S, B, pool, axis, epsilon, fusedActivation);
         m_Alu += (long)X.length * 4L + (long)O.length * 2L;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -291,6 +336,7 @@ public class StatsOps : IOps, IModelCompiler
         long sizeL = size;
         m_Alu += (long)X.length * (5L + sizeL * 2L);
         m_Mem += (long)X.length * (sizeL + 2L);
+        RegisterLayerStats();
         return O;
     }
 
@@ -306,6 +352,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.RandomNormal(s, mean, scale, seed);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -314,6 +363,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.RandomUniform(s, mean, scale, seed);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -322,6 +374,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Multinomial(X, count, seed);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -330,6 +385,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.OneHot(X, depth, onValue, offValue);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -338,6 +396,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.TopKIndices(X, k, axis, largest, sorted);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -346,6 +407,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.TopKValues(X, I, axis);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -354,6 +418,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.NonZero(X);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -361,6 +428,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Relu(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Relu(X);
     }
 
@@ -368,6 +436,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Softmax(Tensor X, int axis)
     {
         Elementwise(X, Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Softmax(X, axis);
     }
 
@@ -375,6 +444,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.LogSoftmax(Tensor X)
     {
         Elementwise(X, Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.LogSoftmax(X);
     }
 
@@ -382,6 +452,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Tanh(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Tanh(X);
     }
 
@@ -389,6 +460,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Softplus(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Softplus(X);
     }
 
@@ -396,6 +468,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Sigmoid(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Sigmoid(X);
     }
 
@@ -403,6 +476,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Relu6(Tensor X)
     {
         Elementwise(X, 4L);
+        RegisterLayerStats();
         return m_Ops.Relu6(X);
     }
 
@@ -410,6 +484,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Elu(Tensor X, float alpha)
     {
         Elementwise(X, Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Elu(X, alpha);
     }
 
@@ -417,6 +492,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.LeakyRelu(Tensor X, float alpha)
     {
         Elementwise(X, 4L);
+        RegisterLayerStats();
         return m_Ops.LeakyRelu(X, alpha);
     }
 
@@ -424,6 +500,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Selu(Tensor X, float alpha, float gamma)
     {
         Elementwise(X, Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Selu(X, alpha, gamma);
     }
 
@@ -431,6 +508,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.PRelu(Tensor X, Tensor S)
     {
         Elementwise(X, 4L);
+        RegisterLayerStats();
         return m_Ops.PRelu(X, S);
     }
 
@@ -438,6 +516,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Swish(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Swish(X);
     }
 
@@ -445,6 +524,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Abs(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Abs(X);
     }
 
@@ -452,6 +532,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Neg(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Neg(X);
     }
 
@@ -459,6 +540,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Ceil(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Ceil(X);
     }
 
@@ -466,6 +548,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Clip(Tensor X, float min, float max)
     {
         Elementwise(X, 2L);
+        RegisterLayerStats();
         return m_Ops.Clip(X, min, max);
     }
 
@@ -473,6 +556,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Floor(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Floor(X);
     }
 
@@ -480,6 +564,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Round(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Round(X);
     }
 
@@ -487,6 +572,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Reciprocal(Tensor X)
     {
         Elementwise(X, Transcendental.Reciprocal);
+        RegisterLayerStats();
         return m_Ops.Reciprocal(X);
     }
 
@@ -494,6 +580,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Pow(Tensor X, float alpha)
     {
         Elementwise(X, Transcendental.Pow);
+        RegisterLayerStats();
         return m_Ops.Pow(X, alpha);
     }
 
@@ -501,6 +588,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Exp(Tensor X)
     {
         Elementwise(X, Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Exp(X);
     }
 
@@ -508,6 +596,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Log(Tensor X)
     {
         Elementwise(X, Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Log(X);
     }
 
@@ -515,6 +604,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Sqrt(Tensor X)
     {
         Elementwise(X, Transcendental.Root);
+        RegisterLayerStats();
         return m_Ops.Sqrt(X);
     }
 
@@ -522,6 +612,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Acos(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Acos(X);
     }
 
@@ -529,6 +620,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Acosh(Tensor X)
     {
         Elementwise(X, Transcendental.Exponent + 1 + Transcendental.Root + 3);
+        RegisterLayerStats();
         return m_Ops.Acosh(X);
     }
 
@@ -536,6 +628,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Asin(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Asin(X);
     }
 
@@ -543,6 +636,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Asinh(Tensor X)
     {
         Elementwise(X, Transcendental.Exponent + 1 + Transcendental.Root + 3);
+        RegisterLayerStats();
         return m_Ops.Asinh(X);
     }
 
@@ -550,6 +644,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Atan(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Atan(X);
     }
 
@@ -557,6 +652,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Atanh(Tensor X)
     {
         Elementwise(X, 1 + Transcendental.Exponent + 2 + Transcendental.Div);
+        RegisterLayerStats();
         return m_Ops.Atanh(X);
     }
 
@@ -564,6 +660,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Cos(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Cos(X);
     }
 
@@ -571,6 +668,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Cosh(Tensor X)
     {
         Elementwise(X, 2 + 2*Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Cosh(X);
     }
 
@@ -578,6 +676,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Sin(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Sin(X);
     }
 
@@ -585,6 +684,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Sinh(Tensor X)
     {
         Elementwise(X, 2 + 2*Transcendental.Exponent);
+        RegisterLayerStats();
         return m_Ops.Sinh(X);
     }
 
@@ -592,6 +692,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Tan(Tensor X)
     {
         Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
         return m_Ops.Tan(X);
     }
 
@@ -600,6 +701,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Add(tensors);
         ElementwiseBroadcast(tensors, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -608,6 +710,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Sub(tensors);
         ElementwiseBroadcast(tensors, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -616,6 +719,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Mul(tensors);
         ElementwiseBroadcast(tensors, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -624,6 +728,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Div(tensors);
         ElementwiseBroadcast(tensors, O, Transcendental.Div);
+        RegisterLayerStats();
         return O;
     }
 
@@ -632,6 +737,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Pow(tensors);
         ElementwiseBroadcast(tensors, O, Transcendental.Pow);
+        RegisterLayerStats();
         return O;
     }
 
@@ -640,6 +746,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Min(tensors);
         ElementwiseBroadcast(tensors, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -648,6 +755,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Max(tensors);
         ElementwiseBroadcast(tensors, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -656,6 +764,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Mean(tensors);
         ElementwiseBroadcast(tensors, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -664,6 +773,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ArgMax(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -672,6 +782,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ArgMin(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -680,6 +791,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ReduceMax(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -688,6 +800,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ReduceMean(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -696,6 +809,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ReduceMin(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -704,6 +818,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ReduceProd(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -712,6 +827,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.ReduceSum(X, axis);
         Reduce(X, O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -720,6 +836,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Greater(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -728,6 +845,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.GreaterEqual(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -736,6 +854,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Less(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -744,6 +863,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.LessEqual(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -752,6 +872,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Equal(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -760,6 +881,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.LogicalOr(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -768,6 +890,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.LogicalAnd(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -776,6 +899,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.LogicalXor(a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -784,6 +908,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.LogicalNot(x);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -792,6 +917,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Sign(x);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -800,18 +926,25 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Where(c, a, b);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
     /// <inheritdoc/>
     Tensor IOps.Flatten(Tensor X)
     {
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return m_Ops.Flatten(X);
     }
 
     /// <inheritdoc/>
     Tensor IOps.Reshape(Tensor X, TensorShape shape)
     {
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return m_Ops.Reshape(X, shape);
     }
 
@@ -819,7 +952,9 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Expand(Tensor X, TensorShape shape)
     {
         var O = m_Ops.Expand(X, shape);
+        m_Alu += 0;
         m_Mem += (long)X.length + (long)O.length;
+        RegisterLayerStats();
         return O;
     }
 
@@ -827,6 +962,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Transpose(Tensor X)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Transpose(X);
     }
 
@@ -834,6 +970,7 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Transpose(Tensor X, int[] permutations)
     {
         Elementwise(X);
+        RegisterLayerStats();
         return m_Ops.Transpose(X, permutations);
     }
 
@@ -842,6 +979,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O =  m_Ops.Gather(tensors, axis);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -849,7 +987,9 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.NonMaxSuppression(Tensor[] tensors, int maxOutputBoxesPerClass, float iouThreshold, float scoreThreshold, int centerPointBox)
     {
         var O = m_Ops.NonMaxSuppression(tensors, maxOutputBoxesPerClass, iouThreshold, scoreThreshold, centerPointBox);
-        // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -858,6 +998,9 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.LSTM(X, W, R, Wb, Rb, hidden, cell);
         // @TODO: not implemented
+        m_Alu += 0;
+        m_Mem += 0;
+        RegisterLayerStats();
         return O;
     }
 
@@ -866,6 +1009,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Concat(tensors, axis);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -874,6 +1018,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.StridedSlice(X, starts, ends, strides);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -882,6 +1027,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Tile(X, repeats);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -890,14 +1036,16 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Shape(X, axis);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
-        
+
     /// <inheritdoc/>
     Tensor IOps.ConstantOfShape(TensorShape X, float value)
     {
         var O = m_Ops.ConstantOfShape(X, value);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -906,6 +1054,7 @@ public class StatsOps : IOps, IModelCompiler
     {
         var O = m_Ops.Copy(x);
         Elementwise(O);
+        RegisterLayerStats();
         return O;
     }
 
@@ -916,11 +1065,29 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.PrepareNoAlloc(Tensor X)
+    {
+        return m_Ops.PrepareNoAlloc(X);
+    }
+
+    /// <inheritdoc/>
     void IOps.ResetAllocator(bool keepCachedMemory)
     {
         m_Ops.ResetAllocator(keepCachedMemory);
-        m_Alu = 0;
-        m_Mem = 0;
+        m_Alu = new LayerStat(0L, 0L);
+        m_Mem = new LayerStat(0L, 0L);
+    }
+
+    /// <inheritdoc/>
+    void IOps.SetModelExecutionsReporter(IModelExecutionsReporter executionsReporter)
+    {
+        m_Ops.SetModelExecutionsReporter(executionsReporter);
+    }
+
+    /// <inheritdoc/>
+    public IModelExecutionsReporter GetModelExecutionsReporter()
+    {
+        return m_Ops.GetModelExecutionsReporter();
     }
 
     /// <summary>
@@ -946,6 +1113,11 @@ public class StatsOps : IOps, IModelCompiler
         return $"ALU operations: {alu} bytes accessed: {mem}";
     }
 
+    private void RegisterLayerStats()
+    {
+        GetModelExecutionsReporter()?.SetLayerALUAndMemStats(m_Alu.layer, m_Mem.layer);
+    }
+
     // -----
     internal void Elementwise(Tensor X, long aluOperationsPerElement = 1L)
     {
@@ -956,9 +1128,10 @@ public class StatsOps : IOps, IModelCompiler
     internal void ElementwiseBroadcast(Tensor[] tensors, Tensor X, long aluOperationsPerElement = 1L)
     {
         m_Alu += (long)X.length * aluOperationsPerElement;
-        m_Mem += (long)X.length;
+        long mem = (long)X.length;
         foreach (var t in tensors)
-            m_Mem += (long)t.length;
+            mem += (long)t.length;
+        m_Mem += mem;
     }
 
     internal void Reduce(Tensor X, Tensor O, long aluOperationsPerElement = 1L)

@@ -19,6 +19,8 @@ namespace Unity.Barracuda.Compiler.Passes
         static readonly int[] k_FromNCHWtoNHWC = { 0, 2, 3, 1 };
         static readonly int[] k_FromNCHtoN1WC = { 0, 3, 2, 1 };
         static readonly int[] k_FromN1WCtoNCH = { 0, 3, 2, 1 };
+        readonly int[] k_ToNCHW = { 0, 3, 1, 2 };
+        readonly int[] k_ToNHWC = { 0, 2, 3, 1 };
 
         public void Run(ref Model model)
         {
@@ -130,11 +132,10 @@ namespace Unity.Barracuda.Compiler.Passes
                 {
                     if (m_isModelExportedFromNHWC && (layerChannelOrder == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC))
                     {
-                        if (rewritersNHWC.TryGetValue(l.type, out Action<Layer, ModelBuilder> rwNCHW))
+                        if (!rewritersNHWC.TryGetValue(l.type, out Func<Layer, ModelBuilder, bool> rwNCHW) || rwNCHW(l, modelBuilder))
                         {
-                            rwNCHW(l, modelBuilder);
+                            nhwc.layers.Add(l);
                         }
-                        nhwc.layers.Add(l);
                         continue;
                     }
                 }

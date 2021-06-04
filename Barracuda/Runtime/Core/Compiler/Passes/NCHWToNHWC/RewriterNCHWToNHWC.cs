@@ -278,7 +278,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 return true;
             });
             rewriters.Add(Layer.Type.Activation, ConvertActivation);
-            rewriters.Add(Layer.Type.Gather, ConvertAxis);
+            rewriters.Add(Layer.Type.Gather, ConvertGather);
             rewriters.Add(Layer.Type.TopKIndices, ConvertAxis);
             rewriters.Add(Layer.Type.TopKValues, ConvertAxis);
 
@@ -382,59 +382,14 @@ namespace Unity.Barracuda.Compiler.Passes
             if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
                 throw new Exception($"Must have input rank for {input0} in order to convert axis for NHWC op");
 
-            int axis = layer.axis; // Leave in NCHW form and transpose instead
+            int axis = layer.axis;
             if (axis < 0)
                 axis += input0Rank.Value;
 
-            string output = layer.name;
+            int[] permutations = AxisPermutationsForMappingNCHWLayoutToBarracuda(input0Rank.Value);
+            layer.axis = Array.IndexOf(permutations, axis);
 
-            if (axis != 1) // C in NCHW
-            {
-                Layer transposeLayer = net.Transpose($"Transpose_For_{layer.name}", input0, k_FromNHWCtoNCHW);
-                input0 = transposeLayer.name;
-                output = $"{layer.name}_NCHW"; // Use an intermediate node name since the original name will now be final transpose
-
-                if (input0Rank == 1 || input0Rank == 0)
-                    // N => _,_N,_,_,_,_,_
-                    // 0       2
-                    axis = 2;
-                else if (input0Rank == 2)
-                    // N,C => _,_,N,_,_,_,_,C
-                    // 0,1        2         7
-                    axis = axis == 0 ? 2 : 7;
-                else if (input0Rank == 3)
-                    // N,W,C => _,_N,_,_,_,W,C
-                    // 0,1,2       2       6,7
-                    axis = axis == 0 ? 2 : axis + 5;
-                else if (input0Rank == 4)
-                    // N,H,W,C => _,_N,_,_,H,W,C
-                    // 0,1,2,3       2     5,6,7
-                    axis = axis == 0 ? 2 : axis + 4;
-                else if (input0Rank == 5)
-                    // N,D,H,W,C => N,_,D,H,W,C
-                    // 0,1,2,3,4    2,  4,5,6,7
-                    axis = axis == 0 ? 2 : axis + 3;
-                else if (input0Rank == 6)
-                    // N,T,D,H,W,C => N,T,D,H,W,C
-                    // 0,1,2,3,4,5    2,3,4,5,6,7
-                    axis = axis + 2;
-                else
-                    throw new ArgumentException($"Unsupported tensor rank {input0Rank} for StridedSlice");
-
-
-                net.Softmax(output, input0, axis, true);
-
-                net.Transpose(layer.name, output, k_FromNCHWtoNHWC);
-
-                return false;
-            }
-            else
-            {
-                int[] permutations = AxisPermutationsForMappingNCHWLayoutToBarracuda(input0Rank.Value);
-                layer.axis = Array.IndexOf(permutations, axis);
-                return true;
-            }
-
+            return true;
         }
 
         bool ConvertNormal(Layer layer, ModelBuilder net)
@@ -453,12 +408,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
         bool ConvertShape(Layer layer, ModelBuilder net)
         {
-            var shape = IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShape(layer.pool);
-            var permutations = shape.Get8DPermutationsForNCHWPermutationsAndShape(k_FromNCHWtoNHWC);
-
-            // Preserve symbolic shape by operating on int array instead of TensorShape, which would resolve unknown dimensions
-            layer.pool = TensorExtensions.Permute(IRShapeInferenceHelper.ShapeInference.OnnxLayoutToTensorShapeLayout(layer.pool), permutations);
-
+            layer.pool = IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(layer.pool).ToArray();
             return true;
         }
 
@@ -477,6 +427,22 @@ namespace Unity.Barracuda.Compiler.Passes
 
             return true;
         }
+
+        bool ConvertGather(Layer layer, ModelBuilder net)
+        {
+            string input0 = layer.inputs[0];
+            if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                throw new Exception($"Must have input rank for {input0} in order to convert axis for NHWC op");
+
+            string input1 = layer.inputs[1];
+            if (!m_RanksByName.TryGetValue(input1, out int? input1Rank) || !input1Rank.HasValue)
+                throw new Exception($"Must have input rank for {input1} in order to convert axis for NHWC op");
+
+            layer.pool = new[] { input0Rank.Value, input1Rank.Value };
+
+            return ConvertAxis(layer, net);
+        }
+
 
         bool Upsample(Layer layer, ModelBuilder net)
         {

@@ -165,13 +165,14 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     }
 
     /// <summary>
-    /// Pin specified `Tensor` to unsafe array based CPU device
+    /// Pin specified `Tensor` to unsafe array based CPU device, if `uploadCache` is false, data is not uploaded to device
     /// </summary>
     /// <param name="X">`Tensor`</param>
+    /// <param name="uploadCache">`bool`</param>
     /// <returns>`UnsafeArrayTensorData`</returns>
-    public static UnsafeArrayTensorData Pin(Tensor X)
+    public static UnsafeArrayTensorData Pin(Tensor X, bool uploadCache = true)
     {
-        X.FlushCache();
+        X.FlushCache(uploadCache);
 
         // @TODO: consider abstracting job specific behavior and moving into ITensorData interface
         var asBurstArray = X.tensorOnDevice as BurstTensorData;
@@ -190,7 +191,12 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             if (asSharedArray != null) X.AttachToDevice(new UnsafeArrayTensorData(asSharedArray));
             else if (asArray != null) X.AttachToDevice(new UnsafeArrayTensorData(asArray));
             else
-                X.UploadToDevice(new UnsafeArrayTensorData(X.shape)); // device is not compatible, create new array and upload
+            {
+                if (uploadCache)
+                    X.UploadToDevice(new UnsafeArrayTensorData(X.shape)); // device is not compatible, create new array and upload
+                else
+                    X.AllocateOnDevice(new UnsafeArrayTensorData(X.shape)); // device is not compatible, create new array and upload
+            }
         }
 
         return X.tensorOnDevice as UnsafeArrayTensorData;
@@ -221,7 +227,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 NegInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -258,7 +264,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 ReluInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -296,7 +302,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 Relu6InnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -336,7 +342,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 LeakyReluInnerLoop(end, unrollSize, xPtr, oPtr, alpha);
 
@@ -381,7 +387,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 EluInnerLoop(end, unrollSize, xPtr, oPtr, alpha);
 
@@ -422,7 +428,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset],
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset],
                 wPtr = &Pin(S).array[Pin(S).offset])
             {
                 PReluInnerLoop(end, unrollSize, xPtr, X.length, oPtr, wPtr, S.length);
@@ -462,7 +468,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 SoftplusInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -500,7 +506,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 SigmoidInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -541,7 +547,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 SwishInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -578,7 +584,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 ExpInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -615,7 +621,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 SqrtInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -652,7 +658,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 TanhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -689,7 +695,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AcosInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -726,7 +732,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AcoshInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -763,7 +769,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AsinInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -800,7 +806,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AsinhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -837,7 +843,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AtanInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -874,7 +880,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AtanhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -911,7 +917,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 CosInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -948,7 +954,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 CoshInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -985,7 +991,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 SinInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -1022,7 +1028,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 SinhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -1059,7 +1065,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 TanInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -1125,7 +1131,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 t0Ptr = &Pin(A).array[Pin(A).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 float* aPtr = t0Ptr;
                 var aShape = A.shape;
@@ -1296,8 +1302,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         unsafe
         {
             fixed (float*
-            xPtr = &Pin(X).array[Pin(X).offset],
-            oPtr = &Pin(O).array[Pin(O).offset])
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
@@ -1319,8 +1325,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         unsafe
         {
             fixed (float*
-            xPtr = &Pin(X).array[Pin(X).offset],
-            oPtr = &Pin(O).array[Pin(O).offset])
+                xPtr = &Pin(X).array[Pin(X).offset],
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
@@ -1340,7 +1346,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         if (!C.shape.Is4D() || !C.shape.Is4D() || !B.shape.Is4D())
             return base.Where(C,A,B);
 
-        var O = NewTensorLike(C);
+        var O = NewTensorLike(new [] { C, A, B });
 
         unsafe
         {
@@ -1348,7 +1354,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 cPtr = &Pin(C).array[Pin(C).offset],
                 aPtr = &Pin(A).array[Pin(A).offset],
                 bPtr = &Pin(B).array[Pin(B).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, oPtr, cPtr, aPtr, bPtr, O.shape, C.shape, A.shape, B.shape);
@@ -1362,7 +1368,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 {
                     int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
                     O.shape.GetPositionsFromIndex(i, ref b0, ref h0, ref w0, ref ch0);
-                    oPtr[i] = Convert.ToBoolean(cPtr[i]) ? aPtr[A.shape.IndexWithBroadcast(b0, h0, w0, ch0)] : bPtr[B.shape.IndexWithBroadcast(b0, h0, w0, ch0)];
+                    oPtr[i] = Convert.ToBoolean(cPtr[C.shape.IndexWithBroadcast(b0, h0, w0, ch0)]) ? aPtr[A.shape.IndexWithBroadcast(b0, h0, w0, ch0)] : bPtr[B.shape.IndexWithBroadcast(b0, h0, w0, ch0)];
                 }
             }
         }
@@ -1382,7 +1388,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             fixed (float*
                 aPtr = &Pin(A).array[Pin(A).offset],
                 bPtr = &Pin(B).array[Pin(B).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, oPtr, aPtr, bPtr, O.shape, A.shape, B.shape);
@@ -1430,7 +1436,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
                 yPtr = &Pin(Y).array[Pin(Y).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 // zero-initialize before SGEMM
                 UnsafeUtility.MemClear(oPtr, O.length * sizeof(float));
@@ -1464,10 +1470,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         unsafe
         {
             fixed (float*
-            xPtr = &pinX.array[pinX.offset],
-            wPtr = &pinW.array[pinW.offset],
-            bPtr = &pinB.array[pinB.offset],
-            oPtr = &pinO.array[pinO.offset])
+                xPtr = &pinX.array[pinX.offset],
+                wPtr = &pinW.array[pinW.offset],
+                bPtr = &pinB.array[pinB.offset],
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 var oOffset = pinO.offset;
                 var oArray = pinO.array;
@@ -1578,7 +1584,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 MaxPool2DInnerLoop(pool, stride, pad,
                     xHeight, xWidth, xPtr, xnMult, xyMult, xxMult,
@@ -1648,7 +1654,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 AvgPool2DInnerLoop(pool, stride, pad,
                     xHeight, xWidth, xPtr, xnMult, xyMult, xxMult,
@@ -1821,7 +1827,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             var pinnedT  = (pointwiseConvolution) ? pinnedX  : Pin(T);
 
             // output
-            var pinnedO = Pin(O);
+            var pinnedO = Pin(O, uploadCache: false);
 
             fixed (float*
             xPtr = &pinnedX.array[pinnedX.offset],
@@ -1959,7 +1965,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             var pinnedT  = (pointwiseConvolution) ? pinnedX  : Pin(T);
 
             // output
-            var pinnedO = Pin(O);
+            var pinnedO = Pin(O, uploadCache: false);
 
             fixed (float*
             xPtr = &pinnedX.array[pinnedX.offset],
@@ -2192,7 +2198,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 xPtr = &Pin(X).array[Pin(X).offset],
                 kPtr = &Pin(K).array[Pin(K).offset],
                 bPtr = &Pin(B).array[Pin(B).offset],
-                oPtr = &Pin(O).array[Pin(O).offset])
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
             {
                 DepthwiseConv2DInnerLoop(stride, pad, oBatch, oHeight, oWidth, kKernelCount, bPtr, kKernelHeight, kKernelWidth,
                     xHeight, xWidth, xChannels, xPtr, xnMult, xyMult, xxMult, kPtr, kyMult, kxMult,
@@ -2654,8 +2660,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         var Xarray = Pin(X).array;
         var Xoffset = Pin(X).offset;
-        var Oarray = Pin(O).array;
-        var Ooffset = Pin(O).offset;
+        var pinO = Pin(O, uploadCache: false);
+        var Oarray = pinO.array;
+        var Ooffset = pinO.offset;
 
         unsafe
         {
@@ -2737,7 +2744,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     {
         Assert.AreEqual(X.length, shape.length);
         var O = NewTensor(shape);
-        Buffer.BlockCopy(Pin(X).array, Pin(X).offset * sizeof(float), Pin(O).array, Pin(O).offset * sizeof(float), X.length * sizeof(float));
+        var pinO = Pin(O, uploadCache: false);
+        Buffer.BlockCopy(Pin(X).array, Pin(X).offset * sizeof(float), pinO.array, pinO.offset * sizeof(float), X.length * sizeof(float));
         return O;
     }
 
@@ -2759,7 +2767,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         {
             fixed (float*
                 xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O).array[Pin(O).offset],
+                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset],
                 sPtr = &Pin(S).array[Pin(S).offset],
                 bPtr = &Pin(B).array[Pin(B).offset])
             {
@@ -2793,6 +2801,13 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Prepare(Tensor X)
     {
         Pin(X);
+        return X;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor PrepareNoAlloc(Tensor X)
+    {
+        Pin(X, uploadCache: false);
         return X;
     }
 }

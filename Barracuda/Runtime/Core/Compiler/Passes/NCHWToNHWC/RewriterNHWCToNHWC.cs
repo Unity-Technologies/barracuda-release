@@ -6,9 +6,9 @@ namespace Unity.Barracuda.Compiler.Passes
 {
     partial class NCHWToNHWCPass
     {
-        Dictionary<Layer.Type, Action<Layer, ModelBuilder>> InstantiateRewriterNHWCToNHWC()
+        Dictionary<Layer.Type, Func<Layer, ModelBuilder, bool>> InstantiateRewriterNHWCToNHWC()
         {
-            var rewritersNHWC = new Dictionary<Layer.Type, Action<Layer, ModelBuilder>>();
+            var rewritersNHWC = new Dictionary<Layer.Type, Func<Layer, ModelBuilder, bool>>();
 
             // TODO, upsample is sometimes in NHWC mode
             rewritersNHWC.Add(Layer.Type.Reshape, (layer, net) =>
@@ -34,6 +34,7 @@ namespace Unity.Barracuda.Compiler.Passes
                     else
                         layer.pool = new[] { size[0], size[1], size[2], size[3], size[4], size[5], size[6], size[7] }; // [S,R,N,T,D,H,W,C]
                 }
+                return true;
             });
             rewritersNHWC.Add(Layer.Type.Transpose, (layer, net) =>
             {
@@ -79,8 +80,9 @@ namespace Unity.Barracuda.Compiler.Passes
                 }
                 else
                     layer.pool = new[] { size[0], size[1], size[2], size[3], size[4], size[5], size[6], size[7] }; // [S,R,N,T,D,H,W,C]
+                return true;
             });
-            rewritersNHWC.Add(Layer.Type.Gather, ConvertAxisNHWC);
+            rewritersNHWC.Add(Layer.Type.Gather, ConvertGatherNHWC);
             rewritersNHWC.Add(Layer.Type.Concat, ConvertAxisNHWC);
             rewritersNHWC.Add(Layer.Type.ReduceMax, ConvertAxisNHWC);
             rewritersNHWC.Add(Layer.Type.ReduceMean, ConvertAxisNHWC);
@@ -156,24 +158,28 @@ namespace Unity.Barracuda.Compiler.Passes
                     default:
                         throw new ArgumentException($"Unsupported tensor rank {rank} for StridedSlice");
                 }
+                return true;
             });
             rewritersNHWC.Add(Layer.Type.Flatten, (layer, net) =>
             {
                 layer.type = Layer.Type.Nop;
+                return true;
             });
             rewritersNHWC.Add(Layer.Type.Squeeze, (layer, net) =>
             {
                 layer.type = Layer.Type.Nop;
+                return true;
             });
             rewritersNHWC.Add(Layer.Type.Unsqueeze, (layer, net) =>
             {
                 layer.type = Layer.Type.Nop;
+                return true;
             });
             rewritersNHWC.Add(Layer.Type.Load, (layer, net) =>
             {
                 int rank = layer.axis;
                 if (rank != 2 && rank != 3)
-                    return;
+                    return true;
 
                 var constX = layer.DataSetToTensor(0);
 
@@ -194,17 +200,49 @@ namespace Unity.Barracuda.Compiler.Passes
                 layer.ApplyTensorToDataSet(reshapedX, 0);
                 reshapedX.Dispose();
                 constX.Dispose();
+                return true;
+            });
+            rewritersNHWC.Add(Layer.Type.MatMul, (layer, net) =>
+            {
+                string input0 = layer.inputs[0];
+                if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                    throw new Exception($"Must have input rank for {input0} in order to convert axis for NHWC op");
+
+                string input1 = layer.inputs[1];
+                if (!m_RanksByName.TryGetValue(input1, out int? input1Rank) || !input1Rank.HasValue)
+                    throw new Exception($"Must have input rank for {input1} in order to convert axis for NHWC op");
+
+                layer.pool = new[] { input0Rank.Value, input1Rank.Value };
+
+                int outputRank = Math.Max(input0Rank.Value, input1Rank.Value);
+
+                if (outputRank <= 2)
+                {
+                    return true;
+                }
+
+                Layer input0Transposed = net.Transpose($"Transpose_For_{input0}", input0, input0Rank.Value == 3 ? k_FromNCHtoN1WC : k_ToNHWC);
+                Layer input1Transposed = net.Transpose($"Transpose_For_{input1}", input1, input1Rank.Value == 3 ? k_FromNCHtoN1WC : k_ToNHWC);
+
+                string originalLayerName = layer.name;
+                layer.name = $"{layer.name}_NHWC";
+                layer.inputs[0] = input0Transposed.name;
+                layer.inputs[1] = input1Transposed.name;
+                net.model.layers.Add(layer);
+
+                net.Transpose(originalLayerName, layer.name, outputRank == 3 ? k_FromN1WCtoNCH : k_ToNCHW);
+
+                return false;
             });
 
 
             return rewritersNHWC;
         }
 
-
-        void ConvertAxisNHWC(Layer layer, ModelBuilder net)
+        bool ConvertAxisNHWC(Layer layer, ModelBuilder net)
         {
             if (layer.type == Layer.Type.Activation && layer.activation != Layer.Activation.Softmax)
-                return;
+                return true;
 
             string input0 = layer.inputs[0];
             if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
@@ -237,6 +275,22 @@ namespace Unity.Barracuda.Compiler.Passes
                 layer.axis = axis + 2;
             else
                 throw new ArgumentException($"Unsupported tensor rank {input0Rank} for StridedSlice");
+            return true;
+        }
+
+        bool ConvertGatherNHWC(Layer layer, ModelBuilder net)
+        {
+            string input0 = layer.inputs[0];
+            if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                throw new Exception($"Must have input rank for {input0} in order to convert axis for NHWC op");
+
+            string input1 = layer.inputs[1];
+            if (!m_RanksByName.TryGetValue(input1, out int? input1Rank) || !input1Rank.HasValue)
+                throw new Exception($"Must have input rank for {input1} in order to convert axis for NHWC op");
+
+            layer.pool = new[] { input0Rank.Value, input1Rank.Value };
+
+            return ConvertAxisNHWC(layer, net);
         }
 
     }

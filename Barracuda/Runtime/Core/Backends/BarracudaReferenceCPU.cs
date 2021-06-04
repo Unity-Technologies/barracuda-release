@@ -12,7 +12,7 @@ namespace Unity.Barracuda {
 /// <summary>
 /// Internal `Tensor` data backed by managed array
 /// </summary>
-public class ArrayTensorData : ITensorData
+public class ArrayTensorData : UniqueResource, ITensorData
 {
     internal float[] m_Array;
 
@@ -116,6 +116,18 @@ public class ArrayTensorData : ITensorData
         return m_Array.Length;
     } }
 
+    /// <inheritdoc/>
+    public virtual bool inUse { get
+    {
+        return true;
+    } }
+
+    /// <inheritdoc/>
+    public virtual bool isGPUMem { get
+    {
+        return false;
+    } }
+
     /// <summary>
     /// Storage summary as string
     /// </summary>
@@ -128,9 +140,31 @@ public class ArrayTensorData : ITensorData
 }
 
 /// <summary>
+/// Base class to track unique resource by an id.
+/// </summary>
+public class UniqueResource: IUniqueResource
+{
+    class UniqueResourceHelper {
+        public int lastIdRequested;
+    }
+    static UniqueResourceHelper SpinLock = new UniqueResourceHelper();
+
+    /// <inheritdoc/>
+    public int uniqueId { get; }
+
+    public UniqueResource()
+    {
+        lock(SpinLock)
+        {
+            uniqueId = SpinLock.lastIdRequested++;
+        }
+    }
+}
+
+/// <summary>
 /// Internal `Tensor` data backed by managed array that is shared between multiple tensors
 /// </summary>
-public class SharedArrayTensorData : ITensorData
+public class SharedArrayTensorData : UniqueResource, ITensorData
 {
     internal float[] m_Array;
     internal int m_Offset;
@@ -235,6 +269,19 @@ public class SharedArrayTensorData : ITensorData
         return m_Array.Length - m_Offset;
     } }
 
+    /// <inheritdoc/>
+    public virtual bool inUse { get
+    {
+        return true;
+    } }
+
+    /// <inheritdoc/>
+    public virtual bool isGPUMem { get
+    {
+        return false;
+    } }
+
+
     /// <summary>
     /// Storage summary as string
     /// </summary>
@@ -251,6 +298,7 @@ public class SharedArrayTensorData : ITensorData
 /// </summary>
 public class ReferenceCPUOps : IOps
 {
+    private IModelExecutionsReporter m_ModelExecutionsReporter;
     private ITensorAllocator m_Allocator;
     private StringCache m_StringCache = new StringCache();
 
@@ -341,6 +389,18 @@ public class ReferenceCPUOps : IOps
         m_Allocator.Reset(keepCachedMemory);
     }
 
+    /// <inheritdoc/>
+    public void SetModelExecutionsReporter(IModelExecutionsReporter executionsReporter)
+    {
+        m_ModelExecutionsReporter = executionsReporter;
+    }
+
+    /// <inheritdoc/>
+    public IModelExecutionsReporter GetModelExecutionsReporter()
+    {
+        return m_ModelExecutionsReporter;
+    }
+
     private float ApplyFusedActivation(float v, Layer.FusedActivation fusedActivation)
     {
         switch (fusedActivation)
@@ -416,6 +476,7 @@ public class ReferenceCPUOps : IOps
         return v;
     }
 
+    /// <inheritdoc/>
     public virtual Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
         return Add(new[] { MatMul(X, 3, W, 2), Reshape(B, new TensorShape(1, 1, B.length, 1)) });
@@ -431,7 +492,7 @@ public class ReferenceCPUOps : IOps
         // rank2: N__C
         // rank1: N___
         // on top of things, ONNX does not transpose layout like it does for conv.
-        // => so to get broadcast correctly we need to convert our Barracuda Tensor to a ONNX-broadcastable layout
+        // => so to get broadcast correctly we need to convert our Barracuda Tensor to an ONNX-broadcastable layout
         // rank4: NCHW
         // rank3: _NCW
         // rank2: __NC
@@ -458,6 +519,12 @@ public class ReferenceCPUOps : IOps
         for (int i = rankY; i < rankO; i++)
             onnxYshape.Insert(0, 1);
 
+        // Max values for X, Y from ONNX shape (needed for modulo later)
+        int xN = 1;
+        int yN = 1;
+        int xC = 1;
+        int yC = 1;
+
         int matN = 1;
         int matC = 1;
         int matH = 1;
@@ -465,15 +532,23 @@ public class ReferenceCPUOps : IOps
         Tensor O;
         if (rankO == 3)
         {
-            matC = Math.Max(onnxXshape[0], onnxYshape[0]);
+            xC = onnxXshape[0];
+            yC = onnxYshape[0];
+            matC = Math.Max(xC, yC);
             matH = onnxXshape[1];
             matW = onnxYshape[2];
             O = NewTensor(new TensorShape(matC, 1, matW, matH));
         }
         else
         {
-            matN = Math.Max(onnxXshape[0], onnxYshape[0]);
-            matC = Math.Max(onnxXshape[1], onnxYshape[1]);
+            xN = onnxXshape[0];
+            yN = onnxYshape[0];
+
+            xC = onnxXshape[1];
+            yC = onnxYshape[1];
+
+            matN = Math.Max(xN, yN);
+            matC = Math.Max(xC, yC);
             matH = onnxXshape[2];
             matW = onnxYshape[3];
             O = NewTensor(new TensorShape(matN, matH, matW, matC));
@@ -503,26 +578,26 @@ public class ReferenceCPUOps : IOps
 
             if (rankX == 4)
             {
-                startsX[0] = b;
-                endsX[0] = b + 1;
+                startsX[0] = b % xN;
+                endsX[0] = b % xN + 1;
             }
             if (rankY == 4)
             {
-                startsY[0] = b;
-                endsY[0] = b + 1;
+                startsY[0] = b % yN;
+                endsY[0] = b % yN + 1;
             }
 
             for (int c = 0; c < matC; c++)
             {
                 if (rankX >= 3)
                 {
-                    startsX[1] = c;
-                    endsX[1] = c + 1;
+                    startsX[1] = c % xC;
+                    endsX[1] = c % xC + 1;
                 }
                 if (rankY >= 3)
                 {
-                    startsY[1] = c;
-                    endsY[1] = c + 1;
+                    startsY[1] = c % yC;
+                    endsY[1] = c % yC + 1;
                 }
 
                 // __NC -> N__C
@@ -1532,7 +1607,7 @@ public class ReferenceCPUOps : IOps
         }
     }
 
-    protected Random.State[] m_DropoutSeed;
+    internal Random.State[] m_DropoutSeed;
     /// <inheritdoc/>
     public virtual Tensor Dropout(Tensor X, float alpha)
     {
@@ -1895,9 +1970,6 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Softmax(Tensor X, int axis)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
-            throw new NotImplementedException();
-
         TensorShape xShape = X.shape;
         axis = xShape.Axis(axis); // Adjust for negative axis values
         var O = NewTensor(xShape);
@@ -1911,36 +1983,41 @@ public class ReferenceCPUOps : IOps
         }
 
         int width = 1;
-        for (var i = axis8D; i < xShape.rank; i++)
+        for (var i = axis8D + 1; i < TensorShape.MaxRank; i++)
         {
             width *= xShape[i];
         }
+
+        int reducedDim = xShape[axis8D];
 
         //e_x = np.exp(X - X.max(axis=1, keepdims=True))
         //X = e_x / e_x.sum(axis=1, keepdims=True)
         for (int y = 0; y < height; ++y)
         {
-            float maxV = Mathf.NegativeInfinity;
             for (int x = 0; x < width; ++x)
             {
-                float v = X[y * width + x];
+                float maxV = Mathf.NegativeInfinity;
+                for (int r = 0; r < reducedDim; ++r)
+                {
+                    float v = X[y * width * reducedDim + r * width + x];
 
-                if (v > maxV)
-                    maxV = v;
-            }
+                    if (v > maxV)
+                        maxV = v;
+                }
 
-            float sum = 0.0f;
-            for (int x = 0; x < width; ++x)
-            {
-                float v = X[y * width + x];
-                sum += Mathf.Exp(v - maxV);
-            }
+                float sum = 0.0f;
+                for (int r = 0; r < reducedDim; ++r)
+                {
+                    float v = X[y * width * reducedDim + r * width + x];
+                    sum += Mathf.Exp(v - maxV);
+                }
 
-            for (int x = 0; x < width; ++x)
-            {
-                float v = X[y * width + x];
-                v = Mathf.Exp(v - maxV) / sum;
-                O[y * width + x] = v;
+                for (int r = 0; r < reducedDim; ++r)
+                {
+                    float v = X[y * width * reducedDim + r * width + x];
+                    v = Mathf.Exp(v - maxV) / sum;
+                    O[y * width * reducedDim + r * width + x] = v;
+                }
             }
         }
 
@@ -2463,7 +2540,7 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
-    protected long GetAggregatedDimLength(TensorShape shape, int startDim, int endDim)
+    internal long GetAggregatedDimLength(TensorShape shape, int startDim, int endDim)
     {
         long aggregatedLength = 1L;
         for (var d = startDim; d < endDim; ++d)
@@ -2527,7 +2604,7 @@ public class ReferenceCPUOps : IOps
 
             int* wrappedStartsIndices = ends;//reuse buffer to save a stack allocation.
             for (int i = 0; i < TensorShape.MaxRank; ++i)
-                wrappedStartsIndices[i] = TensorExtensions.WrapIndex(starts[i], X.shape[i]);
+                wrappedStartsIndices[i] = Math.Min(TensorExtensions.WrapIndex(starts[i], X.shape[i]), X.shape[i] - 1);
 
             Assert.AreEqual(8, TensorShape.MaxRank);
             for (var it = new TensorIterator(O); it.IsValid(); it.Next())
@@ -2568,6 +2645,7 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
+    /// <inheritdoc/>
     public Tensor ConstantOfShape(TensorShape X, float value)
     {
         Tensor O = NewTensor(X);
@@ -2920,12 +2998,13 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        var O = NewTensorLike(C);
+        var O = NewTensorLike(new [] { C, A, B });
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
             var x = A[A.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
             var y = B[B.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
-            O[itO.index] = Convert.ToBoolean(C[itO.index]) ? x : y;
+            var c = C[C.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
+            O[itO.index] = Convert.ToBoolean(c) ? x : y;
         }
 
         return O;
@@ -3117,12 +3196,21 @@ public class ReferenceCPUOps : IOps
         }
 
         var O = NewTensor(new TensorShape(new [] {selectedIndices.Count, 1, 1, 3}));
-        for (var i = 0; i < selectedIndices.Count; i++)
+        if (selectedIndices.Count > 0)
         {
-            (int batchIndex, int classIndex, int boxIndex) = selectedIndices[i];
-            O[i, 0] = batchIndex;
-            O[i, 1] = classIndex;
-            O[i, 2] = boxIndex;
+            for (var i = 0; i < selectedIndices.Count; i++)
+            {
+                (int batchIndex, int classIndex, int boxIndex) = selectedIndices[i];
+                O[i, 0] = batchIndex;
+                O[i, 1] = classIndex;
+                O[i, 2] = boxIndex;
+            }
+        }
+        else
+        {
+            // TODO: Remove this when empty tensors are supported
+            // See https://github.com/Unity-Technologies/barracuda-release/issues/173#issuecomment-837352917
+            O.Fill(-1f);
         }
 
         return O;
@@ -3186,7 +3274,7 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
-    public Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell)
+    public virtual Tensor[] LSTM(Tensor X, Tensor[] W, Tensor[] R, Tensor[] Wb, Tensor[] Rb, Tensor hidden, Tensor cell)
     {
         // Gate indices [iofj]
         const int g_i = 0, g_o = 1, g_f = 2, g_j = 3;
@@ -3201,7 +3289,7 @@ public class ReferenceCPUOps : IOps
             using (var td = new TensorScope()) // This will dispose every sequence iteration
             {
                 TensorScope.F _ = td._; // Shorthand
-                Tensor X_sequence = _(StridedSlice(X, new[] { s, 0, 0, 0 }, new[] { s + 1, 0, 0, 0 }, new[] { 1, 1, 1, 1 }));
+                Tensor X_sequence = _(StridedSlice(X, new[] { s, 0, 0, 0 }, new[] { s + 1, int.MaxValue, int.MaxValue, int.MaxValue }, new[] { 1, 1, 1, 1 }));
 
                 // Convert to [batch_size, input_size], dropping sequence axis
                 X_sequence = _(Transpose(X_sequence, new[] { 3, 0, 1, 2 }));
@@ -3292,6 +3380,14 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Prepare(Tensor X)
     {
+        X.PrepareCacheForAccess();
+        return X;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor PrepareNoAlloc(Tensor X)
+    {
+        // reference op 0-initalize tensors
         X.PrepareCacheForAccess();
         return X;
     }

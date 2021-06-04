@@ -99,7 +99,8 @@ namespace Unity.Barracuda
                     "BroadcastPow_NHWC", "BroadcastMin_NHWC", "BroadcastMax_NHWC", "BroadcastMean_NHWC",
                     "BroadcastGreater_NHWC", "BroadcastGreaterEqual_NHWC", "BroadcastLess_NHWC",
                     "BroadcastLessEqual_NHWC", "BroadcastEqual_NHWC", "BroadcastLogicalOr_NHWC",
-                    "BroadcastLogicalAnd_NHWC", "BroadcastLogicalXor_NHWC", "BroadcastWhere_NHWC"
+                    "BroadcastLogicalAnd_NHWC", "BroadcastLogicalXor_NHWC", "BroadcastWhere_NHWC",
+                    "BroadcastDivExpSub_NHWC"
                 });
 
             RegisterKernels("Barracuda/Broadcast_NCHW",
@@ -109,7 +110,8 @@ namespace Unity.Barracuda
                     "BroadcastPow_NCHW", "BroadcastMin_NCHW", "BroadcastMax_NCHW", "BroadcastMean_NCHW",
                     "BroadcastGreater_NCHW", "BroadcastGreaterEqual_NCHW", "BroadcastLess_NCHW",
                     "BroadcastLessEqual_NCHW", "BroadcastEqual_NCHW", "BroadcastLogicalOr_NCHW",
-                    "BroadcastLogicalAnd_NCHW", "BroadcastLogicalXor_NCHW", "BroadcastWhere_NCHW"
+                    "BroadcastLogicalAnd_NCHW", "BroadcastLogicalXor_NCHW", "BroadcastWhere_NCHW",
+                    "BroadcastDivExpSub_NCHW"
                 });
 
             RegisterKernels("Barracuda/Conv2dA_NHWC",
@@ -236,7 +238,10 @@ namespace Unity.Barracuda
                     "GlobalReduceMean", "GlobalReduceMean_Loop",
 
                     "PartialReduceProd", "PartialReduceProd_Loop",
-                    "GlobalReduceProd", "GlobalReduceProd_Loop"
+                    "GlobalReduceProd", "GlobalReduceProd_Loop",
+
+                    "PartialReduceExpBias", "PartialReduceExpBias_Loop",
+                    "GlobalReduceExpBias", "GlobalReduceExpBias_Loop"
                 });
             RegisterKernels("Barracuda/ReduceSlow",
                 new[]

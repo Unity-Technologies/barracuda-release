@@ -24,16 +24,24 @@
 #pragma kernel GlobalReduceProd LOOP=0 REDUCEPROD GLOBALSUFFIX=GlobalReduceProd
 #pragma kernel GlobalReduceProd_Loop LOOP=1 REDUCEPROD GLOBALSUFFIX=GlobalReduceProd
 
+#pragma kernel PartialReduceExpBias LOOP=0 REDUCEEXPBIAS PARTIALSUFFIX=PartialReduceExpBias
+#pragma kernel PartialReduceExpBias_Loop LOOP=1 REDUCEEXPBIAS PARTIALSUFFIX=PartialReduceExpBias
+#pragma kernel GlobalReduceExpBias LOOP=0 REDUCEEXPBIAS GLOBALSUFFIX=GlobalReduceExpBias
+#pragma kernel GlobalReduceExpBias_Loop LOOP=1 REDUCEEXPBIAS GLOBALSUFFIX=GlobalReduceExpBias
+
 #include "Tensor.cginc"
 #include "Random.cginc"
 
 TENSOR_DECL(X)
+TENSOR_DECL(B)
 TENSOR_DECL_RW(O)
 
 uint _ReducedDim;
 uint3 _Pool;
 uint _UnrolledH;
 uint _UnrolledW;
+int _IsFirstDispatch;
+
 
 #undef REDUCE_FUNC_NAME
 #undef REDUCE_FUNC_NAME_CALL
@@ -88,19 +96,22 @@ inline float ReduceOp(float v, float x)
 #ifdef REDUCEPROD
     return v * x;
 #endif
+#ifdef REDUCEEXPBIAS
+    return v + x;
+#endif
     return v;
 }
 
 #undef POOL_SIZE
 #define POOL_SIZE 64
 
-groupshared float ReduceSum_PartialSum[POOL_SIZE];
+groupshared float Reduce_PartialSum[POOL_SIZE];
 
-inline void PartialReduceSumInternalReduce(uint gty, uint s)
+inline void PartialReduceInternalReduce(uint gty, uint s)
 {
     if (gty < s)
     {
-        ReduceSum_PartialSum[gty] = ReduceOp(ReduceSum_PartialSum[gty], ReduceSum_PartialSum[gty + s]);
+        Reduce_PartialSum[gty] = ReduceOp(Reduce_PartialSum[gty], Reduce_PartialSum[gty + s]);
     }
     GroupMemoryBarrierWithGroupSync();
 }
@@ -109,7 +120,7 @@ inline void PartialReduceSumInternalReduce(uint gty, uint s)
 void REDUCE_FUNC_NAME(PARTIALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
     //DISPATCH ARGS(1, O.batch, O.flatwidth);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS3(X, B, O);
 
     uint flatHeight = dispatchThreadID.x;
     uint flatWidth = dispatchThreadID.z;
@@ -154,7 +165,29 @@ void REDUCE_FUNC_NAME(PARTIALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadI
         float v2 = X.MaskedGet((y + 2 * POOL_SIZE) < baseReducedLength, flatHeight * strideFlatWidth * baseReducedLength + (y + 2 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
         float v3 = X.MaskedGet((y + 3 * POOL_SIZE) < baseReducedLength, flatHeight * strideFlatWidth * baseReducedLength + (y + 3 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
         #endif
-        ReduceSum_PartialSum[gty] = ReduceOp(v0, ReduceOp(v1, ReduceOp(v2, v3)));
+        #ifdef REDUCEEXPBIAS
+            if (_IsFirstDispatch)
+            {
+                #if LOOP
+                bool maskv0 = (flatHeightIdx < strideFlatHeight) && ((y + 0 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                bool maskv1 = (flatHeightIdx < strideFlatHeight) && ((y + 1 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                bool maskv2 = (flatHeightIdx < strideFlatHeight) && ((y + 2 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                bool maskv3 = (flatHeightIdx < strideFlatHeight) && ((y + 3 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                float m0 = B.MaskedGet((flatHeightIdx < strideFlatHeight) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth + flatWidthIdx, defaultValue);
+                #else
+                bool maskv0 = (y + 0 * POOL_SIZE) < baseReducedLength;
+                bool maskv1 = (y + 1 * POOL_SIZE) < baseReducedLength;
+                bool maskv2 = (y + 2 * POOL_SIZE) < baseReducedLength;
+                bool maskv3 = (y + 3 * POOL_SIZE) < baseReducedLength;
+                float m0 = B.FastGet(flatHeight * strideFlatWidth + flatWidth);
+                #endif
+                v0 = maskv0 ? exp(v0 - m0) : defaultValue;
+                v1 = maskv1 ? exp(v1 - m0) : defaultValue;
+                v2 = maskv2 ? exp(v2 - m0) : defaultValue;
+                v3 = maskv3 ? exp(v3 - m0) : defaultValue;
+            }
+        #endif
+        Reduce_PartialSum[gty] = ReduceOp(v0, ReduceOp(v1, ReduceOp(v2, v3)));
 
         GroupMemoryBarrierWithGroupSync();
 
@@ -164,15 +197,15 @@ void REDUCE_FUNC_NAME(PARTIALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadI
         // last sum saved for last
         // following code is unrolled:
         // for s = (POOL_SIZE*POOL_SIZE) / 2; s > 1; s >>= 1
-        PartialReduceSumInternalReduce(gty, 32);
-        PartialReduceSumInternalReduce(gty, 16);
-        PartialReduceSumInternalReduce(gty, 8);
-        PartialReduceSumInternalReduce(gty, 4);
-        PartialReduceSumInternalReduce(gty, 2);
+        PartialReduceInternalReduce(gty, 32);
+        PartialReduceInternalReduce(gty, 16);
+        PartialReduceInternalReduce(gty, 8);
+        PartialReduceInternalReduce(gty, 4);
+        PartialReduceInternalReduce(gty, 2);
 
         if (gty == 0)
         {
-            float v = ReduceOp(ReduceSum_PartialSum[0], ReduceSum_PartialSum[1]);
+            float v = ReduceOp(Reduce_PartialSum[0], Reduce_PartialSum[1]);
             #if LOOP
             if ((flatHeightIdx < strideFlatHeight) && (flatWidthIdx < strideFlatWidth))
                 O.FastSet(flatHeightIdx * strideFlatWidth * strideReducedDim + gy * strideFlatWidth + flatWidthIdx, v);
@@ -186,13 +219,13 @@ void REDUCE_FUNC_NAME(PARTIALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadI
 #undef POOL_SIZE
 #define POOL_SIZE 64
 
-groupshared float GlobalReduceSum_PartialSum[POOL_SIZE];
+groupshared float GlobalReduce_PartialSum[POOL_SIZE];
 
-inline void GlobalReduceSumInternalReduce(uint gty, uint s)
+inline void GlobalReduceInternalReduce(uint gty, uint s)
 {
     if (gty < s)
     {
-        GlobalReduceSum_PartialSum[gty] = ReduceOp(GlobalReduceSum_PartialSum[gty], GlobalReduceSum_PartialSum[gty + s]);
+        GlobalReduce_PartialSum[gty] = ReduceOp(GlobalReduce_PartialSum[gty], GlobalReduce_PartialSum[gty + s]);
     }
     GroupMemoryBarrierWithGroupSync();
 }
@@ -201,7 +234,7 @@ inline void GlobalReduceSumInternalReduce(uint gty, uint s)
 void REDUCE_FUNC_NAME(GLOBALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
     //DISPATCH ARGS(1, O.batch, O.flatwidth);
-    TENSOR_ARGS2(X, O);
+    TENSOR_ARGS3(X, B, O);
 
     uint flatHeight = dispatchThreadID.x;
     uint flatWidth = dispatchThreadID.z;
@@ -245,7 +278,29 @@ void REDUCE_FUNC_NAME(GLOBALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID
         float v2 = X.MaskedGet((y + 2 * POOL_SIZE) < strideReducedDim, flatHeight * strideFlatWidth * strideReducedDim + (y + 2 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
         float v3 = X.MaskedGet((y + 3 * POOL_SIZE) < strideReducedDim, flatHeight * strideFlatWidth * strideReducedDim + (y + 3 * POOL_SIZE) * strideFlatWidth + flatWidth, defaultValue);
         #endif
-        GlobalReduceSum_PartialSum[gty] = ReduceOp(v0, ReduceOp(v1, ReduceOp(v2, v3)));
+        #ifdef REDUCEEXPBIAS
+            if (_IsFirstDispatch)
+            {
+                #if LOOP
+                bool maskv0 = (flatHeightIdx < strideFlatHeight) && ((y + 0 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                bool maskv1 = (flatHeightIdx < strideFlatHeight) && ((y + 1 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                bool maskv2 = (flatHeightIdx < strideFlatHeight) && ((y + 2 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                bool maskv3 = (flatHeightIdx < strideFlatHeight) && ((y + 3 * POOL_SIZE) < strideReducedDim) && (flatWidthIdx < strideFlatWidth);
+                float m0 = B.MaskedGet((flatHeightIdx < strideFlatHeight) && (flatWidthIdx < strideFlatWidth), flatHeightIdx * strideFlatWidth + flatWidthIdx, defaultValue);
+                #else
+                bool maskv0 = (y + 0 * POOL_SIZE) < baseReducedLength;
+                bool maskv1 = (y + 1 * POOL_SIZE) < baseReducedLength;
+                bool maskv2 = (y + 2 * POOL_SIZE) < baseReducedLength;
+                bool maskv3 = (y + 3 * POOL_SIZE) < baseReducedLength;
+                float m0 = B.FastGet(flatHeight * strideFlatWidth + flatWidth);
+                #endif
+                v0 = maskv0 ? exp(v0 - m0) : defaultValue;
+                v1 = maskv1 ? exp(v1 - m0) : defaultValue;
+                v2 = maskv2 ? exp(v2 - m0) : defaultValue;
+                v3 = maskv3 ? exp(v3 - m0) : defaultValue;
+            }
+        #endif
+        GlobalReduce_PartialSum[gty] = ReduceOp(v0, ReduceOp(v1, ReduceOp(v2, v3)));
 
         GroupMemoryBarrierWithGroupSync();
 
@@ -255,15 +310,15 @@ void REDUCE_FUNC_NAME(GLOBALSUFFIX)(uint3 dispatchThreadID : SV_DispatchThreadID
         // last sum saved for last
         // following code is unrolled:
         // for s = (POOL_SIZE*POOL_SIZE) / 2; s > 1; s >>= 1
-        GlobalReduceSumInternalReduce(gty, 32);
-        GlobalReduceSumInternalReduce(gty, 16);
-        GlobalReduceSumInternalReduce(gty, 8);
-        GlobalReduceSumInternalReduce(gty, 4);
-        GlobalReduceSumInternalReduce(gty, 2);
+        GlobalReduceInternalReduce(gty, 32);
+        GlobalReduceInternalReduce(gty, 16);
+        GlobalReduceInternalReduce(gty, 8);
+        GlobalReduceInternalReduce(gty, 4);
+        GlobalReduceInternalReduce(gty, 2);
 
         if (gty == 0)
         {
-            float v = ReduceOp(GlobalReduceSum_PartialSum[0], GlobalReduceSum_PartialSum[1]);
+            float v = ReduceOp(GlobalReduce_PartialSum[0], GlobalReduce_PartialSum[1]);
 #ifdef REDUCEMEAN
             // TODO: if stability issues / baseReducedLength at every step
             v /= baseReducedLength;
