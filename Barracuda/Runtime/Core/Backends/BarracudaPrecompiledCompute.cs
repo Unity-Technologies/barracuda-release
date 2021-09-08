@@ -608,7 +608,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                     var poolKernel = BestKernel(ComputeKernelLibrary.PartialReduce(kernelName, flatHeight, reducedDim, flatWidth));
 
                     instructions.Add(new CompiledInstruction { kernel = poolKernel, shape = Or });
-                  
+
                     Xr = Or;
                     Assert.IsTrue(Xr.length < lastLength);
                 }
@@ -1149,8 +1149,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
-    /// <inheritdoc/>
-    protected override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    internal override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
     {
         if (m_Compiled.instructions == null)
             return base.Reduce(kernelName, X, axis);
@@ -1162,7 +1161,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         int unrolledH, unrolledW;
 
         for (var i = 0; i < m_Compiled.instructions.Length-1; ++i)
-        {      
+        {
             CompiledInstruction instructionPool = m_Compiled.instructions[i];
             Assert.IsNotNull(instructionPool.kernel.shader);
 
@@ -1174,17 +1173,17 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
             unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
             unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
-       
+
             var Or = NewTensor(instructionPool.shape);
             var fnPool = instructionPool.kernel;
-       
+
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
             fnPool.SetTensor("O", Or.shape, Pin(Or).buffer);
             fnPool.shader.SetInt("_UnrolledH", unrolledH);
             fnPool.shader.SetInt("_UnrolledW", unrolledW);
             fnPool.shader.SetInt("_ReducedDim", instructionPool.shape[axis]);
             fnPool.shader.SetInts("_Pool", s_PartialReduceSumDimensions);
-       
+
             fnPool.Dispatch();
             X = Or;
         }

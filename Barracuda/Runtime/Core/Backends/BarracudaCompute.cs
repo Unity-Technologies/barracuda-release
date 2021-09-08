@@ -1074,37 +1074,39 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, int rankX, Tensor Y, int rankY)
     {
         if (!(rankX == 3 && rankY == 2))
             return base.MatMul(X, rankX, Y, rankY);
 
         var O = NewTensor(X.batch, 1, Y.channels, X.channels);
-       
+
         var fn = BestKernel(ComputeKernelLibrary.MultidimMatMul(X.shape, rankX, Y.shape, rankY, O.shape));
-       
+
         fn.SetTensor("A", X.shape, Pin(X).buffer);
         fn.SetTensor("B", Y.shape, Pin(Y).buffer);
         fn.SetTensor("O", O.shape, Pin(O).buffer);
-       
+
         fn.Dispatch();
-       
+
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
         var O = NewTensor(X.batch, 1, W.channels, X.channels);
 
         var fn = BestKernel(ComputeKernelLibrary.Dense3(X.shape, W.shape, O.shape));
-      
+
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("O", O.shape, Pin(O).buffer);
         fn.SetTensorDecl("W", W.shape, Pin(W).offset);
         fn.SetTensorDecl("B", B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(W).buffer, Pin(B).buffer);
         fn.SetTensorBuffer("WBK", Pin(W).buffer);
-      
+
         fn.Dispatch();
 
         return O;
@@ -1662,8 +1664,7 @@ public class ComputeOps : ReferenceComputeOps
 
     internal static int[] s_GlobalReduceSumDimensions = new int[3];
 
-    /// <inheritdoc/>
-    protected override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    internal override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
         int baseReducedDim = X.shape[axis];
@@ -1828,7 +1829,8 @@ public class ComputeOps : ReferenceComputeOps
     // @TODO: implement Dropout in terms of RandomUniform by preparing random values on CPU upfront and multiplying result on GPU later on
     // public override Tensor Dropout(Tensor X, float alpha)
 
-    protected override Tensor TransposeToChannelFirst(Tensor X)
+    /// <inheritdoc/>
+    internal override Tensor TransposeToChannelFirst(Tensor X)
     {
         var O = NewTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.TransposeToChannelFirst(X.shape, O.shape));

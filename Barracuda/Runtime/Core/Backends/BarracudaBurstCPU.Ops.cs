@@ -1476,6 +1476,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
         var concatShape = TensorExtensions.Concat(tensors, axis);
@@ -1679,6 +1680,7 @@ public partial class BurstCPUOps
         return ApplyBorderPadding(X, pad, constant);
     }
 
+    /// <inheritdoc/>
     public override Tensor Transpose(Tensor X, int[] permutations)
     {
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
@@ -1702,6 +1704,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceMean(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
@@ -1719,6 +1722,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor ReduceSum(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);

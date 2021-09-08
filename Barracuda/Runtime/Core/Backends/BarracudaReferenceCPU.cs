@@ -416,6 +416,7 @@ public class ReferenceCPUOps : IOps
         return v;
     }
 
+    /// <inheritdoc/>
     public virtual Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
         return Add(new[] { MatMul(X, 3, W, 2), Reshape(B, new TensorShape(1, 1, B.length, 1)) });
@@ -1532,7 +1533,7 @@ public class ReferenceCPUOps : IOps
         }
     }
 
-    protected Random.State[] m_DropoutSeed;
+    internal Random.State[] m_DropoutSeed;
     /// <inheritdoc/>
     public virtual Tensor Dropout(Tensor X, float alpha)
     {
@@ -2463,7 +2464,7 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
-    protected long GetAggregatedDimLength(TensorShape shape, int startDim, int endDim)
+    internal long GetAggregatedDimLength(TensorShape shape, int startDim, int endDim)
     {
         long aggregatedLength = 1L;
         for (var d = startDim; d < endDim; ++d)
@@ -2568,6 +2569,7 @@ public class ReferenceCPUOps : IOps
         return O;
     }
 
+    /// <inheritdoc/>
     public Tensor ConstantOfShape(TensorShape X, float value)
     {
         Tensor O = NewTensor(X);

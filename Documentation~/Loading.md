@@ -10,6 +10,7 @@ When you have a valid ONNX model, import it into your project; to do this, add t
 
 ![Assets](images/Inspector.png)
 
+See also [Visualizing Model](VisualizingModel.md).
 
 You can then reference this asset directly in your script as follows:
 

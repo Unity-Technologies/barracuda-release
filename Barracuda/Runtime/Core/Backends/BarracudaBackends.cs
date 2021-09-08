@@ -778,7 +778,7 @@ public interface IOps
     /// Sign
     /// </summary>
     /// <param name="x">input</param>
-    /// <returns>Tensor with 1 if x > 0 -1 if < 0 and 0 if == 0 values</returns>
+    /// <returns>Tensor with 1 if x &gt; 0 -1 if &lt; 0 and 0 if == 0 values</returns>
     Tensor Sign(Tensor x);
 
     /// <summary>

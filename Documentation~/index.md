@@ -34,6 +34,7 @@ This section provides more information on the following topics:
 * [Supported architectures](SupportedArchitectures.md): provides an overview of supported architectures
 * [Exporting model to ONNX](Exporting.md): explains how to export a network to ONNX
 * [Loading model](Loading.md): explains how to load a ONNX network to Barracuda
+* [Visualizing model](VisualizingModel.md): explains how to vizualize ONNX and Barracuda networks
 * [Using IWorker interface](Worker.md): explains how to run your model on different backends
 * [Model execution](ModelExecution.md): explains how to run a model
 * [Model outputs](ModelOutput.md): explains how to introspect the model and query outputs
@@ -47,5 +48,5 @@ If you have issues running Barracuda in your Unity project, please report them o
 ## Requirements
 The current version of Barracuda is compatible with the following versions of the Unity Editor:
 
-* 2018.4.x and later
+* 2019.4.29f1 and later
 

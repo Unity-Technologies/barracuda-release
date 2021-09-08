@@ -86,6 +86,8 @@ public class StatsOps : IOps, IModelCompiler
         m_Mem += (long)X.length + (long)W.length + (long)B.length + (long)O.length;
         return O;
     }
+
+    /// <inheritdoc/>
     Tensor IOps.Dense3(Tensor X, Tensor W, Tensor B)
     {
         var O = m_Ops.Dense3(X, W, B);
@@ -892,7 +894,7 @@ public class StatsOps : IOps, IModelCompiler
         Elementwise(O);
         return O;
     }
-        
+
     /// <inheritdoc/>
     Tensor IOps.ConstantOfShape(TensorShape X, float value)
     {

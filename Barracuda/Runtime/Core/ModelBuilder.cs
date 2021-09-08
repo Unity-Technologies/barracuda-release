@@ -334,6 +334,14 @@ namespace Unity.Barracuda
 
             return layer;
         }
+        /// <summary>
+        /// Rank 3 `Dense` layer
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="weight">weight data Tensor</param>
+        /// <param name="bias">bias data Tensor</param>
+        /// <returns>created Layer instance</returns>
         public Layer Dense3(string name, object input, Tensor weight, Tensor bias)
         {
             Layer layer = new Layer(name, Layer.Type.Dense3);

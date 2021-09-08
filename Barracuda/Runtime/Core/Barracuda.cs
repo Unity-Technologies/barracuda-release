@@ -322,6 +322,9 @@ public interface ITensorData : IDisposable
     int maxCapacity { get; }
 }
 
+/// <summary>
+/// Job system dependency fences for the memory resource
+/// </summary>
 public interface IDependableMemoryResource
 {
     /// <summary>

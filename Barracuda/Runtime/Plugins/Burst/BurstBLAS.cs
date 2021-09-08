@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -6,6 +6,7 @@ using Unity.Jobs;
 using UnityEngine.Scripting;
 
 [assembly: AlwaysLinkAssembly]
+[assembly: BurstCompile(OptimizeFor = OptimizeFor.FastCompilation)]
 
 namespace Unity.Barracuda
 {
@@ -99,7 +100,7 @@ namespace Unity.Barracuda
         }
     }
 
-    [BurstCompile]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     struct UnsafeMatrixBlockMultiplyUnrolled8xhJob : IJobParallelFor
     {
         [NativeDisableParallelForRestriction] [NativeDisableUnsafePtrRestriction]

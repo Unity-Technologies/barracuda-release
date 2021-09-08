@@ -2005,7 +2005,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
         {Layer.Type.ReduceSum, "ReduceSum"}, {Layer.Type.ArgMax, "ArgMax"},
         {Layer.Type.ArgMin, "ArgMin"}
     };
-    protected virtual Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+
+    internal virtual Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
 
@@ -2159,6 +2160,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, C.shape, C.channels, C.width, C.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
     {
         if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
@@ -2389,7 +2391,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
-    protected Tensor GetTensorInCurrentMemoryLayout(Tensor tensor)
+    internal Tensor GetTensorInCurrentMemoryLayout(Tensor tensor)
     {
         //Return a tensor in the current memory layout from ComputeInfo.channelsOrder.
         //Noop in the general case it will transpose constant tensor when ComputeInfo.channelsOrder == NCHW
@@ -2402,7 +2404,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             return tensor;
     }
 
-    protected virtual Tensor TransposeToChannelFirst(Tensor X)
+    internal virtual Tensor TransposeToChannelFirst(Tensor X)
     {
         var O = X.shape;
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToChannelFirst");

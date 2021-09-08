@@ -8,6 +8,7 @@
     * [Supported architectures](SupportedArchitectures.md)
     * [Exporting model to ONNX](Exporting.md)
     * [Loading model](Loading.md)
+    * [Visualizing model](VisualizingModel.md)
     * [Using IWorker interface](Worker.md)
     * [Model execution](ModelExecution.md)
     * [Model outputs](ModelOutput.md)

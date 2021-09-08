@@ -8,12 +8,13 @@ using Unity.Jobs;
 using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 
+[assembly: BurstCompile(OptimizeFor = OptimizeFor.FastCompilation)]
+
 namespace Unity.Barracuda {
 
 // BarracudaBurstCPU.Core.cs -- definition of class BurstCPUOps, Pin(), BurstTensorData
 // BarracudaBurstCPU.Ops.cs  -- impl. IOps, job schedulers
 // BarracudaBurstCPU.Jobs.cs -- impl. jobs
-
 public partial class BurstCPUOps
 {
     internal static readonly Thread MainThread = Thread.CurrentThread;
@@ -62,7 +63,7 @@ public partial class BurstCPUOps
 
     #endregion
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MatrixMultiplyJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -242,7 +243,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MatrixMultiply3x2Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -444,7 +445,7 @@ public partial class BurstCPUOps
     }
 
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MatrixMultiply4x4Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -652,7 +653,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct Dense3Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
@@ -854,7 +855,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct Im2ColSliceJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -913,7 +914,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MaxPool2DJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -989,7 +990,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct AvgPool2DJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1058,7 +1059,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct DepthwiseConv2DJob : IJobParallelFor, IJobResourceDeclarationXSBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1123,7 +1124,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct PReluJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1161,7 +1162,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct ReluJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1175,7 +1176,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct Relu6Job : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1193,7 +1194,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct LeakyReluJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1215,7 +1216,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct TanhJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1226,7 +1227,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SoftplusJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1237,7 +1238,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SigmoidJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1248,7 +1249,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct EluJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1266,7 +1267,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SeluJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1284,7 +1285,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SwishJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1300,7 +1301,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ExpBiasReduceJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1316,7 +1317,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SoftmaxEndJob : IJobParallelFor, IJobResourceDeclarationXSBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1331,7 +1332,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct LogSoftmaxEndJob : IJobParallelFor, IJobResourceDeclarationXSBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1346,7 +1347,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AbsJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1357,7 +1358,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct NegJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1368,7 +1369,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct CeilJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1379,7 +1380,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct ClipJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1391,7 +1392,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct FloorJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1402,7 +1403,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct RoundJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1413,7 +1414,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct ReciprocalJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1424,7 +1425,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct PowJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1436,7 +1437,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct ExpJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1447,7 +1448,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct LogJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1458,7 +1459,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SqrtJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1469,7 +1470,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AcosJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1480,7 +1481,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AcoshJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1492,7 +1493,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AsinJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1503,7 +1504,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AsinhJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1515,7 +1516,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AtanJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1526,7 +1527,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct AtanhJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1537,7 +1538,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct CosJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1548,7 +1549,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct CoshJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1559,7 +1560,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SinJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1570,7 +1571,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct SinhJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1581,7 +1582,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct TanJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1592,7 +1593,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ElementwiseAddJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1615,7 +1616,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ElementwiseMulJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1637,7 +1638,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ElementwiseDivJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1659,7 +1660,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ElementwisePowJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1681,7 +1682,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ElementwiseMaxJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1703,7 +1704,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ElementwiseMinJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1725,7 +1726,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct SetConstantPaddingJob : IJobParallelFor, IJobResourceDeclarationO
     {
         public ReadWriteMemResource O { get; set; }
@@ -1736,7 +1737,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct SetConstantPaddingWithStrideJob : IJobParallelFor, IJobResourceDeclarationO
     {
         public ReadWriteMemResource O { get; set; }
@@ -1751,7 +1752,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ZeroBroadcastJob : IJob, IJobResourceDeclarationO
     {
         public ReadWriteMemResource O { get; set; }
@@ -1762,7 +1763,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct CopyJob : IJob, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1774,7 +1775,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct CopyStrideJob : IJob, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1789,7 +1790,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct VectorBroadcastJob : IJob, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1805,7 +1806,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct GenericSliceJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1835,7 +1836,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct GenericStridedSliceJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1863,7 +1864,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ScalarBroadcastAddJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1877,7 +1878,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct BroadcastAddJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1891,7 +1892,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ScalarBroadcastMulJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1903,7 +1904,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct BroadcastMulJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1915,7 +1916,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ScalarBroadcastDivJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1927,7 +1928,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct BroadcastDivJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1939,7 +1940,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ScalarBroadcastMinJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1951,7 +1952,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct BroadcastMinJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1964,7 +1965,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ScalarBroadcastMaxJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1976,7 +1977,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct BroadcastMaxJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -1988,7 +1989,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ScalarBroadcastPowJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2000,7 +2001,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct BroadcastPowJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2013,7 +2014,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct VectorBroadcastScaleBiasJob : IJobParallelFor, IJobResourceDeclarationXSBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2040,7 +2041,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ReduceMeanJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2062,7 +2063,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ReduceSumJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2084,7 +2085,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct ReduceMaxJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2106,7 +2107,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct TransposeJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2127,7 +2128,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MemFreeJob : IJob
     {
         [NoAlias] [NativeDisableUnsafePtrRestriction]           public float* buffer0;
@@ -2142,7 +2143,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct TileJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2162,7 +2163,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct GatherJob : IJobParallelFor, IJobResourceDeclarationXBO
     {
         public ReadOnlyMemResource X { get; set; }
@@ -2190,7 +2191,7 @@ public partial class BurstCPUOps
         }
     }
 
-    [BurstCompile(FloatPrecision.Low, FloatMode.Fast)]
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct OneHotJob : IJobParallelFor, IJobResourceDeclarationXO
     {
         public ReadOnlyMemResource X { get; set; }
