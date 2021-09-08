@@ -11,9 +11,9 @@ using System.Security;
 
 namespace Unity.Barracuda {
 
-    /// <summary>
-    /// `Tensor` data storage based on unsafe array
-    /// </summary>
+/// <summary>
+/// `Tensor` data storage based on unsafe array
+/// </summary>
 public class UnsafeArrayTensorData : SharedArrayTensorData
 {
     readonly internal bool m_Readonly = false;
@@ -22,7 +22,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     /// Create `UnsafeArrayTensorData` with new array
     /// </summary>
     /// <param name="count">element count to reserve</param>
-    public UnsafeArrayTensorData(int count) : base(new float[count])
+    public UnsafeArrayTensorData(int count) : base(new BarracudaArray(count))
     {
     }
 
@@ -38,7 +38,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     /// Create `UnsafeArrayTensorData` and use shared array
     /// </summary>
     /// <param name="sharedArray">shared array</param>
-    public UnsafeArrayTensorData(ArrayTensorData sharedArray) : base(sharedArray.array, 0, -1)
+    public UnsafeArrayTensorData(ArrayTensorData sharedArray) : base(sharedArray.array)
     {
     }
 
@@ -58,7 +58,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     /// <param name="offset">offset in `data`</param>
     /// <param name="count">element count</param>
     /// <param name="isReadonly">read-only flag</param>
-    protected UnsafeArrayTensorData(float[] data, int offset = 0, int count = -1, bool isReadonly = false) : base(data, offset, count)
+    protected UnsafeArrayTensorData(BarracudaArray data, int offset = 0, int count = -1, bool isReadonly = false) : base(data, offset, count)
     {
         m_Readonly = isReadonly;
     }
@@ -89,48 +89,30 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
             return;
         }
 
-        if (count > m_Array.Length)
-            m_Array = new float[count];
-
-        m_Offset = 0;
-        m_Count = count;
+        if (count > maxCapacity)
+        {
+            m_Array = new BarracudaArray(count);//TODO fp16
+            m_Offset = 0;
+            m_Count = m_Array.Length;
+        }
     }
 
     /// <inheritdoc/>
     public override void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
-        var count = shape.length;
-
         if (m_Readonly)
         {
             base.Upload(data, shape, managedBufferStartIndex);
             return;
         }
 
+        var numItemToCopy = shape.length;
+        var numItemAvailableInData = data.Length - managedBufferStartIndex;
         Assert.IsTrue(managedBufferStartIndex >= 0);
-        if (count < 0)
-            count = data.Length - managedBufferStartIndex;
+        Assert.IsTrue(numItemToCopy <= numItemAvailableInData);
 
-        if (m_Array == data && m_Offset == managedBufferStartIndex && m_Count == count)
-            return;
-
-        Reserve(count);
-
-        Array.Copy(data, managedBufferStartIndex, m_Array, m_Offset, m_Count);
-    }
-
-    /// <inheritdoc/>
-    public override float[] Download(TensorShape shape)
-    {
-        //;;D.logStackTraceEnabled = true;
-        //;;D.Log("Download UnsafeArrayTensorData " + count + " from " + m_Count + " @ " + ToString());
-        //;;D.logStackTraceEnabled = false;
-
-        var count = shape.length;
-        if (!m_Readonly && count <= m_Array.Length && m_Offset == 0)
-            return m_Array;
-
-        return base.Download(shape);
+        Reserve(numItemToCopy);
+        BarracudaArray.Copy(data, managedBufferStartIndex, m_Array, m_Offset, numItemToCopy);
     }
 
     /// <summary>
@@ -149,10 +131,10 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
 /// </summary>
 public class UnsafeArrayCPUOps : ReferenceCPUOps
 {
-    BLASPlugin m_Blas = null;
-
-    internal BLASPlugin blas { get { return m_Blas; } }
+    internal BLASPlugin blas => m_Blas;
     internal InnerLoop m_InnerLoop = new InnerLoop();
+
+    BLASPlugin m_Blas;
 
     /// <summary>
     /// Create `UnsafeArrayCPUOps`
@@ -225,9 +207,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 NegInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -262,9 +243,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 ReluInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -300,9 +280,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 Relu6InnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -340,9 +319,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 LeakyReluInnerLoop(end, unrollSize, xPtr, oPtr, alpha);
 
@@ -385,9 +363,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 EluInnerLoop(end, unrollSize, xPtr, oPtr, alpha);
 
@@ -426,10 +403,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset],
-                wPtr = &Pin(S).array[Pin(S).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
+            float* wPtr = Pin(S).array.AddressAt(Pin(S).offset);
             {
                 PReluInnerLoop(end, unrollSize, xPtr, X.length, oPtr, wPtr, S.length);
 
@@ -466,9 +442,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 SoftplusInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -504,9 +479,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 SigmoidInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -532,6 +506,43 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_sigmoidInnerLoopDelegate);
     }
 
+        /// <inheritdoc/>
+    public override Tensor HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        // f(x) = 1 / (1 + exp(-x))
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
+            {
+                HardSigmoidInnerLoop(end, unrollSize, xPtr, oPtr, alpha, beta);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    v = Mathf.Max(0.0f, Mathf.Min(1.0f, alpha * v + beta));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void HardSigmoidInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr, float alpha, float beta)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr, alpha, beta);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_hardsigmoidInnerLoopDelegate);
+    }
+
     /// <inheritdoc/>
     public override Tensor Swish(Tensor X)
     {
@@ -545,9 +556,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 SwishInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -582,9 +592,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 ExpInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -619,9 +628,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 SqrtInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -656,9 +664,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 TanhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -693,9 +700,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AcosInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -730,9 +736,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AcoshInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -767,9 +772,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AsinInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -804,9 +808,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AsinhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -841,9 +844,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AtanInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -878,9 +880,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AtanhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -915,9 +916,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 CosInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -952,9 +952,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 CoshInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -989,9 +988,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 SinInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -1026,9 +1024,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 SinhInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -1063,9 +1060,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 TanInnerLoop(end, unrollSize, xPtr, oPtr);
 
@@ -1089,6 +1085,56 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
 
         Parallel_For(0L, length / unrollSize, m_InnerLoop.m_tanInnerLoopDelegate);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Erf(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        var end = X.length;
+        const int unrollSize = 4;
+
+        unsafe
+        {
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
+            {
+                ErfInnerLoop(end, unrollSize, xPtr, oPtr);
+
+                // Remainder
+                for (int i = (end / unrollSize) * unrollSize; i < end; ++i)
+                {
+                    float v = xPtr[i];
+                    // Abramowitz/Stegun approximations
+                    // erf(x) = -erf(-x)
+                    float x = Mathf.Abs(v);
+
+                    float p = 0.3275911f;
+                    float a1 = 0.254829592f; float a2 = -0.284496736f; float a3 = 1.421413741f;
+                    float a4 = -1.453152027f; float a5 = 1.061405429f;
+
+                    float t = 1.0f / (1.0f + p * x);
+                    float t2 = t * t;
+                    float t3 = t2 * t;
+                    float t4 = t3 * t;
+                    float t5 = t4 * t;
+
+                    v = Mathf.Sign(v) * (1 - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * Mathf.Exp(-x * x));
+                    oPtr[i] = v;
+                }
+            }
+        }
+
+        return O;
+    }
+
+    private unsafe void ErfInnerLoop(int length, int unrollSize, float* xPtr, float* oPtr)
+    {
+        Assert.AreEqual(unrollSize, 4);
+
+        m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
+
+        Parallel_For(0L, length / unrollSize, m_InnerLoop.m_erfInnerLoopDelegate);
     }
 
     private bool CanUseModuloForBroadcasting(TensorShape o, TensorShape a)
@@ -1129,9 +1175,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                t0Ptr = &Pin(A).array[Pin(A).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* t0Ptr = Pin(A).array.AddressAt(Pin(A).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 float* aPtr = t0Ptr;
                 var aShape = A.shape;
@@ -1139,7 +1184,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 for (int t = 1; t < tensors.Length; ++t)
                 {
                     var B = tensors[t];
-                    fixed (float* bPtr = &Pin(B).array[Pin(B).offset])
+                    float* bPtr = Pin(B).array.AddressAt(Pin(B).offset);
                     {
                         //Inner loop
                         const int unrollSize = 4;
@@ -1301,9 +1346,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
@@ -1324,9 +1368,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, xPtr, oPtr);
@@ -1350,11 +1393,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                cPtr = &Pin(C).array[Pin(C).offset],
-                aPtr = &Pin(A).array[Pin(A).offset],
-                bPtr = &Pin(B).array[Pin(B).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* cPtr = Pin(C).array.AddressAt(Pin(C).offset);
+            float* aPtr = Pin(A).array.AddressAt(Pin(A).offset);
+            float* bPtr = Pin(B).array.AddressAt(Pin(B).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, oPtr, cPtr, aPtr, bPtr, O.shape, C.shape, A.shape, B.shape);
@@ -1385,10 +1427,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                aPtr = &Pin(A).array[Pin(A).offset],
-                bPtr = &Pin(B).array[Pin(B).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* aPtr = Pin(A).array.AddressAt(Pin(A).offset);
+            float* bPtr = Pin(B).array.AddressAt(Pin(B).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 const int unrollSize = 4;
                 m_InnerLoop.SetState(unrollSize, oPtr, aPtr, bPtr, O.shape, A.shape, B.shape);
@@ -1433,10 +1474,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                yPtr = &Pin(Y).array[Pin(Y).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* yPtr = Pin(Y).array.AddressAt(Pin(Y).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 // zero-initialize before SGEMM
                 UnsafeUtility.MemClear(oPtr, O.length * sizeof(float));
@@ -1465,23 +1505,20 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         var pinX = Pin(X);
         var pinW = Pin(W);
         var pinB = Pin(B);
-        var pinO = Pin(O);
+        var pinO = Pin(O, uploadCache:false);
 
         unsafe
         {
-            fixed (float*
-                xPtr = &pinX.array[pinX.offset],
-                wPtr = &pinW.array[pinW.offset],
-                bPtr = &pinB.array[pinB.offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = pinX.array.AddressAt(pinX.offset);
+            float* wPtr = pinW.array.AddressAt(pinW.offset);
+            float* bPtr = pinB.array.AddressAt(pinB.offset);
+            float* oPtr = pinO.array.AddressAt(pinO.offset);
             {
-                var oOffset = pinO.offset;
-                var oArray = pinO.array;
                 var count = B.flatWidth;
 
                 for (int i = 0; i < O.flatHeight; i++)
                 {
-                    Marshal.Copy((IntPtr)bPtr, oArray, oOffset + i * count, count);
+                    UnsafeUtility.MemCpy(oPtr + pinO.offset + i * count, bPtr, count * sizeof(float));
                 }
 
                 //X.Print(); W.Print();
@@ -1550,6 +1587,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                 return Sinh(X);
             case Layer.FusedActivation.Tan:
                 return Tan(X);
+            case Layer.FusedActivation.Erf:
+                return Erf(X);
             default:
                 throw new NotImplementedException();
         }
@@ -1582,9 +1621,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 MaxPool2DInnerLoop(pool, stride, pad,
                     xHeight, xWidth, xPtr, xnMult, xyMult, xxMult,
@@ -1652,9 +1690,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 AvgPool2DInnerLoop(pool, stride, pad,
                     xHeight, xWidth, xPtr, xnMult, xyMult, xxMult,
@@ -1829,12 +1866,11 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             // output
             var pinnedO = Pin(O, uploadCache: false);
 
-            fixed (float*
-            xPtr = &pinnedX.array[pinnedX.offset],
-            tPtr = &pinnedT.array[pinnedT.offset],
-            kPtr = &pinnedK.array[pinnedK.offset],
-            bPtr = &pinnedB.array[pinnedB.offset],
-            oPtr = &pinnedO.array[pinnedO.offset])
+            float* xPtr = pinnedX.array.AddressAt(pinnedX.offset);
+            float* tPtr = pinnedT.array.AddressAt(pinnedT.offset);
+            float* kPtr = pinnedK.array.AddressAt(pinnedK.offset);
+            float* bPtr = pinnedB.array.AddressAt(pinnedB.offset);
+            float* oPtr = pinnedO.array.AddressAt(pinnedO.offset);
             {
                 // O = broadcast(B)
                 Profiler.BeginSample("Conv2D_Im2Col.BroadcastB");
@@ -1967,12 +2003,11 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             // output
             var pinnedO = Pin(O, uploadCache: false);
 
-            fixed (float*
-            xPtr = &pinnedX.array[pinnedX.offset],
-            tPtr = &pinnedT.array[pinnedT.offset],
-            kPtr = &pinnedK.array[pinnedK.offset],
-            bPtr = &pinnedB.array[pinnedB.offset],
-            oPtr = &pinnedO.array[pinnedO.offset])
+            float* xPtr = pinnedX.array.AddressAt(pinnedX.offset);
+            float* tPtr = pinnedT.array.AddressAt(pinnedT.offset);
+            float* kPtr = pinnedK.array.AddressAt(pinnedK.offset);
+            float* bPtr = pinnedB.array.AddressAt(pinnedB.offset);
+            float* oPtr = pinnedO.array.AddressAt(pinnedO.offset);
             {
                 // O = broadcast(B)
                 Profiler.BeginSample("Conv2D_Sliced.BroadcastB");
@@ -2194,11 +2229,11 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                kPtr = &Pin(K).array[Pin(K).offset],
-                bPtr = &Pin(B).array[Pin(B).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset])
+
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* kPtr = Pin(K).array.AddressAt(Pin(K).offset);
+            float* bPtr = Pin(B).array.AddressAt(Pin(B).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
             {
                 DepthwiseConv2DInnerLoop(stride, pad, oBatch, oHeight, oWidth, kKernelCount, bPtr, kKernelHeight, kKernelWidth,
                     xHeight, xWidth, xChannels, xPtr, xnMult, xyMult, xxMult, kPtr, kyMult, kxMult,
@@ -2666,9 +2701,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Xarray[Xoffset],
-                oPtr = &Oarray[Ooffset])
+            float* xPtr = Xarray.AddressAt(Xoffset);
+            float* oPtr = Oarray.AddressAt(Ooffset);
             {
                 m_InnerLoop.SetState(oPtr, xPtr, O.shape, X.shape, constant, prePadX, prePadY);
 
@@ -2696,7 +2730,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                         int srcFloatOffset = X.Index(b, (int)y - prePadY + preCropY, preCropX, 0) + Xoffset;
                         int dstFloatOffset = O.Index(b, (int)y, prePadX, 0) + Ooffset;
                         int numFloatToCopy = O.channels * croppedWidth;
-                        Buffer.BlockCopy(Xarray, srcFloatOffset * sizeof(float), Oarray, dstFloatOffset * sizeof(float), numFloatToCopy * sizeof(float));
+                        BarracudaArray.Copy(Xarray, srcFloatOffset, Oarray, dstFloatOffset, numFloatToCopy);
                         offset += numFloatToCopy;
 
                         //PostPadX
@@ -2745,7 +2779,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Assert.AreEqual(X.length, shape.length);
         var O = NewTensor(shape);
         var pinO = Pin(O, uploadCache: false);
-        Buffer.BlockCopy(Pin(X).array, Pin(X).offset * sizeof(float), pinO.array, pinO.offset * sizeof(float), X.length * sizeof(float));
+        BarracudaArray.Copy(Pin(X).array, Pin(X).offset, pinO.array, pinO.offset, X.length);
         return O;
     }
 
@@ -2765,11 +2799,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         unsafe
         {
-            fixed (float*
-                xPtr = &Pin(X).array[Pin(X).offset],
-                oPtr = &Pin(O, uploadCache: false).array[Pin(O, uploadCache: false).offset],
-                sPtr = &Pin(S).array[Pin(S).offset],
-                bPtr = &Pin(B).array[Pin(B).offset])
+            float* xPtr = Pin(X).array.AddressAt(Pin(X).offset);
+            float* oPtr = Pin(O, uploadCache: false).array.AddressAt(Pin(O, uploadCache: false).offset);
+            float* sPtr = Pin(S).array.AddressAt(Pin(S).offset);
+            float* bPtr = Pin(B).array.AddressAt(Pin(B).offset);
             {
                 ScaleBiasInnerLoop(end, unrollSize, xPtr, X.length, oPtr, sPtr, S.length, bPtr, B.length);
 
@@ -2823,6 +2856,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         private float* bPtr;
         private int bLen;
         private float alpha;
+        private float beta;
         private int prePadX;
         private int prePadY;
 
@@ -2837,6 +2871,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_swishInnerLoopDelegate;
         public Action<long> m_softplusInnerLoopDelegate;
         public Action<long> m_sigmoidInnerLoopDelegate;
+        public Action<long> m_hardsigmoidInnerLoopDelegate;
         public Action<long> m_negInnerLoopDelegate;
         public Action<long> m_eluInnerLoopDelegate;
         public Action<long> m_reluInnerLoopDelegate;
@@ -2854,6 +2889,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_sinInnerLoopDelegate;
         public Action<long> m_sinhInnerLoopDelegate;
         public Action<long> m_tanInnerLoopDelegate;
+        public Action<long> m_erfInnerLoopDelegate;
         public Action<long> m_maxInnerLoopDelegate;
         public Action<long> m_minInnerLoopDelegate;
         public Action<long> m_divInnerLoopDelegate;
@@ -2918,6 +2954,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_swishInnerLoopDelegate = SwishInnerLoop;
             m_softplusInnerLoopDelegate = SoftplusInnerLoop;
             m_sigmoidInnerLoopDelegate = SigmoidInnerLoop;
+            m_hardsigmoidInnerLoopDelegate = HardSigmoidInnerLoop;
             m_negInnerLoopDelegate = NegInnerLoop;
             m_eluInnerLoopDelegate = EluInnerLoop;
             m_reluInnerLoopDelegate = ReluInnerLoop;
@@ -2935,6 +2972,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_sinInnerLoopDelegate = SinInnerLoop;
             m_sinhInnerLoopDelegate = SinhInnerLoop;
             m_tanInnerLoopDelegate = TanInnerLoop;
+            m_erfInnerLoopDelegate = ErfInnerLoop;
             m_maxInnerLoopDelegate = MaxInnerLoop;
             m_minInnerLoopDelegate = MinInnerLoop;
             m_divInnerLoopDelegate = DivInnerLoop;
@@ -3071,6 +3109,15 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             this.oPtr = oPtr;
             this.xPtr = xPtr;
             this.alpha = alpha;
+        }
+
+        public void SetState(int unrollSize, float* xPtr, float* oPtr, float alpha, float beta)
+        {
+            this.unrollSize = unrollSize;
+            this.oPtr = oPtr;
+            this.xPtr = xPtr;
+            this.alpha = alpha;
+            this.beta = beta;
         }
 
         public void SetState(float* oPtr, float* xPtr, TensorShape oShape, TensorShape xShape, float constant, int prePadX, int prePadY)
@@ -3811,6 +3858,26 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             baseOPtr[3] = v3;
         }
 
+        private void HardSigmoidInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            v0 = Mathf.Max(0.0f, Mathf.Min(1.0f, alpha * v0 + beta));
+            v1 = Mathf.Max(0.0f, Mathf.Min(1.0f, alpha * v1 + beta));
+            v2 = Mathf.Max(0.0f, Mathf.Min(1.0f, alpha * v2 + beta));
+            v3 = Mathf.Max(0.0f, Mathf.Min(1.0f, alpha * v3 + beta));
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
         private void SwishInnerLoop(long n)
         {
             float* baseXPtr = xPtr + n * unrollSize;
@@ -4104,6 +4171,42 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             v1 = Mathf.Tan(v1);
             v2 = Mathf.Tan(v2);
             v3 = Mathf.Tan(v3);
+
+            baseOPtr[0] = v0;
+            baseOPtr[1] = v1;
+            baseOPtr[2] = v2;
+            baseOPtr[3] = v3;
+        }
+
+        private void ErfInnerLoop(long n)
+        {
+            float* baseXPtr = xPtr + n * unrollSize;
+            float* baseOPtr = oPtr + n * unrollSize;
+            float v0 = baseXPtr[0];
+            float v1 = baseXPtr[1];
+            float v2 = baseXPtr[2];
+            float v3 = baseXPtr[3];
+
+            // Abramowitz/Stegun approximations
+            // erf(x) = -erf(-x)
+            float x0 = Mathf.Abs(v0);
+            float x1 = Mathf.Abs(v1);
+            float x2 = Mathf.Abs(v2);
+            float x3 = Mathf.Abs(v3);
+
+            float p = 0.3275911f;
+            float a1 = 0.254829592f; float a2 = -0.284496736f; float a3 = 1.421413741f;
+            float a4 = -1.453152027f; float a5 = 1.061405429f;
+
+            float t0 = 1.0f / (1.0f + p * x0);
+            float t1 = 1.0f / (1.0f + p * x1);
+            float t2 = 1.0f / (1.0f + p * x2);
+            float t3 = 1.0f / (1.0f + p * x3);
+
+            v0 = Mathf.Sign(v0) * (1 - (a1 * (t0) + a2 * (t0*t0) + a3 * (t0*t0*t0) + a4 * (t0*t0*t0*t0) + a5 * (t0*t0*t0*t0*t0)) * Mathf.Exp(-x0 * x0));
+            v1 = Mathf.Sign(v1) * (1 - (a1 * (t1) + a2 * (t1*t1) + a3 * (t1*t1*t1) + a4 * (t1*t1*t1*t1) + a5 * (t1*t1*t1*t1*t1)) * Mathf.Exp(-x1 * x1));
+            v2 = Mathf.Sign(v2) * (1 - (a1 * (t2) + a2 * (t2*t2) + a3 * (t2*t2*t2) + a4 * (t2*t2*t2*t2) + a5 * (t2*t2*t2*t2*t2)) * Mathf.Exp(-x2 * x2));
+            v3 = Mathf.Sign(v3) * (1 - (a1 * (t3) + a2 * (t3*t3) + a3 * (t3*t3*t3) + a4 * (t3*t3*t3*t3) + a5 * (t3*t3*t3*t3*t3)) * Mathf.Exp(-x3 * x3));
 
             baseOPtr[0] = v0;
             baseOPtr[1] = v1;

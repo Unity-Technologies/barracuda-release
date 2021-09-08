@@ -61,7 +61,7 @@ class OpsUtils
         string name = layer.name;
 
         // Bake out constant tensors into layer
-        void AddDataset(List<Layer.DataSet> datasets, float[] weights, string tensorName, Tensor t, ref int offset)
+        void AddDataset(List<Layer.DataSet> datasets, BarracudaArray weights, string tensorName, Tensor t, ref int offset)
         {
             var dataset = new Layer.DataSet();
             dataset.name            = $"{name}/{tensorName}";
@@ -71,13 +71,13 @@ class OpsUtils
             dataset.offset          = offset;
             datasets.Add(dataset);
 
-            t.ToReadOnlyArray().CopyTo(weights, offset);
+            t.ToReadOnlyArray().CopyToBarracudaArray(weights, offset);
 
             offset += t.shape.length;
         }
 
         var layerDatasets = new List<Layer.DataSet>();
-        var layerWeights = new float[W.shape.length + R.shape.length + B.shape.length];
+        var layerWeights = new BarracudaArray(W.shape.length + R.shape.length + B.shape.length);
         int dataOffset = 0;
 
         var ops = new ReferenceCPUOps();

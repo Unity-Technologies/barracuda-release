@@ -104,13 +104,19 @@ namespace Unity.Barracuda {
                         D.Log("        Tensor: " + t.shape + " offset: " + t.offset + " len: " + t.length);
             }
 
+            //Pad to 4 bytes
+            long writerCurrentPosition = writer.BaseStream.Position;
+            long paddingForAlignment = Model.WeightsAlignment - (writerCurrentPosition % Model.WeightsAlignment);
+            writer.Write(new byte[paddingForAlignment]);
+
             // Write tensor data
             for (var l = 0; l < model.layers.Count; ++l)
             {
                 for (var d = 0; d < model.layers[l].datasets.Length; ++d)
                 {
+                    //TODO fp16
                     byte[] dst = new byte[model.layers[l].datasets[d].length * sizeof(float)];
-                    Buffer.BlockCopy(model.layers[l].weights, (int)(model.layers[l].datasets[d].offset * sizeof(float)), dst, 0, dst.Length);
+                    BarracudaArray.BlockCopy(model.layers[l].weights, (int)(model.layers[l].datasets[d].offset * sizeof(float)), dst, 0, dst.Length);
                     writer.Write(dst);
                 }
             }

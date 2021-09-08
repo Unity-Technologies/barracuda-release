@@ -272,8 +272,9 @@ public class TestSet
 
         TensorShape shape = GetOutputShape(idx);
         Assert.IsTrue(shape.sequenceLength==1 && shape.numberOfDirections==1);
-        var array = GetOutputData(idx);
-        var maxBatchCount = array.Length / shape.flatWidth;
+        var barracudaArray = new BarracudaArrayFromManagedArray(GetOutputData(idx));
+
+        var maxBatchCount = barracudaArray.Length / shape.flatWidth;
 
         fromBatch = Math.Min(fromBatch, maxBatchCount - 1);
         if (batchCount < 0)
@@ -284,7 +285,8 @@ public class TestSet
         shapeArray[TensorShape.DataBatch] = batchCount;
         var tensorShape = new TensorShape(shapeArray);
 
-        var res = new Tensor(tensorShape, new SharedArrayTensorData(array, fromBatch * tensorShape.flatWidth));
+        var offset = fromBatch * tensorShape.flatWidth;
+        var res = new Tensor(tensorShape, new SharedArrayTensorData(barracudaArray, tensorShape, offset));
         res.name = GetOutputName(idx);
         res.name = res.name.EndsWith(":0") ? res.name.Remove(res.name.Length - 2) : res.name;
 

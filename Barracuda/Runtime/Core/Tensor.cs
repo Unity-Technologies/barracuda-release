@@ -1032,7 +1032,7 @@ public struct TensorIterator
 /// <summary>
 /// Multidimensional array-like data storage
 /// </summary>
-public class Tensor : UniqueResource, IDisposable, ITensorStatistics
+public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
 {
     private ITensorData m_TensorOnDevice;
     private ITensorAllocator m_TensorAllocator;
@@ -1061,7 +1061,7 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
     #region Shape
 
     /// <inheritdoc/>
-    public TensorShape shape { get; }
+    public TensorShape shape { get; private set; }
 
     /// <summary>
     /// Return the number of sequences.
@@ -1186,8 +1186,28 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
         this.name = name;
         this.shape = shape;
         m_TensorOnDevice = new ArrayTensorData(shape);
-        Assert.IsTrue(srcData.Length == length);
+        Assert.IsTrue(srcData.Length >= length);
         m_TensorOnDevice.Upload(srcData, shape, 0);
+        m_TensorAllocator = null;
+        m_Cache = null;
+        m_CacheIsDirty = false;
+    }
+
+    /// <summary>
+    /// Create a Tensor with specified `shape`, a BarracudaArray of data `srcData` and an optional debug `name`.
+    /// `srcData` must be of size `shape.length`.
+    /// </summary>
+    /// <param name="shape">shape</param>
+    /// <param name="srcData">source data</param>
+    /// <param name="name">name</param>
+    public Tensor(TensorShape shape, BarracudaArray srcData, string name = "")
+    {
+        this.name = name;
+        this.shape = shape;
+        var tensorData = new ArrayTensorData(shape);//TODO fp16?
+        m_TensorOnDevice = tensorData;
+        Assert.IsTrue(srcData.Length >= length);
+        BarracudaArray.Copy(srcData, 0, tensorData.array, 0, shape.length);
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -1242,13 +1262,14 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
         {
             var src = srcData[i];
             var dstOffset = i * flatWidth;
-            Array.Copy(src, 0, arrayTensorData.array, dstOffset, Math.Min(flatWidth, src.Length));
+            BarracudaArray.Copy(src, 0, arrayTensorData.array, dstOffset, Math.Min(flatWidth, src.Length));
         }
         m_TensorOnDevice = arrayTensorData;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
     }
+
 
     /// <summary>
     /// Create a Tensor from a `shape`, an array of data `srcData` and an optional name debug `name`.
@@ -1284,10 +1305,13 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
     {
         this.name = name;
         this.shape = shape;
-        var arrayTensorData = new ArrayTensorData(shape);
 
-        Buffer.BlockCopy(srcData, 0, arrayTensorData.array, 0,
-            Math.Min(shape.length, srcData.Length)*Marshal.SizeOf<float>());
+        var numItemToCopy = Math.Min(shape.length, srcData.Length);
+        float[] tmpArray = new float[numItemToCopy];
+        Buffer.BlockCopy(srcData, 0, tmpArray, 0, numItemToCopy*Marshal.SizeOf<float>());
+
+        var arrayTensorData = new ArrayTensorData(shape);
+        BarracudaArray.Copy(tmpArray, arrayTensorData.array);
 
         m_TensorOnDevice = arrayTensorData;
         m_TensorAllocator = null;
@@ -1326,6 +1350,7 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
     /// <param name="srcData">source data</param>
     /// <param name="name">name</param>
     public Tensor(TensorShape shape, float[,,,] srcData, string name = "") : this(shape, (Array)srcData, name) {}
+
 
     /// <summary>
     /// Create a Tensor from a `shape`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
@@ -1393,7 +1418,22 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
     public Tensor(UnityEngine.Texture srcTexture, int channels = -1, string name = "") : this(new [] { srcTexture }, channels, name) {}
 
     /// <summary>
-    /// Create a Tensor from multiple texture, shape is [1,1,1,1, `srcTextures.length`, `texture.height`, `texture.width`, `channels`].
+    /// Create a Tensor from multiple texture, shape is [1,1, `srcTextures.length`,1,1, `texture.height`, `texture.width`, `channels`].
+    /// If `channels` is set to -1 (default value), then number of channels in the new Tensor will match the number of channels in the texture.
+    /// Just like `Texture2D.GetPixels` when reading from LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc) this function will remap pixel values from byte values to the range of [0.0 .. 1.0]. Pixel values from HDR textures (such as ARGBFloat or ARGBHalf) will be left unchanged.
+    /// `flipY` flips the texture along the Y direction
+    /// `scale` and `bias` respectively scale and bias the input texture as so: scale*v+bias
+    /// </summary>
+    /// <param name="srcTextures">source textures</param>
+    /// <param name="flipY">flipY</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="channels">channels</param>
+    /// <param name="name">name</param>
+    public Tensor(UnityEngine.Texture srcTexture, bool flipY, Vector4 scale, Vector4 bias, int channels = -1, string name = "") : this(new [] { srcTexture }, flipY, false, scale, bias, channels, name) {}
+
+    /// <summary>
+    /// Create a Tensor from multiple texture, shape is [1,1, `srcTextures.length`,1,1, `texture.height`, `texture.width`, `channels`].
     /// If `channels` is set to -1 (default value), then number of channels in the new Tensor will match the number of channels in the texture.
     /// All textures must be of the same size and dimension.
     /// Just like `Texture2D.GetPixels` when reading from LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc) this function will remap pixel values from byte values to the range of [0.0 .. 1.0]. Pixel values from HDR textures (such as ARGBFloat or ARGBHalf) will be left unchanged.
@@ -1405,6 +1445,40 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
     {
         this.name = name;
         var tensorData = new TextureAsTensorData(srcTextures, channels);
+        //;;UnityEngine.Debug.Log("Tensor::Tensor " + n + " " + tensorData.shape + " [TEX] " + srcTextures);
+        shape = tensorData.shape;
+        Assert.IsTrue(tensorData.maxCapacity >= length);
+        m_TensorOnDevice = tensorData;
+        m_TensorAllocator = null;
+        m_Cache = null;
+        m_CacheIsDirty = false;
+    }
+
+    /// <summary>
+    /// Create a Tensor from multiple texture, shape is [1,1, `srcTextures.length`,1,1, `texture.height`, `texture.width`, `channels`].
+    /// If `channels` is set to -1 (default value), then number of channels in the new Tensor will match the number of channels in the texture.
+    /// All textures must be of the same size and dimension.
+    /// Just like `Texture2D.GetPixels` when reading from LDR texture (RGBA32, ARGB32, RGB24, Alpha8, RG16, R8, etc) this function will remap pixel values from byte values to the range of [0.0 .. 1.0]. Pixel values from HDR textures (such as ARGBFloat or ARGBHalf) will be left unchanged.
+    /// `flipY` flips the texture along the Y direction
+    /// If `concatOnBatch` is True then the textures are concatenated on the batch dimension : resulting `srcTextures.length`, `texture.height`, `texture.width`, `texture.channels`
+    /// `scale` and `bias` respectively scale and bias the input texture as so: scale*v+bias
+    /// </summary>
+    /// <param name="srcTextures">source textures</param>
+    /// <param name="flipY">flipY</param>
+    /// <param name="concatOnBatch">concatOnBatch</param>
+    /// <param name="scale">scale</param>
+    /// <param name="bias">bias</param>
+    /// <param name="channels">channels</param>
+    /// <param name="name">name</param>
+    public Tensor(UnityEngine.Texture[] srcTextures, bool flipY, bool concatOnBatch, Vector4 scale, Vector4 bias, int channels = -1, string name = "")
+    {
+        this.name = name;
+        var tensorData = new TextureAsTensorData(srcTextures,
+            flipY ? TextureAsTensorData.Flip.Y : TextureAsTensorData.Flip.None,
+            concatOnBatch ? TextureAsTensorData.InterpretDepthAs.Batch : TextureAsTensorData.InterpretDepthAs.Channels,
+            TextureAsTensorData.InterpretColorAs.AverageMultipleChannels,
+            scale, bias,
+            channels);
         //;;UnityEngine.Debug.Log("Tensor::Tensor " + n + " " + tensorData.shape + " [TEX] " + srcTextures);
         shape = tensorData.shape;
         Assert.IsTrue(tensorData.maxCapacity >= length);
@@ -1769,7 +1843,7 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
     {
         Tensor copy;
         if (m_TensorAllocator != null)
-            copy = m_TensorAllocator.Alloc(newShape, m_TensorOnDevice);
+            copy = m_TensorAllocator.Alloc(newShape, m_TensorOnDevice, AllocScope.LayerOutput);
         else
             copy = new Tensor(newShape, m_TensorOnDevice);
 
@@ -1858,6 +1932,14 @@ public class Tensor : UniqueResource, IDisposable, ITensorStatistics
         m_TensorOnDevice = null;
         m_TensorAllocator = null;
         return unpinned;
+    }
+
+    internal void Init(TensorShape shape, ITensorData buffer = null, ITensorAllocator allocator = null)
+    {
+        this.shape = shape;
+        m_TensorOnDevice = buffer;
+        m_TensorAllocator = allocator;
+        m_Disposed = false;
     }
 
     /// <summary>

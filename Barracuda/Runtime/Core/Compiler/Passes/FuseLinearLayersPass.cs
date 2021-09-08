@@ -177,8 +177,8 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
 
                 layer.datasets = new Layer.DataSet[constantLayers[constInput].datasets.Length];
                 Array.Copy(constantLayers[constInput].datasets, layer.datasets, constantLayers[constInput].datasets.Length);
-                layer.weights = new float[constantLayers[constInput].weights.Length];
-                Array.Copy(constantLayers[constInput].weights, layer.weights, constantLayers[constInput].weights.Length);
+                layer.weights = new BarracudaArray(constantLayers[constInput].weights.Length);
+                BarracudaArray.Copy(constantLayers[constInput].weights, layer.weights, constantLayers[constInput].weights.Length);
 
                 layer.axis = constantLayers[constInput].axis; // rank TODO name correctly
 
@@ -206,8 +206,8 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                 for (int d = 0; d < constInput.datasets.Length; ++d)
                     constInput.datasets[d].name = name;
 
-                constInput.weights = new float[layer.weights.Length];
-                Array.Copy(layer.weights, constInput.weights, layer.weights.Length);
+                constInput.weights = new BarracudaArray(layer.weights.Length);
+                BarracudaArray.Copy(layer.weights, constInput.weights, layer.weights.Length);
 
                 constInput.axis = layer.axis; // rank TODO rename
 
@@ -217,7 +217,7 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                 newConstants.Add(constInput);
 
                 layer.datasets = new Layer.DataSet[0];
-                layer.weights = new float[0];
+                layer.weights = new BarracudaArray(0);//TODO fp16
             }
             newConstants.AddRange(model.layers);
             model.layers = newConstants;

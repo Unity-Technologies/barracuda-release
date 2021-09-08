@@ -95,12 +95,12 @@ namespace Unity.Barracuda
                 lmerged.datasets[0].itemSizeInBytes = 4;
                 lmerged.datasets[0].length = biasShape.length;
                 lmerged.datasets[0].offset = 0;
-                lmerged.weights = new float[biasShape.length];
+                lmerged.weights = new BarracudaArray(biasShape.length);
                 lmerged.axis = rankO;
 
                 Tensor bias = m_Ops.Add(new [] { bias0, bias1 });
 
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, 0, bias.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, 0, bias.length);
 
                 bias.Dispose();
                 bias0.Dispose();
@@ -144,12 +144,12 @@ namespace Unity.Barracuda
                 lmerged.datasets[0].itemSizeInBytes = 4;
                 lmerged.datasets[0].length = biasShape.length;
                 lmerged.datasets[0].offset = 0;
-                lmerged.weights = new float[biasShape.length];
+                lmerged.weights = new BarracudaArray(biasShape.length);
                 lmerged.axis = rankO;
 
                 Tensor bias = m_Ops.Mul(new[] { scale0, scale1 });
 
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, 0, bias.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, 0, bias.length);
 
                 bias.Dispose();
                 scale0.Dispose();
@@ -168,14 +168,14 @@ namespace Unity.Barracuda
                 Layer lmerged = new Layer(l0.name, l0.type);
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l0.datasets;
-                lmerged.weights = new float[l0.weights.Length];
+                lmerged.weights = new BarracudaArray(l0.weights.Length);
 
                 // s1*(s0*x + b0)+b1 = s1*s0*x + s1*b0+b1
                 Tensor scale = m_Ops.Mul(new [] { scale1, scale0});
                 Tensor bias = m_Ops.ScaleBias(bias0, scale1, bias1);
 
-                Array.Copy(scale.ToReadOnlyArray(), 0, lmerged.weights, 0, scale.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, scale.length, bias.length);
+                BarracudaArray.Copy(scale.ToReadOnlyArray(), 0, lmerged.weights, 0, scale.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, scale.length, bias.length);
 
                 scale.Dispose();
                 bias.Dispose();
@@ -197,7 +197,7 @@ namespace Unity.Barracuda
                 Layer lmerged = new Layer(l0.name, l1.type);
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l1.datasets;
-                lmerged.weights = new float[l1.weights.Length];
+                lmerged.weights = new BarracudaArray(l1.weights.Length);
 
                 // b = W1 x b0 + b1
                 Tensor bias = m_Ops.Dense(bias0, weights1, bias1, Layer.FusedActivation.None);
@@ -214,8 +214,8 @@ namespace Unity.Barracuda
                         weights[i, x] = w * gamma;
                     }
 
-                Array.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
+                BarracudaArray.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
 
                 bias.Dispose();
                 weights.Dispose();
@@ -237,15 +237,15 @@ namespace Unity.Barracuda
                 Layer lmerged = new Layer(l0.name, l0.type);
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l0.datasets;
-                lmerged.weights = new float[l0.weights.Length];
+                lmerged.weights = new BarracudaArray(l0.weights.Length);
 
                 // w = s1*w0
                 Tensor weights = m_Ops.Mul(new [] { scale1, weights0 });
                 // b = s1*b0+b1
                 Tensor bias = m_Ops.ScaleBias(bias0, scale1, bias1);
 
-                Array.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
+                BarracudaArray.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
 
                 weights.Dispose();
                 bias.Dispose();
@@ -269,7 +269,7 @@ namespace Unity.Barracuda
                 lmerged.pool = l1.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l1.datasets;
-                lmerged.weights = new float[l1.weights.Length];
+                lmerged.weights = new BarracudaArray(l1.weights.Length);
 
                 // k = k * s
                 Tensor kernel = new Tensor(kernel1.shape);
@@ -287,8 +287,8 @@ namespace Unity.Barracuda
                         }
 
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias1.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias1.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias1.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias1.length);
 
                 kernel.Dispose();
                 scale0.Dispose();
@@ -310,15 +310,15 @@ namespace Unity.Barracuda
                 lmerged.pool = l0.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l0.datasets;
-                lmerged.weights = new float[l0.weights.Length];
+                lmerged.weights = new BarracudaArray(l0.weights.Length);
 
                 // k = s1*k0
                 Tensor kernel = m_Ops.Mul(new[] { scale1, kernel0 });
                 // b = s1*b0
                 Tensor bias = m_Ops.Mul(new[] { scale1, bias0 });
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
                 kernel.Dispose();
                 bias.Dispose();
@@ -341,7 +341,7 @@ namespace Unity.Barracuda
                 lmerged.pool = l1.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l1.datasets;
-                lmerged.weights = new float[l1.weights.Length];
+                lmerged.weights = new BarracudaArray(l1.weights.Length);
 
                 // k = k
                 // b = Sum_k[wk * beta] + b
@@ -359,8 +359,8 @@ namespace Unity.Barracuda
                         }
 
 
-                Array.Copy(kernel1.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel1.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel1.length, bias.length);
+                BarracudaArray.Copy(kernel1.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel1.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel1.length, bias.length);
 
                 bias.Dispose();
                 bias0.Dispose();
@@ -382,13 +382,13 @@ namespace Unity.Barracuda
                 lmerged.pool = l0.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l0.datasets;
-                lmerged.weights = new float[l0.weights.Length];
+                lmerged.weights = new BarracudaArray(l0.weights.Length);
 
                 // b = b0+b1
                 Tensor bias = m_Ops.Add( new [] { bias0, bias1 });
 
-                Array.Copy(kernel0.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel0.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel0.length, bias.length);
+                BarracudaArray.Copy(kernel0.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel0.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel0.length, bias.length);
 
                 bias.Dispose();
                 kernel0.Dispose();
@@ -411,15 +411,15 @@ namespace Unity.Barracuda
                 lmerged.pool = l0.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l0.datasets;
-                lmerged.weights = new float[l0.weights.Length];
+                lmerged.weights = new BarracudaArray(l0.weights.Length);
 
                 // k = s1*k0
                 Tensor kernel = m_Ops.Mul(new[] { scale1, kernel0 });
                 // b = s1*b0+b1
                 Tensor bias = m_Ops.ScaleBias(bias0, scale1, bias1);
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
                 kernel.Dispose();
                 bias.Dispose();
@@ -444,7 +444,7 @@ namespace Unity.Barracuda
                 lmerged.pool = l1.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l1.datasets;
-                lmerged.weights = new float[l1.weights.Length];
+                lmerged.weights = new BarracudaArray(l1.weights.Length);
 
                 // k = k * s
                 Tensor kernel = new Tensor(kernel1.shape);
@@ -464,8 +464,8 @@ namespace Unity.Barracuda
                             }
                         }
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
                 kernel.Dispose();
                 bias.Dispose();
@@ -490,15 +490,15 @@ namespace Unity.Barracuda
                 lmerged.pool = l0.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l0.datasets;
-                lmerged.weights = new float[l0.weights.Length];
+                lmerged.weights = new BarracudaArray(l0.weights.Length);
 
                 // k = s1*k0
                 Tensor kernel = m_Ops.Mul(new[] { scale1, kernel0 });
                 // b = s1*b0+b1
                 Tensor bias = m_Ops.ScaleBias(bias0, scale1, bias1);
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
                 kernel.Dispose();
                 bias.Dispose();
@@ -523,7 +523,7 @@ namespace Unity.Barracuda
                 lmerged.pool = l1.pool;
                 lmerged.inputs = l0.inputs;
                 lmerged.datasets = l1.datasets;
-                lmerged.weights = new float[l1.weights.Length];
+                lmerged.weights = new BarracudaArray(l1.weights.Length);
 
                 // k = k * s
                 Tensor kernel = new Tensor(kernel1.shape);
@@ -546,8 +546,8 @@ namespace Unity.Barracuda
                     bias[k] = b;
                 }
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
                 kernel.Dispose();
                 bias.Dispose();
@@ -581,17 +581,16 @@ namespace Unity.Barracuda
                 lmerged.datasets[1].shape = bias1.shape;
                 lmerged.datasets[1].itemSizeInBytes = 4;
                 lmerged.datasets[1].length = bias1.length;
-                lmerged.datasets[1].offset = 0;
                 lmerged.datasets[1].offset = weightsShape.length;
-                lmerged.weights = new float[weightsShape.length + bias1.shape.length];
+                lmerged.weights = new BarracudaArray(weightsShape.length + bias1.shape.length);
 
                 // W = W1 x W0
                 Tensor weights = m_Ops.MatMul(weights0, false, weights1, false);
                 // b = W1 x b0 + b1
                 Tensor bias = m_Ops.Dense(bias0, weights1, bias1, Layer.FusedActivation.None);
 
-                Array.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
+                BarracudaArray.Copy(weights.ToReadOnlyArray(), 0, lmerged.weights, 0, weights.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, weights.length, bias.length);
 
                 weights.Dispose();
                 bias.Dispose();
@@ -657,9 +656,8 @@ namespace Unity.Barracuda
                 lmerged.datasets[1].shape = biasShape;
                 lmerged.datasets[1].itemSizeInBytes = 4;
                 lmerged.datasets[1].length = biasShape.length;
-                lmerged.datasets[1].offset = 0;
                 lmerged.datasets[1].offset = kernelShape.length;
-                lmerged.weights = new float[kernelShape.length + biasShape.length];
+                lmerged.weights = new BarracudaArray(kernelShape.length + biasShape.length);
 
 
                 Tensor kernel = new Tensor(kernelShape); // 0-filled by default
@@ -734,8 +732,8 @@ namespace Unity.Barracuda
                             }
                         }
 
-                Array.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
-                Array.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
+                BarracudaArray.Copy(kernel.ToReadOnlyArray(), 0, lmerged.weights, 0, kernel.length);
+                BarracudaArray.Copy(bias.ToReadOnlyArray(), 0, lmerged.weights, kernel.length, bias.length);
 
                 kernel0T.Dispose();
                 emptyB.Dispose();

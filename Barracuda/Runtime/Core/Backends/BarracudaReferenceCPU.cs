@@ -12,14 +12,14 @@ namespace Unity.Barracuda {
 /// <summary>
 /// Internal `Tensor` data backed by managed array
 /// </summary>
-public class ArrayTensorData : UniqueResource, ITensorData
+public class ArrayTensorData : UniqueResourceId, ITensorData
 {
-    internal float[] m_Array;
+    internal BarracudaArray m_Array;
 
     /// <summary>
     /// Data storage array
     /// </summary>
-    public float[] array { get { return m_Array; } }
+    public BarracudaArray array { get { return m_Array; } }
 
     /// <summary>
     /// Create `ArrayTensorData` and allocate storage for `count` elements
@@ -27,7 +27,7 @@ public class ArrayTensorData : UniqueResource, ITensorData
     /// <param name="count">number of elements to pre-allocate</param>
     public ArrayTensorData(int count)
     {
-        m_Array = new float[count];
+        m_Array = new BarracudaArray(count);
     }
 
     /// <summary>
@@ -58,23 +58,20 @@ public class ArrayTensorData : UniqueResource, ITensorData
     public virtual void Reserve(int count)
     {
         if (count > m_Array.Length)
-            m_Array = new float[count];
+            m_Array = new BarracudaArray(count);
     }
 
     /// <inheritdoc/>
     public virtual void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
-        var count = shape.length;
+        var numItemToCopy = shape.length;
+        var numItemAvailableInData = data.Length - managedBufferStartIndex;
 
         Assert.IsTrue(managedBufferStartIndex >= 0);
-        if (m_Array == data && managedBufferStartIndex == 0)
-        {
-            Assert.IsTrue(count <= data.Length);
-            return;
-        }
+        Assert.IsTrue(numItemToCopy <= numItemAvailableInData);
 
-        Reserve(count);
-        Array.Copy(data, managedBufferStartIndex, m_Array, 0, count);
+        Reserve(numItemToCopy);
+        BarracudaArray.Copy(data, managedBufferStartIndex, m_Array, 0, numItemToCopy);
     }
 
     /// <inheritdoc/>
@@ -91,20 +88,15 @@ public class ArrayTensorData : UniqueResource, ITensorData
         //;;D.logStackTraceEnabled = false;
 
         var count = shape.length;
-
         Assert.IsTrue(m_Array.Length >= count);
-        count = Math.Min(m_Array.Length, count);
-
-        if (count <= m_Array.Length)
-            return m_Array;
 
         var dest = new float[count];
-        Array.Copy(m_Array, 0, dest, 0, count);
+        BarracudaArray.Copy(m_Array, 0, dest, 0, count);
         return dest;
     }
 
     /// <inheritdoc/>
-    public virtual float[] SharedAccess(out int offset)
+    public virtual BarracudaArray SharedAccess(out int offset)
     {
         offset = 0;
         return m_Array;
@@ -142,7 +134,7 @@ public class ArrayTensorData : UniqueResource, ITensorData
 /// <summary>
 /// Base class to track unique resource by an id.
 /// </summary>
-public class UniqueResource: IUniqueResource
+public class UniqueResourceId: IUniqueResource
 {
     class UniqueResourceHelper {
         public int lastIdRequested;
@@ -150,13 +142,18 @@ public class UniqueResource: IUniqueResource
     static UniqueResourceHelper SpinLock = new UniqueResourceHelper();
 
     /// <inheritdoc/>
-    public int uniqueId { get; }
+    public int uniqueId { get; internal set; }
 
-    public UniqueResource()
+    public UniqueResourceId()
+    {
+        uniqueId = GetUniqueId();
+    }
+
+    public static int GetUniqueId()
     {
         lock(SpinLock)
         {
-            uniqueId = SpinLock.lastIdRequested++;
+            return SpinLock.lastIdRequested++;
         }
     }
 }
@@ -164,16 +161,16 @@ public class UniqueResource: IUniqueResource
 /// <summary>
 /// Internal `Tensor` data backed by managed array that is shared between multiple tensors
 /// </summary>
-public class SharedArrayTensorData : UniqueResource, ITensorData
+public class SharedArrayTensorData : UniqueResourceId, ITensorData
 {
-    internal float[] m_Array;
+    internal BarracudaArray m_Array;
     internal int m_Offset;
     internal int m_Count;
 
     /// <summary>
     /// Data storage array
     /// </summary>
-    public float[] array { get { return m_Array; } }
+    public BarracudaArray array { get { return m_Array; } }
 
     /// <summary>
     /// Offset in storage array
@@ -189,14 +186,29 @@ public class SharedArrayTensorData : UniqueResource, ITensorData
     /// Create `SharedArrayTensorData` with supplied shared `data`
     /// </summary>
     /// <param name="data">shared array</param>
-    /// <param name="offset">offset in shared array</param>
-    /// <param name="count">element count</param>
-    public SharedArrayTensorData(float[] data, int offset = 0, int count = -1)
+    public SharedArrayTensorData(float[] data) : this(new BarracudaArrayFromManagedArray(data), 0, data.Length)
+    {
+    }
+
+    /// <summary>
+    /// Create `SharedArrayTensorData` with supplied shared `data`
+    /// </summary>
+    /// <param name="data">shared array</param>
+    public SharedArrayTensorData(BarracudaArray data) : this(data, 0, data.Length)
+    {
+    }
+
+    internal SharedArrayTensorData(BarracudaArray data, TensorShape shape, int offset) : this(data, offset, shape.length)
+    {
+    }
+
+    internal SharedArrayTensorData(float[] data, int offset, int count) : this(new BarracudaArrayFromManagedArray(data), offset, count)
+    {
+    }
+
+    internal SharedArrayTensorData(BarracudaArray data, int offset, int count)
     {
         Assert.IsTrue(offset >= 0);
-        if (count < 0)
-            count = data.Length - offset;
-
         m_Array = data;
         m_Offset = offset;
         Assert.IsTrue(count >= 0);
@@ -247,17 +259,15 @@ public class SharedArrayTensorData : UniqueResource, ITensorData
         //;;D.logStackTraceEnabled = false;
 
         var count = shape.length;
-
         Assert.IsTrue(m_Count >= count);
-        count = Math.Min(m_Count, count);
 
         var dest = new float[count];
-        Array.Copy(m_Array, m_Offset, dest, 0, count);
+        BarracudaArray.Copy(m_Array, m_Offset, dest, 0, count);
         return dest;
     }
 
     /// <inheritdoc/>
-    public virtual float[] SharedAccess(out int offset)
+    public virtual BarracudaArray SharedAccess(out int offset)
     {
         offset = m_Offset;
         return m_Array;
@@ -266,7 +276,7 @@ public class SharedArrayTensorData : UniqueResource, ITensorData
     /// <inheritdoc/>
     public virtual int maxCapacity { get
     {
-        return m_Array.Length - m_Offset;
+        return m_Count;
     } }
 
     /// <inheritdoc/>
@@ -302,6 +312,12 @@ public class ReferenceCPUOps : IOps
     private ITensorAllocator m_Allocator;
     private StringCache m_StringCache = new StringCache();
 
+    /// <inheritdoc/>
+    public virtual void PostLayerCleanup()
+    {
+        m_Allocator.PostLayerCleanup();
+    }
+
     /// <summary>
     /// Create `ReferenceCPUOps`
     /// </summary>
@@ -317,11 +333,12 @@ public class ReferenceCPUOps : IOps
     /// Allocate new `Tensor` via allocator
     /// </summary>
     /// <param name="s">shape</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(TensorShape s, string name = "")
+    protected Tensor NewTensor(TensorShape s, AllocScope scope = AllocScope.LayerOutput, string name = "")
     {
-        var tensor = m_Allocator.Alloc(s);
+        var tensor = m_Allocator.Alloc(s, scope);
         tensor.name = name;
         return tensor;
     }
@@ -330,22 +347,24 @@ public class ReferenceCPUOps : IOps
     /// Allocate new `Tensor` similar to specified `Tensor` `t`
     /// </summary>
     /// <param name="t">`Tensor`</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensorLike(Tensor t)
+    protected Tensor NewTensorLike(Tensor t, AllocScope scope = AllocScope.LayerOutput)
     {
-        return NewTensor(t.shape);
+        return NewTensor(t.shape, scope);
     }
 
     /// <summary>
     /// Allocate new `Tensor` corresponding to max shape of specified `tensors`
     /// </summary>
     /// <param name="tensors">tensors</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensorLike(Tensor[] tensors)
+    protected Tensor NewTensorLike(Tensor[] tensors, AllocScope scope = AllocScope.LayerOutput)
     {
         Assert.IsTrue(tensors.Length > 0);
 
-        var O = NewTensor(TensorExtensions.MaxShape(tensors));
+        var O = NewTensor(TensorExtensions.MaxShape(tensors), scope);
         foreach (var t in tensors)
         {
             for (int i = 0; i < TensorShape.MaxRank; ++i)
@@ -362,11 +381,12 @@ public class ReferenceCPUOps : IOps
     /// </summary>
     /// <param name="b">batch</param>
     /// <param name="ch">channels</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(int b, int ch, string name = "")
+    protected Tensor NewTensor(int b, int ch, AllocScope scope = AllocScope.LayerOutput, string name = "")
     {
-        return NewTensor(new TensorShape(b, ch), name);
+        return NewTensor(new TensorShape(b, ch), scope, name);
     }
 
     /// <summary>
@@ -376,12 +396,21 @@ public class ReferenceCPUOps : IOps
     /// <param name="h">height</param>
     /// <param name="w">width</param>
     /// <param name="ch">channels</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(int b, int h, int w, int ch, string name = "")
+    protected Tensor NewTensor(int b, int h, int w, int ch, AllocScope scope = AllocScope.LayerOutput, string name = "")
     {
-        return NewTensor(new TensorShape(b, h, w, ch), name);
+        return NewTensor(new TensorShape(b, h, w, ch), scope, name);
     }
+
+#if ENABLE_BARRACUDA_STATS
+    /// <inheritdoc/>
+    public virtual IEnumerable<TempMemoryStatistics> GetTempMemoryStatistics()
+    {
+        return Enumerable.Empty<TempMemoryStatistics>();
+    }
+#endif //ENABLE_BARRACUDA_STATS
 
     /// <inheritdoc/>
     public virtual void ResetAllocator(bool keepCachedMemory = true)
@@ -470,6 +499,25 @@ public class ReferenceCPUOps : IOps
             case Layer.FusedActivation.Tan:
                 v = Mathf.Tan(v);
                 break;
+            case Layer.FusedActivation.Erf:
+            {
+                // Abramowitz/Stegun approximations
+                // erf(x) = -erf(-x)
+                float x = Mathf.Abs(v);
+
+                float p = 0.3275911f;
+                float a1 = 0.254829592f; float a2 = -0.284496736f; float a3 = 1.421413741f;
+                float a4 = -1.453152027f; float a5 = 1.061405429f;
+
+                float t = 1 / (1 + p * x);
+                float t2 = t * t;
+                float t3 = t2 * t;
+                float t4 = t3 * t;
+                float t5 = t4 * t;
+
+                v = Mathf.Sign(v)*(1 - (a1*t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5)*Mathf.Exp(-x * x));
+                break;
+            }
             default:
                 throw new NotImplementedException();
         }
@@ -789,7 +837,7 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         if (K.kernelDepth != 1)
-            throw new NotImplementedException();
+            throw new NotImplementedException("DepthwiseConv2D only support number of groups == number of input channels at the moment.");
 
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
@@ -2025,39 +2073,56 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
-    public virtual Tensor LogSoftmax(Tensor X)
+    public virtual Tensor LogSoftmax(Tensor X, int axis)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
-            throw new NotImplementedException();
-
-        var O = NewTensor(X.shape);
+        TensorShape xShape = X.shape;
+        axis = xShape.Axis(axis); // Adjust for negative axis values
+        var O = NewTensor(xShape);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
-        //e_x = np.exp(X - X.max(axis=1, keepdims=True))
-        //X = log( e_x / e_x.sum(axis=1, keepdims=True) )
-        for (int y = 0; y < X.flatHeight; ++y)
+        int height = 1;
+        int axis8D = axis;
+        for (var i = 0; i < axis8D; i++)
         {
-            float maxV = Mathf.NegativeInfinity;
-            for (int x = 0; x < X.flatWidth; ++x)
-            {
-                float v = X[y, x];
+            height *= xShape[i];
+        }
 
-                if (v > maxV)
-                    maxV = v;
-            }
+        int width = 1;
+        for (var i = axis8D + 1; i < TensorShape.MaxRank; i++)
+        {
+            width *= xShape[i];
+        }
 
-            float sum = 0.0f;
-            for (int x = 0; x < X.flatWidth; ++x)
-            {
-                float v = X[y, x];
-                sum += Mathf.Exp(v - maxV);
-            }
+        int reducedDim = xShape[axis8D];
 
-            for (int x = 0; x < X.flatWidth; ++x)
+        //e_x = np.exp(X - X.max(axis=1, keepdims=True))
+        //X = log(e_x / e_x.sum(axis=1, keepdims=True))
+        for (int y = 0; y < height; ++y)
+        {
+            for (int x = 0; x < width; ++x)
             {
-                float v = X[y, x];
-                v = Mathf.Log( Mathf.Exp(v - maxV) / sum );
-                O[y, x] = v;
+                float maxV = Mathf.NegativeInfinity;
+                for (int r = 0; r < reducedDim; ++r)
+                {
+                    float v = X[y * width * reducedDim + r * width + x];
+
+                    if (v > maxV)
+                        maxV = v;
+                }
+
+                float sum = 0.0f;
+                for (int r = 0; r < reducedDim; ++r)
+                {
+                    float v = X[y * width * reducedDim + r * width + x];
+                    sum += Mathf.Exp(v - maxV);
+                }
+
+                for (int r = 0; r < reducedDim; ++r)
+                {
+                    float v = X[y * width * reducedDim + r * width + x];
+                    v = (v - maxV) - Mathf.Log(sum);
+                    O[y * width * reducedDim + r * width + x] = v;
+                }
             }
         }
 
@@ -2105,6 +2170,23 @@ public class ReferenceCPUOps : IOps
         {
             float v = X[i];
             v = 1f / (1f + Mathf.Exp(-v));
+            O[i] = v;
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        // https://pytorch.org/docs/stable/generated/torch.nn.Hardsigmoid.html
+        // https://github.com/onnx/onnx/blob/master/docs/Operators.md#HardSigmoid
+        var O = NewTensorLike(X);
+
+        var end = X.length;
+        for (int i = 0; i < end; ++i)
+        {
+            float v = X[i];
+            v = Mathf.Max(0.0f, Mathf.Min(1.0f, alpha*v + beta));
             O[i] = v;
         }
         return O;
@@ -2535,6 +2617,35 @@ public class ReferenceCPUOps : IOps
         {
             float v = X[i];
             v = Mathf.Tan(v);
+            O[i] = v;
+        }
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public virtual Tensor Erf(Tensor X)
+    {
+        var O = NewTensorLike(X);
+
+        var end = X.length;
+        for (int i = 0; i < end; ++i)
+        {
+            float v = X[i];
+            // Abramowitz/Stegun approximations
+            // erf(x) = -erf(-x)
+            float x = Mathf.Abs(v);
+
+            float p = 0.3275911f;
+            float a1 = 0.254829592f; float a2 = -0.284496736f; float a3 = 1.421413741f;
+            float a4 = -1.453152027f; float a5 = 1.061405429f;
+
+            float t = 1.0f / (1.0f + p * x);
+            float t2 = t * t;
+            float t3 = t2 * t;
+            float t4 = t3 * t;
+            float t5 = t4 * t;
+
+            v = Mathf.Sign(v) * (1 - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * Mathf.Exp(-x * x));
             O[i] = v;
         }
         return O;
@@ -3052,6 +3163,15 @@ public class ReferenceCPUOps : IOps
     {
         // if already managed by allocator, can do a shallow copy
         bool canDoShallowCopy = X.allocator != null;
+
+        // in most case layer needing storage should use there own
+        // allocator to avoid memory fragmentation in the long run.
+        // Here we disallow shallow copy in that case here to help.
+        // Would be better to verify if target and source allocator
+        // are the same but storage/reshape-to-storage is an uncommon case.
+        var varsWithReuse = m_Allocator as GenericVarsWithReuse;
+        canDoShallowCopy &= varsWithReuse != null &&
+                            !varsWithReuse.layerRequiresStorage;
 
         // however if tensor is on GPU and in channel first memory layout we can't (reshape is actually a transpose in that case)
         var onDeviceComputeTensorData = X.tensorOnDevice as ComputeTensorData;

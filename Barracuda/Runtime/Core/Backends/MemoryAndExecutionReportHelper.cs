@@ -1,3 +1,6 @@
+#if ENABLE_BARRACUDA_STATS
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -24,15 +27,16 @@ internal static class MemoryAndExecutionReportHelper
         GenerateReportForViews(stringBuilder, layerExecutionViews, spreadSheetFormat, "", false);
     }
 
-    public static void GenerateStringReport(StringBuilder stringBuilder, List<MemorySnapshotReport> memorySnapshots,
+    public static MemoryPeakSummary GenerateStringReport(StringBuilder stringBuilder, List<MemorySnapshotReport> memorySnapshots,
         bool spreadSheetFormat)
     {
         CollectAllAsFirstSeen(in memorySnapshots,
             out var allTensorAsFirstSeen,
             out var allAllocatorAsFirstSeen,
-            out var allTensorDataAsFirstSeen);
+            out var allTensorDataAsFirstSeen,
+            out var allTempMemoriesAsFirstSeen);
 
-        var summaryViews = GenerateSummaryViews(memorySnapshots, allTensorAsFirstSeen, allTensorDataAsFirstSeen);
+        var summaryViews = GenerateSummaryViews(memorySnapshots, allTensorAsFirstSeen, allTensorDataAsFirstSeen, allTempMemoriesAsFirstSeen, out var memoryPeakSummary);
         GenerateHeaderForSummaryViews(stringBuilder, summaryViews, spreadSheetFormat);
         GenerateReportForViews(stringBuilder, summaryViews, spreadSheetFormat, "Tensors allocation and deallocation (diff from previous snapshot):", isSummaryView:true);
         stringBuilder.Append("\n");
@@ -55,6 +59,14 @@ internal static class MemoryAndExecutionReportHelper
         GenerateReportForViews(stringBuilder, tensorDatasViews, spreadSheetFormat, "All TensorDatas:", isSummaryView:false);
         stringBuilder.Append("\n");
         stringBuilder.Append("\n");
+
+        var tempMemoriesDatasViews = GenerateTempMemoriesDatasViews(memorySnapshots, allTempMemoriesAsFirstSeen);
+        GenerateHeaderForTempMemoriesViews(stringBuilder, tempMemoriesDatasViews, spreadSheetFormat);
+        GenerateReportForViews(stringBuilder, tempMemoriesDatasViews, spreadSheetFormat, "All worker temporary memories:", isSummaryView:false);
+        stringBuilder.Append("\n");
+        stringBuilder.Append("\n");
+
+        return memoryPeakSummary;
     }
 
     #region `Internal data format` declaration
@@ -182,19 +194,24 @@ internal static class MemoryAndExecutionReportHelper
 
     #region Helpers to find information in Reports
 
+    private static TempMemoryInfo FindTempMemoryInSnapshot(MemorySnapshotReport memorySnapshot, int tempMemoryId)
+    {
+        return memorySnapshot.TempMemoriesInfo.Find(memoryInfo => memoryInfo.UniqueId == tempMemoryId);
+    }
+
     private static AllocatorMemoryInfo FindAllocatorInSnapshot(MemorySnapshotReport memorySnapshot, int allocatorId)
     {
-        return memorySnapshot.AllocatorMemoryInfo.Find(memoryInfo => memoryInfo.UniqueId == allocatorId);
+        return memorySnapshot.AllocatorsMemoryInfo.Find(memoryInfo => memoryInfo.UniqueId == allocatorId);
     }
 
 
     private static string FindTensorDataAllocatorInSnapshot(MemorySnapshotReport memorySnapshot, int tensorDataId)
     {
-        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorMemoryInfo)
+        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorsMemoryInfo)
         {
             var foundTensorData = allocatorMemoryInfo.TensorDatasMemoryInfo.Find(memoryInfo => memoryInfo.UniqueId == tensorDataId);
             if (foundTensorData != null)
-                return $"{allocatorMemoryInfo.Name} + / Id: {allocatorMemoryInfo.UniqueId}";
+                return $"{allocatorMemoryInfo.Name} / Id: {allocatorMemoryInfo.UniqueId}";
         }
         return "";
     }
@@ -208,7 +225,7 @@ internal static class MemoryAndExecutionReportHelper
         if (foundTensor != null)
             return foundTensor.tensorDataMemoryInfo;
 
-        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorMemoryInfo)
+        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorsMemoryInfo)
         {
             var foundTensorData = allocatorMemoryInfo.TensorDatasMemoryInfo.Find(memoryInfo => memoryInfo.UniqueId == tensorDataId);
             if (foundTensorData != null)
@@ -218,13 +235,29 @@ internal static class MemoryAndExecutionReportHelper
         return null;
     }
 
+    private static IEnumerable<TensorMemoryInfo> FindAllTensorsInSnapshotUsingTensorDataId(MemorySnapshotReport memorySnapshot, int tensorDataId)
+    {
+        SortedSet<TensorMemoryInfo> tensors = new SortedSet<TensorMemoryInfo>( Comparer<TensorMemoryInfo>.Create((a, b) => a.UniqueId.CompareTo(b.UniqueId)));
+
+        var foundTensors = memorySnapshot.TensorsMemoryInfo.FindAll(memoryInfo => memoryInfo.tensorDataMemoryInfo != null && memoryInfo.tensorDataMemoryInfo.UniqueId == tensorDataId);
+        tensors.UnionWith(foundTensors);
+
+        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorsMemoryInfo)
+        {
+            var allocatorFoundTensor = allocatorMemoryInfo.TensorsMemoryInfo.FindAll(memoryInfo => memoryInfo.tensorDataMemoryInfo != null && memoryInfo.tensorDataMemoryInfo.UniqueId == tensorDataId);
+            tensors.UnionWith(allocatorFoundTensor);
+        }
+
+        return tensors;
+    }
+
     private static TensorMemoryInfo FindTensorInSnapshot(MemorySnapshotReport memorySnapshot, int tensorId)
     {
         var foundTensor = memorySnapshot.TensorsMemoryInfo.Find(memoryInfo => memoryInfo.UniqueId == tensorId);
         if (foundTensor != null)
             return foundTensor;
 
-        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorMemoryInfo)
+        foreach (var allocatorMemoryInfo in memorySnapshot.AllocatorsMemoryInfo)
         {
             foundTensor = allocatorMemoryInfo.TensorsMemoryInfo.Find(memoryInfo => memoryInfo.UniqueId == tensorId);
             if (foundTensor != null)
@@ -237,11 +270,13 @@ internal static class MemoryAndExecutionReportHelper
     private static void CollectAllAsFirstSeen(in List<MemorySnapshotReport> memorySnapshots,
         out SortedDictionary<int,TensorMemoryInfo> tensors,
         out SortedDictionary<int,AllocatorMemoryInfo> allocators,
-        out SortedDictionary<int,TensorDataMemoryInfo> tensorDatas)
+        out SortedDictionary<int,TensorDataMemoryInfo> tensorDatas,
+        out SortedDictionary<int,TempMemoryInfo> tempMemories)
     {
         tensors = new SortedDictionary<int, TensorMemoryInfo>();
         allocators = new SortedDictionary<int, AllocatorMemoryInfo>();
         tensorDatas = new SortedDictionary<int, TensorDataMemoryInfo>();
+        tempMemories = new SortedDictionary<int, TempMemoryInfo>();
 
         //Collect all unique tensors, tensors and allocator
         foreach (var snapshot in memorySnapshots)
@@ -255,7 +290,7 @@ internal static class MemoryAndExecutionReportHelper
             }
 
             //From allocators
-            foreach (var allocator in snapshot.AllocatorMemoryInfo)
+            foreach (var allocator in snapshot.AllocatorsMemoryInfo)
             {
                 allocators[allocator.UniqueId] = allocator;
                 foreach (var tensor in allocator.TensorsMemoryInfo)
@@ -270,11 +305,67 @@ internal static class MemoryAndExecutionReportHelper
                     tensorDatas[tensorData.UniqueId] = tensorData;
                 }
             }
+
+            //From temp memories
+            foreach (var tempMemoryInfo in snapshot.TempMemoriesInfo)
+            {
+                tempMemories[tempMemoryInfo.UniqueId] = tempMemoryInfo;
+            }
         }
     }
     #endregion
 
     #region Reports -> internal data format
+
+    private static List<SnapshotView> GenerateTempMemoriesDatasViews(List<MemorySnapshotReport> memorySnapshots,
+        SortedDictionary<int, TempMemoryInfo> allTempMemoryInfosAsFirstSeen)
+    {
+        List<SnapshotView> views = new List<SnapshotView>();
+        for (var memorySnapshotIndex = 0; memorySnapshotIndex < memorySnapshots.Count; memorySnapshotIndex++)
+        {
+            long allTotal = 0L;
+            var snapshot = memorySnapshots[memorySnapshotIndex];
+
+            //Titles and contexts
+            SnapshotView view = new SnapshotView(memorySnapshotIndex, snapshot);
+            view.sections = new SnapshotFieldsWithContexts(
+                fieldsTitles: new[]
+                {
+                    "Allocated (bytes)",
+                    "On GPU"
+                },
+                contextTitles: new[] {"Name", "Id"});
+            foreach (var tempMemoryInfo in allTempMemoryInfosAsFirstSeen)
+            {
+                var id = tempMemoryInfo.Key;
+                view.sections.AddContext(id);
+                view.sections.SetContext(id, "Name", tempMemoryInfo.Value.Name);
+                view.sections.SetContext(id, "Id", id.ToString());
+            }
+            view.summary = new SnapshotFields(new[]
+            {
+                "Memory pressure in bytes (sum of all temp memory capacities)"
+            });
+
+            //Details
+            foreach (var alloc in allTempMemoryInfosAsFirstSeen)
+            {
+                var tempMemory = FindTempMemoryInSnapshot(snapshot, alloc.Key);
+                if (tempMemory != null)
+                {
+                    allTotal += tempMemory.TotalBytes;
+                    view.sections[tempMemory.UniqueId, "Allocated (bytes)"] = tempMemory.TotalBytes.ToString();
+                    view.sections[tempMemory.UniqueId, "On GPU"] = tempMemory.IsGPUMem ? "GPU" : "CPU";
+                }
+            }
+
+            //Summary
+            view.summary["Memory pressure in bytes (sum of all temp memory capacities)"] = allTotal.ToString();
+            views.Add(view);
+        }
+
+        return views;
+    }
 
     private static List<SnapshotView> GenerateAllocatorViews(List<MemorySnapshotReport> memorySnapshots,
         SortedDictionary<int, AllocatorMemoryInfo> allAllocatorAsFirstSeen)
@@ -326,7 +417,7 @@ internal static class MemoryAndExecutionReportHelper
                     allTotal += allocator.TotalBytes;
                     allBusy += allocator.BusyBytes;
                     allUsed += allocator.UsedBytes;
-                    allFragmented += allocator.BytesLostToFragmentation;
+                    allFragmented += allocator.BusyBytes-allocator.UsedBytes;
                     allFree += allocator.FreeBytes;
                     view.sections[allocator.UniqueId, "Memory pressure in bytes (sum of allocated tensorDatas capacities)"] = allocator.TotalBytes.ToString();
                     view.sections[allocator.UniqueId, "Busy bytes, for all allocators (sum of 'in use' tensorDatas capacities)"] = allocator.BusyBytes.ToString();
@@ -358,6 +449,8 @@ internal static class MemoryAndExecutionReportHelper
             long allCPUInBytes = 0L;
             long allUsedGPUInBytes = 0L;
             long allUsedCPUInBytes = 0L;
+            long allFragmentedMemGPUInBytes = 0L;
+            long allFragmentedMemCPUInBytes = 0L;
 
             var snapshot = memorySnapshots[memorySnapshotIndex];
 
@@ -366,10 +459,8 @@ internal static class MemoryAndExecutionReportHelper
             view.sections = new SnapshotFieldsWithContexts(
                 fieldsTitles: new[]
                 {
-                    "In use",
-                    "Capacity (bytes)",
-                    "On GPU",
-                    "Allocator"
+                    "In use", "Capacity (bytes)", "On GPU", "Allocator",
+                    "Tensor(s) Id(s)", "Tensor(s) max bytes", "Fragmented bytes"
                 },
                 contextTitles: new[] {"Id"});
             foreach (var tensorData in allTensorDataAsFirstSeen)
@@ -383,7 +474,9 @@ internal static class MemoryAndExecutionReportHelper
                 "GPU sum of all allocated tensorData capacities (bytes)",
                 "CPU sum of all allocated tensorData capacities (bytes)",
                 "GPU sum of all 'in use' tensorData (bytes)",
-                "CPU sum of all 'in use' tensorData (bytes)"
+                "CPU sum of all 'in use' tensorData (bytes)",
+                "GPU sum of all 'fragmented' tensorData mem ('in use' but not by large enough tensors) (bytes)",
+                "CPU sum of all 'fragmented' tensorData mem ('in use' but not by large enough tensors) (bytes)",
             });
 
             foreach (var tData in allTensorDataAsFirstSeen)
@@ -391,23 +484,46 @@ internal static class MemoryAndExecutionReportHelper
                 TensorDataMemoryInfo tensorData = FindTensorDataInSnapshot(snapshot, tData.Key);
                 if (tensorData != null)
                 {
+                    var associatedTensors = FindAllTensorsInSnapshotUsingTensorDataId(snapshot, tensorData.UniqueId);
+                    string tensorNamesandIds = "";
+                    int tensorBytes = 0;
+                    bool first = true;
+                    foreach (var tensor in associatedTensors)
+                    {
+                        if (!first)
+                            tensorNamesandIds += " / ";
+                        tensorNamesandIds += tensor.Name + " Id:" + tensor.UniqueId;
+                        first = false;
+                        tensorBytes = Math.Max(tensorBytes, tensor.Shape.length * sizeof(float));
+                    }
+                    int fragmentedTensorDataBytes = (tensorData.InUse) ? tensorData.MaxBytes - tensorBytes : 0;
+
                     if (tensorData.IsGPUMem)
                     {
                         allGPUInBytes += tensorData.MaxBytes;
                         if (tensorData.InUse)
+                        {
+                            allFragmentedMemGPUInBytes += fragmentedTensorDataBytes;
                             allUsedGPUInBytes += tensorData.MaxBytes;
+                        }
                     }
                     else
                     {
                         allCPUInBytes += tensorData.MaxBytes;
                         if (tensorData.InUse)
+                        {
+                            allFragmentedMemCPUInBytes += fragmentedTensorDataBytes;
                             allUsedCPUInBytes += tensorData.MaxBytes;
+                        }
                     }
 
                     view.sections[tensorData.UniqueId, "In use"] = tensorData.InUse ? "Yes" : "";
                     view.sections[tensorData.UniqueId, "Capacity (bytes)"] = tensorData.MaxBytes.ToString();
                     view.sections[tensorData.UniqueId, "On GPU"] = tensorData.IsGPUMem ? "GPU" : "CPU";
                     view.sections[tensorData.UniqueId, "Allocator"] = FindTensorDataAllocatorInSnapshot(snapshot, tensorData.UniqueId);
+                    view.sections[tensorData.UniqueId, "Tensor(s) Id(s)"] = tensorNamesandIds;
+                    view.sections[tensorData.UniqueId, "Tensor(s) max bytes"] = tensorBytes.ToString();
+                    view.sections[tensorData.UniqueId, "Fragmented bytes"] = fragmentedTensorDataBytes.ToString();
                 }
             }
 
@@ -416,6 +532,8 @@ internal static class MemoryAndExecutionReportHelper
             view.summary["CPU sum of all allocated tensorData capacities (bytes)"] = allCPUInBytes.ToString();
             view.summary["GPU sum of all 'in use' tensorData (bytes)"] = allUsedGPUInBytes.ToString();
             view.summary["CPU sum of all 'in use' tensorData (bytes)"] = allUsedCPUInBytes.ToString();
+            view.summary["GPU sum of all 'fragmented' tensorData mem ('in use' but not by large enough tensors) (bytes)"] = allFragmentedMemGPUInBytes.ToString();
+            view.summary["CPU sum of all 'fragmented' tensorData mem ('in use' but not by large enough tensors) (bytes)"] = allFragmentedMemCPUInBytes.ToString();
             views.Add(view);
         }
 
@@ -433,14 +551,12 @@ internal static class MemoryAndExecutionReportHelper
             //Titles and contexts
             SnapshotView view = new SnapshotView(memorySnapshotIndex, snapshot);
             view.sections = new SnapshotFieldsWithContexts(
-                fieldsTitles: new[] {"Allocated", "Cache size (bytes)", "TensorData Id"},
-                contextTitles: new[] {"Name", "Shape", "Id"});
+                fieldsTitles: new[] {"Allocated (bytes)", "Name", "Shape", "Cache size (bytes)", "TensorData Id", "TensorData Capacity (bytes)"},
+                contextTitles: new[] {"Id"});
             foreach (var tensorMemoryInfo in allTensorAsFirstSeen)
             {
                 var id = tensorMemoryInfo.Key;
                 view.sections.AddContext(id);
-                view.sections.SetContext(id, "Name", tensorMemoryInfo.Value.Name);
-                view.sections.SetContext(id, "Shape", tensorMemoryInfo.Value.Shape.ToString());
                 view.sections.SetContext(id, "Id", id.ToString());
             }
             view.summary = new SnapshotFields(new[]
@@ -460,18 +576,27 @@ internal static class MemoryAndExecutionReportHelper
                 if (tensor != null)
                 {
                     cacheMemInBytes += tensor.CacheBytes;
+                    var dataBytes = tensor.Shape.length * sizeof(float);
 
-                    view.sections[tensor.UniqueId, "Allocated"] = "Yes";
-                    view.sections[tensor.UniqueId, "Cache size (bytes)"] = tensor.CacheBytes.ToString();
+                    string allocatedStr = "Yes";
                     if (tensor.tensorDataMemoryInfo != null)
                     {
-                        view.sections[tensor.UniqueId, "TensorData Id"] =
-                            tensor.tensorDataMemoryInfo.UniqueId.ToString();
+                        allocatedStr += $" ({(tensor.Shape.length * sizeof(float)).ToString()})";
+                        view.sections[tensor.UniqueId, "TensorData Id"] = tensor.tensorDataMemoryInfo.UniqueId.ToString();
+                        view.sections[tensor.UniqueId, "TensorData Capacity (bytes)"] = tensor.tensorDataMemoryInfo.MaxBytes.ToString();
                         if (tensor.tensorDataMemoryInfo.IsGPUMem)
-                            gpuMem += tensor.Shape.length;
+                            gpuMem += dataBytes;
                         else
-                            cpuMem += tensor.Shape.length;
+                            cpuMem += dataBytes;
                     }
+                    else
+                    {
+                        allocatedStr += " (0)";
+                    }
+                    view.sections[tensor.UniqueId, "Name"] = tensor.Name;
+                    view.sections[tensor.UniqueId, "Shape"] = tensor.Shape.ToString();
+                    view.sections[tensor.UniqueId, "Cache size (bytes)"] = tensor.CacheBytes.ToString();
+                    view.sections[tensor.UniqueId, "Allocated (bytes)"] = allocatedStr;
                 }
             }
 
@@ -519,10 +644,16 @@ internal static class MemoryAndExecutionReportHelper
 
     private static List<SnapshotView> GenerateSummaryViews(List<MemorySnapshotReport> memorySnapshots,
         SortedDictionary<int, TensorMemoryInfo> allTensorsAsFirstSeen,
-        SortedDictionary<int, TensorDataMemoryInfo> allTensorDatasAsFirstSeen)
+        SortedDictionary<int, TensorDataMemoryInfo> allTensorDatasAsFirstSeen,
+        SortedDictionary<int, TempMemoryInfo> allTempMemoriesAsFirstSeen,
+        out MemoryPeakSummary memoryPeakSummary)
     {
         HashSet<int> previousSnapshotTensorIds = new HashSet<int>();
         List<SnapshotView> views = new List<SnapshotView>();
+
+        long peakMemoryUsageGPU = 0;
+        long peakMemoryUsageCPU = 0;
+        long peakMemoryUsageGPUAndCPU = 0;
 
         for (var memorySnapshotIndex = 0; memorySnapshotIndex < memorySnapshots.Count; memorySnapshotIndex++)
         {
@@ -563,9 +694,24 @@ internal static class MemoryAndExecutionReportHelper
                         cpuMem += tensorData.MaxBytes;
                 }
             }
+            foreach (var mData in allTempMemoriesAsFirstSeen)
+            {
+                TempMemoryInfo tempMemoryInfo = FindTempMemoryInSnapshot(snapshot, mData.Key);
+                if (tempMemoryInfo != null)
+                {
+                    if (tempMemoryInfo.IsGPUMem)
+                        gpuMem += tempMemoryInfo.TotalBytes;
+                    else
+                        cpuMem += tempMemoryInfo.TotalBytes;
+                }
+            }
             view.summary["Total memory pressure on GPU (in bytes)"] = gpuMem.ToString();
             view.summary["Total memory pressure on CPU (in bytes)"] = cpuMem.ToString();
             view.summary["On CPU tensor cache (in bytes)"] = cacheMemInBytes.ToString();
+
+            peakMemoryUsageGPU = Math.Max(peakMemoryUsageGPU, gpuMem);
+            peakMemoryUsageCPU = Math.Max(peakMemoryUsageCPU, cpuMem);
+            peakMemoryUsageGPUAndCPU = Math.Max(peakMemoryUsageGPUAndCPU, gpuMem+cpuMem);
 
             if (memorySnapshotIndex != 0)
             {
@@ -607,6 +753,7 @@ internal static class MemoryAndExecutionReportHelper
             previousSnapshotTensorIds = currentSnapshotTensorIds;
         }
 
+        memoryPeakSummary = new MemoryPeakSummary(peakMemoryUsageGPU, peakMemoryUsageCPU, peakMemoryUsageGPUAndCPU);
         return views;
     }
 
@@ -701,7 +848,7 @@ internal static class MemoryAndExecutionReportHelper
             return;
         }
 
-        //Tensor contexts
+        //Columns names
         int ctxFieldCount = views[0].context.Titles.Length + views[0].summary.Titles.Length;
         int sectionFieldCount = views[0].sections.FieldTitles.Length;
 
@@ -719,43 +866,38 @@ internal static class MemoryAndExecutionReportHelper
 
     private static void GenerateHeaderForTensorViews(StringBuilder stringBuilder, List<SnapshotView> views, bool spreadSheetFormat)
     {
+        GenerateHeaderForViewsByID(stringBuilder, views, spreadSheetFormat, "Tensors");
+    }
+
+    private static void GenerateHeaderForTensorDatasViews(StringBuilder stringBuilder, List<SnapshotView> views, bool spreadSheetFormat)
+    {
+        GenerateHeaderForViewsByID(stringBuilder, views, spreadSheetFormat, "TensorDatas");
+    }
+
+    private static void GenerateHeaderForViewsByID(StringBuilder stringBuilder, List<SnapshotView> views, bool spreadSheetFormat, string dataType)
+    {
         if (views.Count == 0)
         {
-            stringBuilder.Append("<******** Tensors info ********> NONE!\n");
+            stringBuilder.Append($"<******** {dataType} info ********> NONE!\n");
             return;
         }
 
         if (!spreadSheetFormat)
         {
-            stringBuilder.Append("<******** Tensors info ********>\n");
+            stringBuilder.Append($"<******** {dataType} info ********>\n");
             return;
         }
 
-        //Tensor contexts
+        //Columns names
         int ctxFieldCount = views[0].context.Titles.Length + views[0].summary.Titles.Length;
         int sectionFieldCount = views[0].sections.FieldTitles.Length;
 
-        stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, ctxFieldCount);
-        stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
-        stringBuilder.Append("Tensors names and shapes:");
-        stringBuilder.Append("\n");
-
+        stringBuilder.Append($"<******** {dataType} info ********>");
         stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, ctxFieldCount);
         stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
         foreach (var context in views[0].sections.Contexts)
         {
-            stringBuilder.Append(context.Value["Name"], ModelExecutionsReporter.SpreadSheetFieldSeparator);
-            stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, sectionFieldCount-1);
-            stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
-        }
-        stringBuilder.Append("\n");
-
-        stringBuilder.Append("<******** Tensors info ********>");
-        stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, ctxFieldCount);
-        stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
-        foreach (var context in views[0].sections.Contexts)
-        {
-            stringBuilder.Append(context.Value["Shape"], " / Id: ");
+            stringBuilder.Append("Id: ");
             stringBuilder.Append(context.Value["Id"], ModelExecutionsReporter.SpreadSheetFieldSeparator);
             stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, sectionFieldCount-1);
             stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
@@ -763,30 +905,35 @@ internal static class MemoryAndExecutionReportHelper
         stringBuilder.Append("\n");
     }
 
-    private static void GenerateHeaderForTensorDatasViews(StringBuilder stringBuilder, List<SnapshotView> views, bool spreadSheetFormat)
+    private static void GenerateHeaderForTempMemoriesViews(StringBuilder stringBuilder, List<SnapshotView> views, bool spreadSheetFormat)
     {
         if (views.Count == 0)
         {
-            stringBuilder.Append("<******** TensorDatas info ********> NONE!\n");
+            stringBuilder.Append("<******** Worker temporary memories info ********> NONE!\n");
             return;
         }
 
         if (!spreadSheetFormat)
         {
-            stringBuilder.Append("<******** TensorDatas info ********>\n");
+            stringBuilder.Append("<******** Worker temporary memories info ********>\n");
             return;
         }
 
-        //Tensor contexts
+        //Columns names
         int ctxFieldCount = views[0].context.Titles.Length + views[0].summary.Titles.Length;
         int sectionFieldCount = views[0].sections.FieldTitles.Length;
 
-        stringBuilder.Append("<******** TensorDatas info ********>");
+        stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, ctxFieldCount);
+        stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
+        stringBuilder.Append("Temp memories names and ids:");
+        stringBuilder.Append("\n");
+
+        stringBuilder.Append("<******** Worker temporary memories info ********>");
         stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, ctxFieldCount);
         stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
         foreach (var context in views[0].sections.Contexts)
         {
-            stringBuilder.Append("Id: ");
+            stringBuilder.Append(context.Value["Name"], " / Id: ");
             stringBuilder.Append(context.Value["Id"], ModelExecutionsReporter.SpreadSheetFieldSeparator);
             stringBuilder.Append(ModelExecutionsReporter.SpreadSheetFieldSeparator, sectionFieldCount-1);
             stringBuilder.Append("|", ModelExecutionsReporter.SpreadSheetFieldSeparator);
@@ -808,7 +955,7 @@ internal static class MemoryAndExecutionReportHelper
             return;
         }
 
-        //Tensor contexts
+        //Columns names
         int ctxFieldCount = views[0].context.Titles.Length + views[0].summary.Titles.Length;
         int sectionFieldCount = views[0].sections.FieldTitles.Length;
 
@@ -834,3 +981,5 @@ internal static class MemoryAndExecutionReportHelper
 }
 
 } // namespace Unity.Barracuda
+
+#endif //ENABLE_BARRACUDA_STATS

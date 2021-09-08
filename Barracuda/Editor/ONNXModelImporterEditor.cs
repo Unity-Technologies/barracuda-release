@@ -255,7 +255,7 @@ public class NNModelEditor : UnityEditor.Editor
         m_TotalWeightsSizeInBytes = 0;
         for (var l = 0; l < m_Model.layers.Count; ++l)
             for (var d = 0; d < m_Model.layers[l].datasets.Length; ++d)
-                m_TotalWeightsSizeInBytes += m_Model.layers[l].datasets[d].length;
+                m_TotalWeightsSizeInBytes += m_Model.layers[l].datasets[d].length * m_Model.layers[l].datasets[d].itemSizeInBytes;
 
         m_Metadata = new Dictionary<string, string>(m_Model.Metadata);
 

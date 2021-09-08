@@ -562,7 +562,12 @@ public class Layer
         /// <summary>
         /// Tan
         /// </summary>
-        Tan = Activation.Tan
+        Tan = Activation.Tan,
+
+        /// <summary>
+        /// Erf
+        /// </summary>
+        Erf = Activation.Erf
     }
 
     /// <summary>
@@ -646,9 +651,9 @@ public class Layer
         Hardmax = 20,               // TODO: NOT IMPLEMENTED
 
         /// <summary>
-        /// HardSigmoid (not yet implemented)
+        /// HardSigmoid
         /// </summary>
-        HardSigmoid = 21,           // TODO: NOT IMPLEMENTED
+        HardSigmoid = 21,
 
         /// <summary>
         /// Abs
@@ -758,7 +763,12 @@ public class Layer
         /// <summary>
         /// Tan
         /// </summary>
-        Tan = 210
+        Tan = 210,
+  
+        /// <summary>
+        /// Erf
+        /// </summary>
+        Erf = 211
     }
 
     /// <summary>
@@ -922,7 +932,7 @@ public class Layer
     /// <summary>
     /// Flat weights array (for actual shape see `datasets`)
     /// </summary>
-    public float[]    weights;
+    public BarracudaArray    weights;
 
     private Layer(string layerName)
     {
@@ -937,7 +947,7 @@ public class Layer
         beta = 0.0f;
         inputs = new string[0];
         datasets = new DataSet[0];
-        weights = new float[0];
+        weights = new BarracudaArray(0);//TODO fp16?
     }
 
     /// <summary>
@@ -988,7 +998,7 @@ public class Layer
     {
         Assert.IsTrue(index < datasets.Length);
         var ds = datasets[index];
-        return new Tensor(ds.shape, new SharedArrayTensorData(weights, (int)ds.offset, (int)ds.shape.length), ds.name);
+        return new Tensor(ds.shape, new SharedArrayTensorData(weights, ds.shape, (int)ds.offset), ds.name);
     }
 
     /// <summary>
@@ -1001,7 +1011,7 @@ public class Layer
         Assert.IsTrue(index < datasets.Length);
         var ds = datasets[index];
         ds.shape = X.shape;
-        Array.Copy(X.ToReadOnlyArray(), 0, weights, ds.offset, ds.shape.length);
+        BarracudaArray.Copy(X.ToReadOnlyArray(), 0, weights, ds.offset, ds.shape.length);
         datasets[index] = ds;
     }
 }
@@ -1014,8 +1024,10 @@ public class Model
     /// <summary>
     /// Model version, incremented with each data structure change
     /// </summary>
-    public const int Version = 18;
+    public const int Version = 19;
     internal const int LastVersionWithout8DSupport = 16;
+    public const int LastVersionWithoutWeightsAlignmentSupport = 18;
+    internal const int WeightsAlignment = 16;
 
     /// <summary>
     /// Input data structure
@@ -1204,7 +1216,7 @@ public static class ModelMetadataExtensions
             foreach (var ds in l.datasets)
                 if (ds.name == name)
                     return new Tensor(ds.shape,
-                        new SharedArrayTensorData(l.weights, (int)ds.offset, (int)ds.shape.length), ds.name);
+                        new SharedArrayTensorData(l.weights, ds.shape, (int)ds.offset), ds.name);
 
         return null;
     }

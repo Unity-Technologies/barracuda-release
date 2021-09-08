@@ -32,6 +32,7 @@ public class GenericWorker : IWorker
     private bool m_AllocatorIsStale = false;
     private bool m_AllocatorIsOccupied = false;
     private bool m_Verbose;
+    private bool m_TakeoverWeights;
     private float m_Progress = 0f;
 
     private Tensor m_SyncTensor;
@@ -48,7 +49,8 @@ public class GenericWorker : IWorker
     /// <param name="ops">`IOps`</param>
     /// <param name="vars">`IVars`</param>
     /// <param name="verbose">verbose execution flag</param>
-    public GenericWorker(Model model, IOps ops, IVars vars, bool verbose = false)
+    /// <param name="takeoverWeights">takeover weights execution flag</param>
+    public GenericWorker(Model model, IOps ops, IVars vars, bool verbose = false, bool takeoverWeights = false)
     {
         m_Model = model;
         m_DefaultInputName = ModelAnalyzer.GetDefaultInputName(model);
@@ -58,6 +60,7 @@ public class GenericWorker : IWorker
         m_ModelCompiler = ops as IModelCompiler;
         m_DummyInput = new Tensor();
         m_Verbose = verbose;
+        m_TakeoverWeights = takeoverWeights;
 
         m_AllocatorIsStale = true;
     }
@@ -112,7 +115,7 @@ public class GenericWorker : IWorker
         m_InputShapes.Clear();
         foreach (var input in inputShapes)
             m_InputShapes.Add(input.Key, input.Value);
-        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes);
+        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes, m_TakeoverWeights);
     }
 
     /// <inheritdoc/>
@@ -208,15 +211,19 @@ public class GenericWorker : IWorker
         ResetAllocatorIfStaleAndNotOccupied();
         m_AllocatorIsStale = true;
 
+#if ENABLE_BARRACUDA_STATS
         m_Ops.GetModelExecutionsReporter()?.ModelExecutionStarted();
-        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "Before model execution, step1: After Allocator reset");
+        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Ops, m_Vars, "Before model execution, step1: After Allocator reset");
+#endif //ENABLE_BARRACUDA_STATS
 
-        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes);
+        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes, m_TakeoverWeights);
 
         if (m_ModelCompiler != null)
-            m_ModelCompiler.PrepareModel(m_Model, m_InputShapes);
+            m_ModelCompiler.PrepareModel(m_Model, m_InputShapes, m_Vars);
 
-        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "Before model execution, step2: After Model preparation");
+#if ENABLE_BARRACUDA_STATS
+        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Ops, m_Vars, "Before model execution, step2: After Model preparation");
+#endif //ENABLE_BARRACUDA_STATS
 
         int idx = 0;
         foreach (var l in m_Model.layers)
@@ -225,7 +232,10 @@ public class GenericWorker : IWorker
 
             m_Progress = idx / (float)m_Model.layers.Count;
 
+#if ENABLE_BARRACUDA_STATS
             m_Ops.GetModelExecutionsReporter()?.LayerExecutionStarted(l);
+#endif //ENABLE_BARRACUDA_STATS
+
             Profiler.BeginSample(l.name);
 
             var inputs = m_Vars.GatherInputs(l);
@@ -812,7 +822,11 @@ public class GenericWorker : IWorker
                     xShape.InsertRange(axis, indicesShape);
                     xShape.RemoveAt(axis + indicesShape.Count);
 
-                    X = X.Reshape(new TensorShape(Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaLayoutToTensorShapeLayout(xShape.ToArray())));
+                    X = m_Ops.Reshape(X, new TensorShape(Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaLayoutToTensorShapeLayout(xShape.ToArray())));
+
+                    // rank 2 -> 3
+                    if (xRank == 2 && xShape.Count == 3)
+                        X = m_Ops.Transpose(X, new int[] {0,1,3,2});
                 }
             }
             else if (l.type == Layer.Type.NonMaxSuppression)
@@ -1008,7 +1022,7 @@ public class GenericWorker : IWorker
                 }
                 else if (l.activation == Layer.Activation.LogSoftmax)
                 {
-                    X = m_Ops.LogSoftmax(X);
+                    X = m_Ops.LogSoftmax(X, l.axis);
                 }
                 else if (l.activation == Layer.Activation.Tanh)
                 {
@@ -1021,6 +1035,10 @@ public class GenericWorker : IWorker
                 else if (l.activation == Layer.Activation.Sigmoid)
                 {
                     X = m_Ops.Sigmoid(X);
+                }
+                else if (l.activation == Layer.Activation.HardSigmoid)
+                {
+                    X = m_Ops.HardSigmoid(X, l.alpha, l.beta);
                 }
                 else if (l.activation == Layer.Activation.Relu6)
                 {
@@ -1049,8 +1067,7 @@ public class GenericWorker : IWorker
                 }
                 else if (
                     l.activation == Layer.Activation.Softsign ||
-                    l.activation == Layer.Activation.Hardmax ||
-                    l.activation == Layer.Activation.HardSigmoid)
+                    l.activation == Layer.Activation.Hardmax)
                 {
                     throw new NotImplementedException("This activation function is not implemented yet!");
                 }
@@ -1142,6 +1159,10 @@ public class GenericWorker : IWorker
                 {
                     X = m_Ops.Tan(X);
                 }
+                else if (l.activation == Layer.Activation.Erf)
+                {
+                    X = m_Ops.Erf(X);
+                }
                 else
                 {
                     X = m_Ops.Copy(X);
@@ -1153,7 +1174,9 @@ public class GenericWorker : IWorker
                 Assert.IsTrue(l.type == Layer.Type.Nop, $"Layer type {l.type} not explicitly handled");
             }
 
-            m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "After layer",l);
+#if ENABLE_BARRACUDA_STATS
+            m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Ops, m_Vars, "After layer",l);
+#endif //ENABLE_BARRACUDA_STATS
             m_Vars.DisposeAfterLayer(l);
             m_Vars.Store(l, X);
             m_SyncTensor = X;
@@ -1163,8 +1186,9 @@ public class GenericWorker : IWorker
 
             // layer.name
             Profiler.EndSample();
-
+#if ENABLE_BARRACUDA_STATS
             m_Ops.GetModelExecutionsReporter()?.LayerExecutionCompleted();
+#endif //ENABLE_BARRACUDA_STATS
 
             yield return null;
         }
@@ -1174,9 +1198,10 @@ public class GenericWorker : IWorker
 
         if (m_Verbose)
             D.Log(m_Vars.GetAllocator());
-
+#if ENABLE_BARRACUDA_STATS
         m_Ops.GetModelExecutionsReporter()?.ModelExecutionCompleted();
-        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Vars, "After model execution");
+        m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Ops, m_Vars, "After model execution");
+#endif //ENABLE_BARRACUDA_STATS
     }
 
     /// <inheritdoc/>
@@ -1334,9 +1359,7 @@ internal class GenericVars : IVars, IVarsStatistics
         }
         foreach (var arg in layer.datasets)
         {
-            var tensor = new Tensor(arg.shape, new SharedArrayTensorData(layer.weights, (int)arg.offset,
-                                                                        (int)arg.shape.length),
-                                                                        arg.name);
+            var tensor = new Tensor(arg.shape, new SharedArrayTensorData(layer.weights, arg.shape, (int)arg.offset), arg.name);
             if (ops != null)
                 tensor = ops.Prepare(tensor);
             m_ModelTensors.Add(tensor);
@@ -1350,7 +1373,7 @@ internal class GenericVars : IVars, IVarsStatistics
         m_TensorsByName[name] = x;
     }
 
-    public virtual void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes)
+    public virtual void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights)
     {
         ValidateGlobalInputs(model, inputShapes);
 
@@ -1368,6 +1391,8 @@ internal class GenericVars : IVars, IVarsStatistics
 
             var tensors = PrepareLayerInputTensors(model, layer, ops);
             m_InputTensorsByLayer.Add(layer, tensors);
+            if (takeoverWeights)
+                layer.weights = null;
         }
 
         foreach (var mem in model.memories)
@@ -1375,7 +1400,7 @@ internal class GenericVars : IVars, IVarsStatistics
             if (!m_TensorsByName.ContainsKey(mem.input))
             {
                 // initialize memories that haven't been explicitly set
-                var tensor = m_Allocator.Alloc(mem.shape);
+                var tensor = m_Allocator.Alloc(mem.shape, AllocScope.LayerOutput);
                 SetInput(mem.input, tensor);
                 m_ModelTensors.Add(tensor);
             }
@@ -1527,7 +1552,7 @@ internal class GenericVarsWithReuse : GenericVars
     private string m_TemporaryName = null;
     protected IDictionary<string, TensorShape> m_CachedInputShapes;
 
-    protected bool layerRequiresStorage { get { return m_LayerRequiresStorage; } }
+    internal bool layerRequiresStorage { get { return m_LayerRequiresStorage; } }
     protected Tensor temporary { get { return m_Temporary; } }
 
     protected void ReleaseTemporary()
@@ -1541,12 +1566,12 @@ internal class GenericVarsWithReuse : GenericVars
         m_Temporary = null;
     }
 
-    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes)
+    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights)
     {
         if(m_CachedInputShapes != inputShapes)
         {
             m_CachedInputShapes = inputShapes;
-            base.PrepareStorage(model, ops, inputShapes);
+            base.PrepareStorage(model, ops, inputShapes, takeoverWeights);
         }
 
         ReleaseTemporary();
@@ -1566,7 +1591,7 @@ internal class GenericVarsWithReuse : GenericVars
 
     public override void Store(Layer fromLayer, Tensor result)
     {
-        if (result.tensorOnDevice != m_Temporary?.tensorOnDevice)
+        if (result != m_Temporary)
             ReleaseTemporary();
 
         // assign debug name
@@ -1604,39 +1629,83 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
 {
     private Model m_CachedModel;
 
-    private DefaultTensorAllocator m_TemporaryAllocator = new DefaultTensorAllocator();
-    private DefaultTensorAllocator m_StorageAllocator = new DefaultTensorAllocator();
+    private DefaultTensorAllocator m_InferenceScopedPingPongAllocator = new DefaultTensorAllocator();
+    private DefaultTensorAllocator m_InferenceScopedStorageAllocator = new DefaultTensorAllocator();
+    private DefaultTensorAllocator m_LayerScopedAllocator = new DefaultTensorAllocator();
 
     public GenericVarsWithPreallocation()
     {
-        m_TemporaryAllocator.name = "Temporary Allocator";
-        m_StorageAllocator.name = "Storage Allocator";
+        m_InferenceScopedPingPongAllocator.name = "Inference ping pong Allocator";
+        m_InferenceScopedStorageAllocator.name = "Inference storage Allocator";
+        m_LayerScopedAllocator.name = "Layer scoped Allocator";
     }
 
     public new IEnumerable<IAllocatorStatistics> GetAllocatorsStatistics()
     {
-        yield return m_TemporaryAllocator;
-        yield return m_StorageAllocator;
+        yield return m_InferenceScopedPingPongAllocator;
+        yield return m_InferenceScopedStorageAllocator;
+        yield return m_LayerScopedAllocator;
     }
 
-    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes)
+    /// <inheritdoc/>
+    public virtual void PostLayerCleanup()
     {
-        base.PrepareStorage(model, ops, inputShapes);
+        m_LayerScopedAllocator.Dispose();
+
+        m_InferenceScopedPingPongAllocator.PostLayerCleanup();
+        m_InferenceScopedStorageAllocator.PostLayerCleanup();
+        m_LayerScopedAllocator.PostLayerCleanup();
+    }
+
+    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights)
+    {
+        base.PrepareStorage(model, ops, inputShapes, takeoverWeights);
 
         if (m_CachedModel != model)
         {
             // pre-allocate 2 buffers that can be cycled for temporaries
-            var allocator = m_TemporaryAllocator;
+            var allocator = m_InferenceScopedPingPongAllocator;
 
             var maxShape = ModelAnalyzer.FindLargestNecessaryTensorShape(model, inputShapes);
-            var alloc1 = allocator.Alloc(maxShape);
-            var alloc2 = allocator.Alloc(maxShape);
+            var alloc1 = allocator.Alloc(maxShape, AllocScope.LayerOutput);
+            var alloc2 = allocator.Alloc(maxShape, AllocScope.LayerOutput);
             alloc1 = ops.PrepareNoAlloc(alloc1);
             alloc2 = ops.PrepareNoAlloc(alloc2);
             allocator.Release(alloc1, false);
             allocator.Release(alloc2, false);
         }
         m_CachedModel = model;
+
+        m_InferenceScopedPingPongAllocator.PostLayerCleanup();//reset allocation count
+    }
+
+    public override void DisposeAfterLayer(Layer forLayer)
+    {
+#if ENABLE_BARRACUDA_WARN_ON_LEAKS
+        if (m_InferenceScopedPingPongAllocator.NumAllocatedBufferSinceCleanup != 0)
+        {
+            D.LogWarning($"TensorData leak detected: {m_InferenceScopedPingPongAllocator.NumAllocatedBufferSinceCleanup} tensorData(s)" +
+                         $" was/were allocated in the ping pong allocator during execution of layer {forLayer} of type {forLayer.type}.");
+            System.Diagnostics.Debugger.Break();
+        }
+#endif
+        
+        PostLayerCleanup();
+
+        base.DisposeAfterLayer(forLayer);
+    }
+
+    public override void Store(Layer fromLayer, Tensor result)
+    {
+        base.Store(fromLayer, result);
+
+#if ENABLE_BARRACUDA_WARN_ON_LEAKS
+        if (!m_InferenceScopedPingPongAllocator.IsPingPongReady)
+        {
+            D.LogWarning($"TensorData leak detected, one of the ping pong buffer was not released in layer {fromLayer} of type {fromLayer.type}.");
+            System.Diagnostics.Debugger.Break();
+        }
+#endif
     }
 
     public override ITensorAllocator GetAllocator()
@@ -1646,23 +1715,30 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     protected override bool IsTensorOwnedByInternalAllocator(Tensor tensor)
     {
         var allocator = tensor.allocator;
-        return allocator == m_TemporaryAllocator ||
-               allocator == m_StorageAllocator;
+        return allocator == m_InferenceScopedPingPongAllocator ||
+               allocator == m_InferenceScopedStorageAllocator ||
+               allocator == m_LayerScopedAllocator;
     }
 
-    public virtual Tensor Alloc(TensorShape shape)
+    public virtual Tensor Alloc(TensorShape shape, AllocScope scope)
     {
+        if (scope == AllocScope.InternalToLayer)
+            return m_LayerScopedAllocator.Alloc(shape, scope);
+
         if (layerRequiresStorage)
-            return m_StorageAllocator.Alloc(shape);
+            return m_InferenceScopedStorageAllocator.Alloc(shape, scope);
         else
-            return m_TemporaryAllocator.Alloc(shape);
+            return m_InferenceScopedPingPongAllocator.Alloc(shape, scope);
     }
-    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer)
+    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope)
     {
+        if (scope == AllocScope.InternalToLayer)
+            return m_LayerScopedAllocator.Alloc(shape, scope);
+
         if (layerRequiresStorage)
-            return m_StorageAllocator.Alloc(shape, buffer);
+            return m_InferenceScopedStorageAllocator.Alloc(shape, buffer, scope);
         else
-            return m_TemporaryAllocator.Alloc(shape, buffer);
+            return m_InferenceScopedPingPongAllocator.Alloc(shape, buffer, scope);
     }
     public virtual void MoveToDevice(Tensor x, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {
@@ -1678,38 +1754,41 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     }
     public virtual void Reset(bool keepCachedMemory)
     {
-        m_TemporaryAllocator.Reset(keepCachedMemory);
-        m_StorageAllocator.Reset(keepCachedMemory);
+        m_InferenceScopedPingPongAllocator.Reset(keepCachedMemory);
+        m_InferenceScopedStorageAllocator.Reset(keepCachedMemory);
     }
 
     public override void Dispose()
     {
         base.Dispose();
 
-        m_TemporaryAllocator.Dispose();
-        m_StorageAllocator.Dispose();
+        m_InferenceScopedPingPongAllocator.Dispose();
+        m_InferenceScopedStorageAllocator.Dispose();
+        m_LayerScopedAllocator.Dispose();
     }
 
+#if ENABLE_BARRACUDA_STATS
     public long usedBytes
     { get {
-        return m_TemporaryAllocator.usedBytes + m_StorageAllocator.usedBytes;
+        return m_InferenceScopedPingPongAllocator.usedBytes + m_InferenceScopedStorageAllocator.usedBytes + m_LayerScopedAllocator.usedBytes;
     } }
     public long busyBytes
     { get {
-        return m_TemporaryAllocator.busyBytes + m_StorageAllocator.busyBytes;
+        return m_InferenceScopedPingPongAllocator.busyBytes + m_InferenceScopedStorageAllocator.busyBytes + m_LayerScopedAllocator.busyBytes;
     } }
     public long freeBytes
     { get {
-        return m_TemporaryAllocator.freeBytes + m_StorageAllocator.freeBytes;
+        return m_InferenceScopedPingPongAllocator.freeBytes + m_InferenceScopedStorageAllocator.freeBytes + m_LayerScopedAllocator.freeBytes;
     } }
     public long totalBytes
     { get {
-        return m_TemporaryAllocator.totalBytes + m_StorageAllocator.totalBytes;
+        return m_InferenceScopedPingPongAllocator.totalBytes + m_InferenceScopedStorageAllocator.totalBytes + m_LayerScopedAllocator.totalBytes;
     } }
     public override string ToString()
     {
         return $"Total allocated: {totalBytes} busy: {busyBytes}";
     }
+#endif //ENABLE_BARRACUDA_STATS
 }
 
 //public class DefaultTensorAllocator : TensorOperatorNewAllocator {}

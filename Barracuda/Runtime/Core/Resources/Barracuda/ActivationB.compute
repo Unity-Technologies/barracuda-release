@@ -6,4 +6,8 @@
 #pragma kernel Sqrt_FlatStrict
 #pragma kernel Sqrt_Loop
 
+#pragma kernel HardSigmoid_Flat
+#pragma kernel HardSigmoid_FlatStrict
+#pragma kernel HardSigmoid_Loop
+
 #include "Activation.cginc"

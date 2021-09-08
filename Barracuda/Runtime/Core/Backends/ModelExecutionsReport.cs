@@ -1,3 +1,5 @@
+#if ENABLE_BARRACUDA_STATS
+
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -138,9 +140,9 @@ public class ModelExecutionsReporter : IModelExecutionsReporter
         MemorySnapshotsReport = new MemorySnapshotsReport();
     }
 
-    public void TakeMemorySnapshot(IVars vars, string context, Layer layer)
+    public void TakeMemorySnapshot(IOps ops, IVars vars, string context, Layer layer)
     {
-        MemorySnapshotsReport.TakeMemorySnapshot(vars, context, layer);
+        MemorySnapshotsReport.TakeMemorySnapshot(ops, vars, context, layer);
     }
 
     public void ModelExecutionStarted()
@@ -187,10 +189,10 @@ public class ModelExecutionsReporter : IModelExecutionsReporter
 
     public override string ToString()
     {
-        return GenerateStringReport(false);
+        return GenerateStringReport(out var memoryPeakSummary, false);
     }
 
-    public string GenerateStringReport(bool spreadsheetFormat)
+    public string GenerateStringReport(out MemoryPeakSummary memoryPeakSummary, bool spreadsheetFormat)
     {
         var stringBuilder = new StringBuilder(1000);
 
@@ -220,16 +222,16 @@ public class ModelExecutionsReporter : IModelExecutionsReporter
         //**************** MODEL EXECUTIONS REPORT - STOP ****************
 
         //**************** MEMORY SNAPSHOTS REPORTS - START ****************
-        MemorySnapshotsReport.GenerateStringReport(stringBuilder, spreadsheetFormat);
+        memoryPeakSummary = MemorySnapshotsReport.GenerateStringReport(stringBuilder, spreadsheetFormat);
         //**************** MEMORY SNAPSHOTS REPORTS - STOP ****************
 
         return stringBuilder.ToString();
     }
 
     #if UNITY_EDITOR
-    public static string ToTextFile(IModelExecutionsReporter report, bool spreadsheetFormat, string filename = null)
+    public static string ToTextFile(IModelExecutionsReporter report, bool spreadsheetFormat, out MemoryPeakSummary memoryPeakSummary, string filename = null)
     {
-        string stringToSave = report.GenerateStringReport(spreadsheetFormat);
+        string stringToSave = report.GenerateStringReport(out memoryPeakSummary, spreadsheetFormat);
         string fullPath = Application.temporaryCachePath;
         if (filename == null)
         {
@@ -247,3 +249,5 @@ public class ModelExecutionsReporter : IModelExecutionsReporter
 }
 
 } // namespace Unity.Barracuda
+
+#endif //ENABLE_BARRACUDA_STATS

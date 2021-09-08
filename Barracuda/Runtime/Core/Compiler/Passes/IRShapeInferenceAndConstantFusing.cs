@@ -73,7 +73,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
 
                 if (ModelOptimizer.IsLayerConstant(layer))
-                    knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape.ToArray(), layer.weights);
+                    knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape, layer.weights);
                 else if (layer.type == Layer.Type.Shape)
                 {
                     // assert inputs.Lenght == 1
@@ -166,8 +166,8 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 c.axis = ranksByName[c.name].Value;
 
-                c.weights = new float[tensor.length];
-                Array.Copy(tensor.ToReadOnlyArray(), c.weights, tensor.length);
+                c.weights = new BarracudaArray(tensor.length);
+                BarracudaArray.Copy(tensor.ToReadOnlyArray(), c.weights, tensor.length);
                 model.layers.Insert(0,c);
             }
 
@@ -203,7 +203,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
 
                 if (ModelOptimizer.IsLayerConstant(layer))
-                    knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape.ToArray(), layer.weights);
+                    knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape, layer.weights);
                 else if (layer.type == Layer.Type.Shape)
                 {
                     // assert inputs.Lenght == 1
@@ -308,11 +308,28 @@ namespace Unity.Barracuda.Compiler.Passes
                     layer.inputs = new[] { layer.inputs[0] };
                     var pads = Array.ConvertAll(padsFloat, x => (int)x);
 
-                    // Skip non-spatial dimensions N, C (NCHW layout)
                     var starts = pads.Take(pads.Length / 2).ToArray();
                     var ends = pads.Skip(pads.Length / 2).ToArray();
-                    starts = starts.Skip(2).ToArray();
-                    ends = ends.Skip(2).ToArray();
+                    bool[] dimHavePadding = new bool[starts.Length];
+                    for (int i = 0; i < starts.Length; ++i)  {
+                        dimHavePadding[i] = starts[i] != 0 && ends[i] != 0;
+                    }
+
+                    if (dimHavePadding.SequenceEqual(new bool []{ false, true, true, false }))
+                    {
+                        // Look like this padding operator is defined over NHWC layout
+                        // We skip first and last dimension thus
+                        starts = starts.Skip(1).Take(2).ToArray();
+                        ends = ends.Skip(1).Take(2).ToArray();
+                        layer.axes = new int[] { -1 };// Mark the layer padding as being imported as NHWC layout
+                    }
+                    else
+                    {
+                        // Skip non-spatial dimensions N, C (NCHW layout)
+                        starts = starts.Skip(2).ToArray();
+                        ends = ends.Skip(2).ToArray();
+                    }
+
                     switch (starts.Length)
                     {
                         case 1: layer.pad = new [] { starts[0], 0, ends[0], 0 }; break; // 1D W => W_
@@ -415,9 +432,11 @@ namespace Unity.Barracuda.Compiler.Passes
                     layer.datasets[1].itemSizeInBytes = 4;
                     layer.datasets[1].length          = biasShape.length;
                     layer.datasets[1].offset          = weight.shape.length;
-                    layer.weights                     = new float[weight.shape.length + biasShape.length];
+                    layer.weights                     = new BarracudaArray(weight.shape.length + biasShape.length);
 
-                    weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
+                    weight.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
+                    var zeroBias = new float[biasShape.length];
+                    zeroBias.CopyToBarracudaArray(layer.weights, weight.shape.length);
                     return;
                 }
                 case Layer.Type.Tile:
@@ -465,11 +484,11 @@ namespace Unity.Barracuda.Compiler.Passes
                     layer.datasets[0].itemSizeInBytes = 4;
                     layer.datasets[0].length = tensorShape.length;
                     layer.datasets[0].offset = 0;
-                    layer.weights = new float[tensorShape.length];
+                    layer.weights = new BarracudaArray(tensorShape.length);
 
                     var tensor = new Tensor(tensorShape);
                     tensor.Fill(layer.alpha);
-                    tensor.ToReadOnlyArray().CopyTo(layer.weights, 0);
+                    tensor.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
 
                     layer.inputs = new string[0];
                     return;
@@ -516,9 +535,9 @@ namespace Unity.Barracuda.Compiler.Passes
                         layer.datasets[0].itemSizeInBytes = 4;
                         layer.datasets[0].length = tensorShape.length;
                         layer.datasets[0].offset = 0;
-                        layer.weights = new float[tensorShape.length];
+                        layer.weights = new BarracudaArray(tensorShape.length);
 
-                        input.ToReadOnlyArray().CopyTo(layer.weights, 0);
+                        input.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
 
                         layer.inputs = new string[0];
                     }
@@ -549,7 +568,7 @@ namespace Unity.Barracuda.Compiler.Passes
                     layer.datasets[0].itemSizeInBytes = 4;
                     layer.datasets[0].length = nbOfElements;
                     layer.datasets[0].offset = 0;
-                    layer.weights = new float[nbOfElements];
+                    layer.weights = new BarracudaArray(nbOfElements);
 
                     for(int i=0; i < nbOfElements; ++i)
                     {

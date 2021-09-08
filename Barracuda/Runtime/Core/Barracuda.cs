@@ -314,7 +314,7 @@ public interface ITensorData : IDisposable, ITensorDataStatistics
     /// </summary>
     /// <param name="offset">This function outputs `offset` from the beginning of the array to location of values for specific tensor. `offset` parameters is specified in float elements</param>
     /// <returns>array filled with the values of multiple tensors that share the same tensorData on device</returns>
-    float[] SharedAccess(out int offset);
+    BarracudaArray SharedAccess(out int offset);
 }
 
 /// <summary>
@@ -582,18 +582,27 @@ public class WorkerFactory
         public float compareEpsilon;
 
         /// <summary>
+        /// If true the worker is allowed to take ownership of the weights memory from the model
+        /// this is useful so worker to limit memory pressure when the worker need to copy those
+        /// weight to a different device.
+        /// </summary>
+        public bool takeoverWeights;
+
+        /// <summary>
         /// Construct worker configuration
         /// </summary>
         /// <param name="compareAgainstType">Compare layer by layer outputs against other worker type</param>
         /// <param name="verbose">Print debug information on model execution to the console</param>
         /// <param name="compareLogLevel">Comparison log level</param>
         /// <param name="compareEpsilon">Comparison error tolerance</param>
-        public WorkerConfiguration(Type compareAgainstType, bool verbose=false, CompareOpsUtils.LogLevel compareLogLevel = CompareOpsUtils.LogLevel.Warning, float compareEpsilon = 0.0001f)
+        /// <param name="preferBLAS">Prefer BLAS usage over default implementation</param>
+        public WorkerConfiguration(Type compareAgainstType, bool verbose=false, CompareOpsUtils.LogLevel compareLogLevel = CompareOpsUtils.LogLevel.Warning, float compareEpsilon = 0.0001f, bool takeoverWeights = false)
         {
             this.verbose = verbose;
             this.compareAgainstType = compareAgainstType;
             this.compareLogLevel = compareLogLevel;
             this.compareEpsilon = compareEpsilon;
+            this.takeoverWeights = takeoverWeights;
         }
     }
 

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Unity.Barracuda.Compiler.Passes;
 using UnityEngine.Assertions;
 
 namespace Unity.Barracuda
@@ -152,8 +151,8 @@ namespace Unity.Barracuda
             layer.datasets[0].itemSizeInBytes = 4;
             layer.datasets[0].length          = tensor.shape.length;
             layer.datasets[0].offset          = 0;
-            layer.weights                     = new float[tensor.shape.length];
-            tensor.ToReadOnlyArray().CopyTo(layer.weights, 0);
+            layer.weights                     = new BarracudaArray(tensor.shape.length);
+            tensor.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
 
             if (insertionIndex < 0 || insertionIndex >= m_Model.layers.Count)
                 m_Model.layers.Add(layer);
@@ -189,10 +188,10 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = scale.shape.length;
-            layer.weights                     = new float[scale.shape.length + bias.shape.length];
+            layer.weights                     = new BarracudaArray(scale.shape.length + bias.shape.length);
 
-            scale.ToReadOnlyArray().CopyTo(layer.weights, 0);
-            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+            scale.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -230,7 +229,7 @@ namespace Unity.Barracuda
             layer.datasets[0].itemSizeInBytes = 4;
             layer.datasets[0].length          = 1;
             layer.datasets[0].offset          = 0;
-            layer.weights = new float[1];
+            layer.weights = new BarracudaArray(1);
             layer.weights[0] = bias;
             layer.pool = new int[1];
             layer.pool[0] = size;
@@ -287,11 +286,11 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = scale.shape.length;
-            layer.weights                     = new float[scale.shape.length + bias.shape.length];
+            layer.weights                     = new BarracudaArray(scale.shape.length + bias.shape.length);
             layer.beta                        = epsilon;
 
-            scale.ToReadOnlyArray().CopyTo(layer.weights, 0);
-            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+            scale.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -325,10 +324,10 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = weight.shape.length;
-            layer.weights                     = new float[weight.shape.length + bias.shape.length];
+            layer.weights                     = new BarracudaArray(weight.shape.length + bias.shape.length);
 
-            weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
-            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+            weight.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -357,10 +356,10 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length = bias.shape.length;
             layer.datasets[1].offset = weight.shape.length;
-            layer.weights = new float[weight.shape.length + bias.shape.length];
+            layer.weights = new BarracudaArray(weight.shape.length + bias.shape.length);
 
-            weight.ToReadOnlyArray().CopyTo(layer.weights, 0);
-            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+            weight.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -403,10 +402,10 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = kernel.shape.length;
-            layer.weights                     = new float[kernel.shape.length + bias.shape.length];
+            layer.weights                     = new BarracudaArray(kernel.shape.length + bias.shape.length);
 
-            kernel.ToReadOnlyArray().CopyTo(layer.weights, 0);
-            bias.ToReadOnlyArray().CopyTo(layer.weights, layer.datasets[1].offset);
+            kernel.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
+            bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
 
             m_Model.layers.Add(layer);
 
@@ -1179,13 +1178,20 @@ namespace Unity.Barracuda
         /// <summary>
         /// Return the logSoftmax (log of normalized exponential) values of the input along flatWidth of the input tensor.
         /// Thus output will be of shape of the input.
+        /// If axisIs8D==true axis rank is from [S,R,N,T,D,H,W,C] otherwise from [N,H,W,C]
+        /// `axis` must be superior to -4
+        /// `axis` must be inferior to 8 when axisIs8D==true or inferior to 4 if axisIs8D==false
         /// </summary>
         /// <param name="name">Layer name</param>
         /// <param name="input">input node</param>
+        /// <param name="axis">axis</param>
+        /// <param name="axisIs8D">is axis 8D</param>
         /// <returns>created Layer instance</returns>
-        public Layer LogSoftmax(string name, object input)
+        public Layer LogSoftmax(string name, object input, int axis=3, bool axisIs8D=false)
         {
-            return Activation(Layer.Activation.LogSoftmax, name, input);
+            Layer layer = Activation(Layer.Activation.LogSoftmax, name, input);
+            layer.axis = axisIs8D ? axis : TensorExtensions.Convert4DTo8DAxis(axis);
+            return layer;
         }
 
         /// <summary>
@@ -1230,6 +1236,26 @@ namespace Unity.Barracuda
         public Layer Sigmoid(string name, object input)
         {
             return Activation(Layer.Activation.Sigmoid, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `HardSigmoid` activation function: f(x) = maX(0, min(1, a * x + b))
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="alpha">alpha</param>
+        /// <param name="beta">beta</param>
+        /// <returns>created Layer instance</returns>
+        public Layer HardSigmoid(string name, object input, float alpha = 0.2f, float beta = 0.5f)
+        {
+            Layer layer = new Layer(name, Layer.Activation.HardSigmoid);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.alpha = alpha;
+            layer.beta = beta;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
         }
 
         /// <summary>
@@ -1547,6 +1573,17 @@ namespace Unity.Barracuda
         public Layer Tan(string name, object input)
         {
             return Activation(Layer.Activation.Tan, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Erf` activation function: f(x) = erf(x)
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Erf(string name, object input)
+        {
+            return Activation(Layer.Activation.Erf, name, input);
         }
 
 

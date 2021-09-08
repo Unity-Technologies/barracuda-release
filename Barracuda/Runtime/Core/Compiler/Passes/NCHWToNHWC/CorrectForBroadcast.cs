@@ -41,7 +41,7 @@ namespace Unity.Barracuda.Compiler.Passes
                     // ONNX: 2,5,7,3 + 7,3
                     // Barracuda: 2,7,3,5 + 7,_,_,3  => _,7,3,_
                     else if (rank == 2)
-                        permutations = new[] { 2, 0, 1, 3 };
+                        permutations = new[] { 1, 0, 3, 2 };
 
                     // ONNX: 2,5,7,3 + 5,7,3
                     // Barracuda: 2,7,3,5 + 5,_,3,7  => _,7,3,5
@@ -68,7 +68,7 @@ namespace Unity.Barracuda.Compiler.Passes
                         // ONNX: 5,7,3 + 7,3
                         // Barracuda: 5,_,7,3 + 7,_,_,3 => _,_,7,3
                         else if (rank == 2)
-                            permutations = new[] { 2, 3, 0, 1 };
+                            permutations = new[] { 1, 2, 0, 3 };
 
                         break;
                     case 4:
@@ -80,7 +80,7 @@ namespace Unity.Barracuda.Compiler.Passes
                         // ONNX: 2,5,7,3 + 7,3
                         // Barracuda: 2,5,7,3 + 7,_,_,3  => _,_,7,3,
                         else if (rank == 2)
-                            permutations = new[] { 2, 3, 0, 1 };
+                            permutations = new[] { 1, 2, 0, 3 };
 
                         // ONNX: 2,5,7,3 + 5,7,3
                         // Barracuda: 2,5,7,3 + 5,_,7,3  => _,5,7,3
@@ -132,7 +132,7 @@ namespace Unity.Barracuda.Compiler.Passes
                     correctedConstLayer.datasets[0].name = correctedConstLayer.name;
 
 
-                    correctedConstLayer.weights = new float[inputLayer.weights.Length];
+                    correctedConstLayer.weights = new BarracudaArray(inputLayer.weights.Length);
 
                     var X = inputLayer.DataSetToTensor(0);
 

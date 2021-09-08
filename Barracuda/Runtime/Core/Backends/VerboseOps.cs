@@ -23,11 +23,25 @@ public class VerboseOps : IOps, IModelCompiler
         m_UseUnityLogFile = useUnityLogFile;
     }
 
+#if ENABLE_BARRACUDA_STATS
     /// <inheritdoc/>
-    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes)
+    public IEnumerable<TempMemoryStatistics> GetTempMemoryStatistics()
+    {
+        return m_Ops.GetTempMemoryStatistics();
+    }
+#endif //ENABLE_BARRACUDA_STATS
+
+    /// <inheritdoc/>
+    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes, IVars vars)
     {
         if (m_Ops is IModelCompiler)
-            ((IModelCompiler)m_Ops).PrepareModel(model, inputShapes);
+            ((IModelCompiler)m_Ops).PrepareModel(model, inputShapes, vars);
+    }
+
+    /// <inheritdoc/>
+    public virtual void PostLayerCleanup()
+    {
+        m_Ops.PostLayerCleanup();
     }
 
     /// <inheritdoc/>
@@ -365,10 +379,10 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.LogSoftmax(Tensor X)
+    Tensor IOps.LogSoftmax(Tensor X, int axis)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.LogSoftmax(X);
+        var O = m_Ops.LogSoftmax(X, axis);
         LogOutputTensorSummary(O, Prefix + "LogSoftmax");
         return O;
     }
@@ -397,6 +411,15 @@ public class VerboseOps : IOps, IModelCompiler
         LogLayerSummary(X.shape + " ()");
         var O = m_Ops.Sigmoid(X);
         LogOutputTensorSummary(O, Prefix + "Sigmoid");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        LogLayerSummary(X.shape + " ()");
+        var O = m_Ops.HardSigmoid(X, alpha, beta);
+        LogOutputTensorSummary(O, Prefix + "HardSigmoid");
         return O;
     }
 
@@ -557,7 +580,7 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Acos(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
+        var O = m_Ops.Acos(X);
         LogOutputTensorSummary(O, Prefix + "Acos");
         return O;
     }
@@ -566,8 +589,8 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Acosh(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
-        LogOutputTensorSummary(O, Prefix + "Acos");
+        var O = m_Ops.Acosh(X);
+        LogOutputTensorSummary(O, Prefix + "Acosh");
         return O;
     }
 
@@ -575,7 +598,7 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Asin(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
+        var O = m_Ops.Asin(X);
         LogOutputTensorSummary(O, Prefix + "Asin");
         return O;
     }
@@ -584,8 +607,8 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Asinh(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
-        LogOutputTensorSummary(O, Prefix + "Asin");
+        var O = m_Ops.Asinh(X);
+        LogOutputTensorSummary(O, Prefix + "Asinh");
         return O;
     }
 
@@ -593,7 +616,7 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Atan(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
+        var O = m_Ops.Atan(X);
         LogOutputTensorSummary(O, Prefix + "Atan");
         return O;
     }
@@ -602,8 +625,8 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Atanh(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
-        LogOutputTensorSummary(O, Prefix + "Atan");
+        var O = m_Ops.Atanh(X);
+        LogOutputTensorSummary(O, Prefix + "Atanh");
         return O;
     }
 
@@ -611,8 +634,8 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Cos(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
-        LogOutputTensorSummary(O, Prefix + "(");
+        var O = m_Ops.Cos(X);
+        LogOutputTensorSummary(O, Prefix + "Cos");
         return O;
     }
 
@@ -620,7 +643,7 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Cosh(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
+        var O = m_Ops.Cosh(X);
         LogOutputTensorSummary(O, Prefix + "Cosh");
         return O;
     }
@@ -629,8 +652,8 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Sin(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
-        LogOutputTensorSummary(O, Prefix + "(");
+        var O = m_Ops.Sin(X);
+        LogOutputTensorSummary(O, Prefix + "Sin");
         return O;
     }
 
@@ -638,7 +661,7 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Sinh(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
+        var O = m_Ops.Sinh(X);
         LogOutputTensorSummary(O, Prefix + "Sinh");
         return O;
     }
@@ -647,8 +670,17 @@ public class VerboseOps : IOps, IModelCompiler
     Tensor IOps.Tan(Tensor X)
     {
         LogLayerSummary(X.shape + " ()");
-        var O = m_Ops.Reciprocal(X);
-        LogOutputTensorSummary(O, Prefix + "(");
+        var O = m_Ops.Tan(X);
+        LogOutputTensorSummary(O, Prefix + "Tan");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Erf(Tensor X)
+    {
+        LogLayerSummary(X.shape + " ()");
+        var O = m_Ops.Erf(X);
+        LogOutputTensorSummary(O, Prefix + "Erf");
         return O;
     }
 
@@ -989,7 +1021,7 @@ public class VerboseOps : IOps, IModelCompiler
         return O;
     }
 
-        
+
     /// <inheritdoc/>
     Tensor IOps.ConstantOfShape(TensorShape X, float value)
     {
@@ -1015,7 +1047,7 @@ public class VerboseOps : IOps, IModelCompiler
         D.Log("!" + X.shape);
         return m_Ops.Prepare(X);
     }
-        
+
     /// <inheritdoc/>
     Tensor IOps.PrepareNoAlloc(Tensor X)
     {
@@ -1045,7 +1077,9 @@ public class VerboseOps : IOps, IModelCompiler
     {
         if (m_UseUnityLogFile)
             D.Log(summary);
+#if ENABLE_BARRACUDA_STATS
         m_Ops.GetModelExecutionsReporter()?.SetLayerSummary(summary);
+#endif //ENABLE_BARRACUDA_STATS
     }
 
     private void LogOutputTensorSummary(Tensor O, string messagePrefix, int size = 32)

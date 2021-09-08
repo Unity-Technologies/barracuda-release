@@ -15,7 +15,7 @@ If you want a more recent (un-verified) version, enable `preview` packages:
 
 ![Install preview packages](images/InstallPreviewPackages.png)
 
-Note: in Unity 2020.3 and later Barracuda is not visible in Package Manager. It still can be enabled by manually editing your project's `Packages/manifest.json` and adding `com.unity.barracuda` entry there.
+Note: in Unity 2020.3 and later Barracuda is not visible in the Package Manager UI. It can be enabled by manually editing your project's `Packages/manifest.json` and adding a `com.unity.barracuda` entry there. Starting in 2021.1 you can add the package directly through the Package Manager interface by selecting `+` and then `Add package by name...`
 
 ## GitHub
 
@@ -37,4 +37,4 @@ This is the `manifest.json` equivalence:
 
 ## Resources
 
-For more information, see the [Git URLS](https://docs.unity3d.com/Manual/upm-git.html) documentation.
+For more information, see the [Git URLs](https://docs.unity3d.com/Manual/upm-git.html) documentation.

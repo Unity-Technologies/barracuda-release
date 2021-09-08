@@ -26,22 +26,22 @@ namespace Unity.Barracuda
             return true;
         }
 
-        public unsafe void SGEMM(float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM, int bs,
+        public unsafe void SGEMM(float* Ap, int AM, int AN, float* Bp, int BM, int BN, float* Cp, int CM, int CN, int bs,
             bool transposeA = false, bool transposeB = false)
         {
-            MatrixUtils.MultiplyBlockUnroll8xhParallelWithPadding(Ap, AN, AM, Bp, BN, BM, Cp, CN, CM, bs,
+            MatrixUtils.MultiplyBlockUnrollHx8ParallelWithPadding(Ap, AM, AN, Bp, BM, BN, Cp, CM, CN, bs,
                 transposeA, transposeB);
         }
 
         public unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
-            float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
+            float* Ap, int AM, int AN, float* Bp, int BM, int BN, float* Cp, int CM, int CN,
             int bs,
             bool transposeA = false, bool transposeB = false)
         {
             var job = new SGEMMJob();
-            job.Ap = Ap; job.AN = AN; job.AM = AM;
-            job.Bp = Bp; job.BN = BN; job.BM = BM;
-            job.Cp = Cp; job.CN = CN; job.CM = CM;
+            job.Ap = Ap; job.AM = AM; job.AN = AN;
+            job.Bp = Bp; job.BM = BM; job.BN = BN;
+            job.Cp = Cp; job.CM = CM; job.CN = CN;
             job.transposeA = transposeA;
             job.transposeB = transposeB;
             job.bs = bs;
@@ -51,21 +51,21 @@ namespace Unity.Barracuda
         unsafe struct SGEMMJob : IJob
         {
             [NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* Ap;
-            public int AN, AM;
+            public int AM, AN;
             [NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* Bp;
-            public int BN, BM;
+            public int BM, BN;
             [NativeDisableUnsafePtrRestriction]           public unsafe float* Cp;
-            public int CN, CM;
+            public int CM, CN;
             public int bs;
             public bool transposeA;
             public bool transposeB;
 
             public void Execute()
             {
-                MatrixUtils.MultiplyBlockUnroll8xhParallelWithPadding(
-                    Ap, AN, AM,
-                    Bp, BN, BM,
-                    Cp, CN, CM, bs,
+                MatrixUtils.MultiplyBlockUnrollHx8ParallelWithPadding(
+                    Ap, AM, AN,
+                    Bp, BM, BN,
+                    Cp, CM, CN, bs,
                     transposeA, transposeB);
             }
         }
@@ -73,12 +73,12 @@ namespace Unity.Barracuda
 
     internal class MatrixUtils
     {
-        public static unsafe void CopyBlockWithPadding(float* matrixIn, int row, int N, int col, int M, float[] blockOut, int bs, bool transpose = false)
+        public static unsafe void CopyBlockWithPadding(float* matrixIn, int row, int M, int col, int N, float[] blockOut, int bs, bool transpose = false)
         {
             Array.Clear(blockOut, 0, bs * bs);
 
-            var rowFinal = Math.Min(row + bs, N);
-            var count = Math.Min(col + bs, M) - col;
+            var rowFinal = Math.Min(row + bs, M);
+            var count = Math.Min(col + bs, N) - col;
 
             // @TODO: measure which one is better - sequential access over matrix memory or blockOut cache
             if (transpose)
@@ -91,13 +91,13 @@ namespace Unity.Barracuda
                 // sequential access over matrixIn, strided over blockOut
                 for (var j = 0; j < count; ++j)
                 for (var i = row; i < rowFinal; i++)
-                    blockOut[(i - row) * bs + j] = matrixIn[i + (col + j) * N];
+                    blockOut[(i - row) * bs + j] = matrixIn[i + (col + j) * M];
             }
             else
                 for (var i = row; i < rowFinal; i++)
                 {
                     //D.Log(string.Format("Copy[{3}] {0} -> {1} {2}", i * M + col, (i - row) * bs, count, i));
-                    Marshal.Copy((IntPtr)(matrixIn + i * M + col), blockOut, (i - row) * bs, count);
+                    Marshal.Copy((IntPtr)(matrixIn + i * N + col), blockOut, (i - row) * bs, count);
                 }
 
         }
@@ -118,12 +118,12 @@ namespace Unity.Barracuda
             }
         }
 
-        public static unsafe void CopyBlockWithPadding(float* matrixIn, int row, int N, int col, int M, float* blockOut, int bs, bool transpose = false)
+        public static unsafe void CopyBlockWithPadding(float* matrixIn, int row, int M, int col, int N, float* blockOut, int bs, bool transpose = false)
         {
             ClearFloatArray(blockOut, 0, bs * bs);
 
-            var rowFinal = Math.Min(row + bs, N);
-            var count = Math.Min(col + bs, M) - col;
+            var rowFinal = Math.Min(row + bs, M);
+            var count = Math.Min(col + bs, N) - col;
 
             // @TODO: measure which one is better - sequential access over matrix memory or blockOut cache
             if (transpose)
@@ -136,36 +136,36 @@ namespace Unity.Barracuda
                 // sequential access over matrixIn, strided over blockOut
                 for (var j = 0; j < count; ++j)
                 for (var i = row; i < rowFinal; i++)
-                    blockOut[(i - row) * bs + j] = matrixIn[i + (col + j) * N];
+                    blockOut[(i - row) * bs + j] = matrixIn[i + (col + j) * M];
             }
             else
                 for (var i = row; i < rowFinal; i++)
                 {
                     //D.Log(string.Format("Copy[{3}] {0} -> {1} {2}", i * M + col, (i - row) * bs, count, i));
-                    CopyFloatArray(matrixIn + i * M + col, blockOut + (i - row) * bs, count);
+                    CopyFloatArray(matrixIn + i * N + col, blockOut + (i - row) * bs, count);
                 }
 
         }
 
-        public static unsafe void CopyBlockWithPadding(float[] blockOut, float* matrixIn, int row, int N, int col, int M, int bs)
+        public static unsafe void CopyBlockWithPadding(float[] blockOut, float* matrixIn, int row, int M, int col, int N, int bs)
         {
-            var rowFinal = Math.Min(row + bs, N);
-            var count = Math.Min(col + bs, M) - col;
+            var rowFinal = Math.Min(row + bs, M);
+            var count = Math.Min(col + bs, N) - col;
 
             for (var i = row; i < rowFinal; i++)
-                Marshal.Copy(blockOut, (i - row) * bs, (IntPtr)(matrixIn + i * M + col), count);
+                Marshal.Copy(blockOut, (i - row) * bs, (IntPtr)(matrixIn + i * N + col), count);
         }
 
-        public static unsafe void CopyBlockWithPadding(float* blockOut, float* matrixIn, int row, int N, int col, int M, int bs)
+        public static unsafe void CopyBlockWithPadding(float* blockOut, float* matrixIn, int row, int M, int col, int N, int bs)
         {
-            var rowFinal = Math.Min(row + bs, N);
-            var count = Math.Min(col + bs, M) - col;
+            var rowFinal = Math.Min(row + bs, M);
+            var count = Math.Min(col + bs, N) - col;
 
             for (var i = row; i < rowFinal; i++)
-                CopyFloatArray(blockOut + (i - row) * bs, matrixIn + i * M + col, count);
+                CopyFloatArray(blockOut + (i - row) * bs, matrixIn + i * N + col, count);
         }
 
-        public static unsafe void MultiplyBlockUnroll8xhPadded(float* Ap,
+        public static unsafe void MultiplyBlockUnrollHx8Padded(float* Ap,
             float* Bp,
             float* Cp, int bs)
         {
@@ -210,28 +210,25 @@ namespace Unity.Barracuda
             }
         }
 
-        public static unsafe void MultiplyBlockUnroll8xhParallelWithPadding(float* Ap, int AN, int AM,
-            float* Bp, int BN, int BM,
-            float* Cp, int CN, int CM, int bs,
+        public static unsafe void MultiplyBlockUnrollHx8ParallelWithPadding(float* Ap, int AM, int AN,
+            float* Bp, int BM, int BN,
+            float* Cp, int CM, int CN, int bs,
             bool transposeA = false, bool transposeB = false)
         {
             if (transposeA)
             {
-                var tmp = AN; AN = AM; AM = tmp;
+                var tmp = AM; AM = AN; AN = tmp;
             }
             if (transposeB)
             {
-                var tmp = BN; BN = BM; BM = tmp;
+                var tmp = BM; BM = BN; BN = tmp;
             }
 
-            int N = AN;
-            int M = AM;
-            int K = BM;
-
+            int N = AM;
             {
                 Assert.IsTrue(bs >= 8, "Matrix Mul block size should be >= 8");
 
-                Parallel.For(0, (BM / bs) + (BM % bs > 0 ? 1 : 0), colB =>
+                Parallel.For(0, (BN / bs) + (BN % bs > 0 ? 1 : 0), colB =>
                 {
                     float[] blockA = new float[bs * bs];
                     float[] blockB = new float[bs * bs];
@@ -239,22 +236,19 @@ namespace Unity.Barracuda
 
                     for (int rowA = 0; rowA < N; rowA += bs)
                     {
-                        //for (int colB = 0; colB < BM; colB += bs)
+                        for (int l = 0; l < AN; l += bs)
                         {
-                            for (int l = 0; l < AM; l += bs)
+
+                            CopyBlockWithPadding(Ap, rowA, AM, l, AN, blockA, bs, transposeA);
+                            CopyBlockWithPadding(Bp, l, BM, colB * bs, BN, blockB, bs, transposeB);
+                            CopyBlockWithPadding(Cp, rowA, CM, colB * bs, CN, blockC, bs);
+
+                            fixed (float* blockAp = blockA, blockBp = blockB, blockCp = blockC)
                             {
-
-                                CopyBlockWithPadding(Ap, rowA, AN, l, AM, blockA, bs, transposeA);
-                                CopyBlockWithPadding(Bp, l, BN, colB * bs, BM, blockB, bs, transposeB);
-                                CopyBlockWithPadding(Cp, rowA, CN, colB * bs, CM, blockC, bs);
-
-                                fixed (float* blockAp = blockA, blockBp = blockB, blockCp = blockC)
-                                {
-                                    MatrixUtils.MultiplyBlockUnroll8xhPadded(blockAp, blockBp, blockCp, bs);
-                                }
-
-                                CopyBlockWithPadding(blockC, Cp, rowA, CN, colB * bs, CM, bs);
+                                MultiplyBlockUnrollHx8Padded(blockAp, blockBp, blockCp, bs);
                             }
+
+                            CopyBlockWithPadding(blockC, Cp, rowA, CM, colB * bs, CN, bs);
                         }
                     }
                 });

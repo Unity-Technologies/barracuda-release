@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.Profiling;
@@ -107,7 +108,7 @@ public static class ModelLoader
             List<Layer> layers = new List<Layer>();
 
             long version = file.ReadInt64() % 0xff; // magic
-            if (version != Model.Version && version != Model.LastVersionWithout8DSupport)
+            if (version != Model.Version && version != Model.LastVersionWithout8DSupport && version != Model.LastVersionWithoutWeightsAlignmentSupport)
                 throw new NotSupportedException($"Format version not supported: {version}");
 
             var count = file.ReadInt32();
@@ -184,11 +185,22 @@ public static class ModelLoader
 
             Profiler.EndSample();
 
+            if (version >= 19)
+            {
+                //Padding so weights are aligned on Model.WeightsAlignment bytes
+                long streamCurrentPosition = file.BaseStream.Position;
+                long paddingForAlignment = Model.WeightsAlignment - (streamCurrentPosition % Model.WeightsAlignment);
+                file.BaseStream.Seek(paddingForAlignment, SeekOrigin.Current);
+            }
+
             if (skipWeights)
                 SkipLargeFloatArray(file, floatsToRead);
             else
             {
-                var sharedWeights = ReadLargeFloatArray(file, floatsToRead);
+                var sharedWeightsArray = ReadLargeFloatArray(file, floatsToRead);
+                //TODO fp16
+                var sharedWeights = new BarracudaArray(sharedWeightsArray.Length);
+                BarracudaArray.Copy(sharedWeightsArray, sharedWeights);
 
                 for (var l = 0; l < model.layers.Count; ++l)
                     model.layers[l].weights = sharedWeights;
@@ -282,12 +294,8 @@ public static class ModelLoader
         file.BaseStream.Seek(bytesToReadInt64, SeekOrigin.Current);
     }
 
-    private static float[] ReadLargeFloatArray(BinaryReader file, Int64 count)
+    private static BarracudaArray ReadLargeFloatArray(BinaryReader file, Int64 count)
     {
-        Profiler.BeginSample("Barracuda.AllocWeights");
-        var floats = new float[count];
-        Profiler.EndSample();
-
         int bytesToRead;
         Int64 bytesToReadInt64 = count * sizeof(float);
         try
@@ -298,6 +306,34 @@ public static class ModelLoader
         {
             throw new OverflowException($"Files larger than 2GB currently are not supported. Attempt to read {bytesToReadInt64} bytes.");
         }
+
+        //1-Try to remap byte[] stream to avoid allocation
+        Profiler.BeginSample("Barracuda.RemapWeights");
+        BarracudaArray remappedWeights = null;
+        try
+        {
+            Stream stream = file.BaseStream;
+            var memoryStream = stream as MemoryStream;
+            var sourceBuffer = memoryStream?.GetBuffer();
+            int currentPosition = (int)memoryStream?.Position;
+            remappedWeights = new BarracudaArrayFromManagedArray(sourceBuffer, currentPosition, BarracudaArray.DataType.Float, (int) count); //TODO fp16?
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.Log("ModelLoader: Can't remap memory stream to underlying data type, allocation and copy will occurs. Exception: " + e);
+        }
+        if (remappedWeights != null)
+        {
+            //We remapped memory. Need to advance stream position to be consistent with read behavior.
+            file.BaseStream.Position += bytesToRead;
+            return remappedWeights;
+        }
+        Profiler.EndSample();
+
+        //2-Can't remap will copy from managed memory to native
+        Profiler.BeginSample("Barracuda.AllocWeights");
+        BarracudaArray loadedWeights = new BarracudaArray((int)count);//TODO fp16?
+        Profiler.EndSample();
 
         Profiler.BeginSample("Barracuda.LoadWeights");
         try
@@ -318,9 +354,10 @@ public static class ModelLoader
                 if (readSizeInBytes == 0)
                     throw new IOException($"Unexpected EOF reached. Read {writeOffset / sizeof(float)} out of expected {count} floats before reaching end of file.");
 
-                Buffer.BlockCopy(src:readBuffer, srcOffset:0,
-                                 dst:floats,     dstOffset:writeOffset,
-                                 count:readSizeInBytes);
+                BarracudaArray.BlockCopy(
+                    sourceArray:readBuffer, sourceByteOffset:0,
+                    destinationArray:loadedWeights, destinationByteOffset:writeOffset,
+                    lengthInBytes:readSizeInBytes);
                 writeOffset += readSizeInBytes;
             }
             Assert.AreEqual(writeOffset, bytesToRead);
@@ -330,7 +367,7 @@ public static class ModelLoader
             Profiler.EndSample();
         }
 
-        return floats;
+        return loadedWeights;
     }
 
     private static Int32[] ReadInt32Array(BinaryReader file)
@@ -362,7 +399,7 @@ public static class ModelLoader
 
     private static BinaryReader Open(byte[] bytes)
     {
-        return new BinaryReader(new MemoryStream(bytes, false));
+        return new BinaryReader(new MemoryStream(bytes, 0, bytes.Length, false, true));
     }
     #endregion
 }

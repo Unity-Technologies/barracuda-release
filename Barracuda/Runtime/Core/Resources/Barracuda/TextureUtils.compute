@@ -80,10 +80,16 @@ void KERNEL_FUNC(TextureToTensor)(uint3 dispatchThreadID : SV_DispatchThreadID)
         {
             int readFrom = _ChannelReadMap[i];
             float value = i < 3 ? 0 : 1; // default values for channels R,G,B=0 and A=1
-            if (readFrom >= 0)
-                value = v[readFrom];
+			float scale = 1.0f;
+			float bias = 0.0f;
+			if (readFrom >= 0)
+			{
+				value = v[readFrom];
+				scale = _Scale[readFrom];
+				bias = _Bias[readFrom];
+			}
 
-            O.Set(b, y, x, c, value);
+            O.Set(b, y, x, c, scale*value+bias);
             specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
             c += 1;
         }
@@ -91,6 +97,7 @@ void KERNEL_FUNC(TextureToTensor)(uint3 dispatchThreadID : SV_DispatchThreadID)
 
     if (specialCaseWhenChannelMaskIsEmptyStoresAverage)
     {
+		v = _Scale * v + _Bias;
         float avg = (v.r + v.g + v.b) / 3.0f;
         O.Set(b, y, x, c, avg);
     }

@@ -37,10 +37,17 @@ namespace Unity.Barracuda.Compiler.Passes
             var nhwcPass = new NCHWToNHWCPass();
             nhwcPass.Run(ref model);
 
+            // optimizations
             if (Optimize)
             {
+                var concatenateTransposesPass = new Optimization.ConcatenateTransposesPass();
+                concatenateTransposesPass.Run(ref model);
+
                 var dense3FusingPass = new Optimization.FuseDense3Pass();
                 dense3FusingPass.Run(ref model);
+
+                var contractToSimplerLayerPass = new Optimization.ContractToSimplerLayerPass();
+                contractToSimplerLayerPass.Run(ref model);
             }
 
             var validateNHWCPass = new ValidateNHWCPass();

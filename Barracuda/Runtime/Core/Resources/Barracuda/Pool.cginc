@@ -136,7 +136,7 @@ void KERNEL_FUNC(AvgPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, 
         AvgPoolInternalReduce(gtz, 2);
 
 
-        if (gtz == 0 && c < O.channels)
+        if (gtz == 0)
         {
             float v = AvPool2D_PartialSum[0] + AvPool2D_PartialSum[1];
             O.Set(n, gy, gx, c, v);
@@ -200,7 +200,7 @@ void KERNEL_FUNC(GlobalAvgPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, 
         GlobalAvgPoolInternalReduce(gtz, 2);
 
 
-        if (gtz == 0 && c < O.channels)
+        if (gtz == 0)
         {
             float v = GlobalAvgPool2D_PartialSum[0] + GlobalAvgPool2D_PartialSum[1];
             float poolSize = (_Pool[0] * _Pool[1]);
@@ -249,10 +249,10 @@ void KERNEL_FUNC(MaxPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, 
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = X.SafeGetHW(n, y, x, c);
-        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
-        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
-        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c, -FLT_MAX);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c, -FLT_MAX);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c, -FLT_MAX);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c, -FLT_MAX);
         MaxPool2D_PartialSum[gtz] = max(max(max(v0, v1), v2), v3);
 
         GroupMemoryBarrierWithGroupSync();
@@ -269,7 +269,7 @@ void KERNEL_FUNC(MaxPool2DReduce)(uint3 dispatchThreadID : SV_DispatchThreadID, 
         MaxPoolInternalReduce(gtz, 4);
         MaxPoolInternalReduce(gtz, 2);
 
-        if (gtz == 0 && c < O.channels)
+        if (gtz == 0)
         {
             float v = max(MaxPool2D_PartialSum[0], MaxPool2D_PartialSum[1]);
             O.Set(n, gy, gx, c, v);
@@ -313,10 +313,10 @@ void KERNEL_FUNC(GlobalMaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, 
 
     for (uint n = 0; n < X.batch; ++n)
     {
-        float v0 = X.SafeGetHW(n, y, x, c);
-        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c);
-        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c);
-        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c);
+        float v0 = X.SafeGetHW(n, y, x, c, -FLT_MAX);
+        float v1 = X.SafeGetHW(n, y + POOL_SIZE, x, c, -FLT_MAX);
+        float v2 = X.SafeGetHW(n, y, x + POOL_SIZE, c, -FLT_MAX);
+        float v3 = X.SafeGetHW(n, y + POOL_SIZE, x + POOL_SIZE, c, -FLT_MAX);
         GlobalMaxPool2D_PartialMax[gtz] = max(max(max(v0, v1), v2), v3);
         GroupMemoryBarrierWithGroupSync();
 
@@ -332,7 +332,7 @@ void KERNEL_FUNC(GlobalMaxPool2D)(uint3 dispatchThreadID : SV_DispatchThreadID, 
         GlobalMaxPoolInternalReduce(gtz, 4);
         GlobalMaxPoolInternalReduce(gtz, 2);
 
-        if (gtz == 0 && c < O.channels)
+        if (gtz == 0)
         {
             float maxV = max(GlobalMaxPool2D_PartialMax[0], GlobalMaxPool2D_PartialMax[1]);
             O.Set(n, 0, 0, c, maxV);
@@ -420,7 +420,7 @@ void KERNEL_FUNC(AvgVariancePool2DReduce)(uint3 dispatchThreadID : SV_DispatchTh
         AvgVarianceInternalReduce(gtz, 2);
 
 
-        if (gtz == 0 && c < O.channels)
+        if (gtz == 0)
         {
             float v  = AvgVariancePool2D_PartialSum[0]  + AvgVariancePool2D_PartialSum[1];
             float v2 = AvgVariancePool2D_PartialSumSq[0] + AvgVariancePool2D_PartialSumSq[1];
@@ -503,7 +503,7 @@ void KERNEL_FUNC(GlobalAvgVariancePool2D)(uint3 dispatchThreadID : SV_DispatchTh
         GlobalAvgVarianceInternalReduce(gtz, 2);
 
 
-        if (gtz == 0 && c < O.channels)
+        if (gtz == 0)
         {
             float v = GlobalAvgVariancePool2D_PartialSum[0] + GlobalAvgVariancePool2D_PartialSum[1];
             float v2 = GlobalAvgVariancePool2D_PartialSumSq[0] + GlobalAvgVariancePool2D_PartialSumSq[1];

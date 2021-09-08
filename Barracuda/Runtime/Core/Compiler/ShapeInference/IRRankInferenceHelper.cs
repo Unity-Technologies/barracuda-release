@@ -18,7 +18,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
             {
                 case Layer.Type.Dense:
                 {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.Dense inputRanks.Length"); Assert.AreEqual(inputRanks[0], 2, "InferOutputRank.Dense inputRanks");
+                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.Dense inputRanks.Length");
                     return 2;
                 }
                 case Layer.Type.MatMul:
@@ -93,7 +93,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     }
                 }
                 case Layer.Type.Multinomial:
-                        return 2;
+                    return 2;
                 case Layer.Type.OneHot:
                 {
                     Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.OneHot inputRanks.Length");
@@ -239,9 +239,6 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
         {
             foreach (var l in model.layers)
             {
-                if (ranksByName.ContainsKey(l.name) && ranksByName[l.name] != null)
-                    continue;
-
                 List<int> inputRanks = new List<int>();
                 for (int i = 0; i < l.inputs.Length; i++)
                 {
@@ -254,7 +251,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
 
                 int? outputRank = ((inputRanks.Count == 0) && (l.inputs.Length != 0)) ? null : InferOutputRank(l, inputRanks.ToArray());
-                ranksByName[l.name] = outputRank;
+
+                if (ranksByName.ContainsKey(l.name) && ranksByName[l.name] != null && outputRank != null)
+                    ranksByName[l.name] = Mathf.Max(ranksByName[l.name].Value, outputRank.Value);
+                else
+                    ranksByName[l.name] = outputRank;
             }
         }
 

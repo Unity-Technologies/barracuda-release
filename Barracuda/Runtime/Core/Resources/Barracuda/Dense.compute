@@ -1873,7 +1873,7 @@ void Dense_V_L1Cached64(uint3 groupID : SV_GroupID, uint threadIndex : SV_GroupI
         [unroll]
         for (uint di = 0; di < CACHESIZE; ++di)
         {
-            dstO = fastfma(LDS_[di], W.MaskedGet((i + di) < W.GetFlatHeight(), bx + (i + di)*W.GetFlatWidth()), dstO);
+            dstO = fastfma(LDS_[di], W.SafeGet(bx + (i + di)*W.GetFlatWidth()), dstO);
         }
 
         GroupMemoryBarrierWithGroupSync();

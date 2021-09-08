@@ -7,7 +7,7 @@ namespace Unity.Barracuda {
 /// Interfaces for backend implementers
 /// see ModelBuilder.cs for detail on layers.
 /// </summary>
-public interface IOps
+public interface IOps : IOpsStatistics
 {
     /// <summary>
     /// Matrix multiplication o = `x` ⨯ `y`
@@ -354,7 +354,7 @@ public interface IOps
     /// </summary>
     /// <param name="x">input</param>
     /// <returns>output Tensor</returns>
-    Tensor LogSoftmax(Tensor x);
+    Tensor LogSoftmax(Tensor x, int axis=1);
 
     /// <summary>
     /// Tanh
@@ -376,6 +376,15 @@ public interface IOps
     /// <param name="x">input</param>
     /// <returns>output Tensor</returns>
     Tensor Sigmoid(Tensor x);
+
+    /// <summary>
+    /// HardSigmoid
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="alpha">alpha</param>
+    /// <param name="alpha">alpha</param>
+    /// <returns>output Tensor</returns>
+    Tensor HardSigmoid(Tensor x, float alpha, float beta);
 
     /// <summary>
     /// ELU
@@ -580,6 +589,13 @@ public interface IOps
     /// <param name="x">input</param>
     /// <returns>output Tensor</returns>
     Tensor Tan(Tensor x);
+
+    /// <summary>
+    /// Erf
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <returns>output Tensor</returns>
+    Tensor Erf(Tensor x);
 
     /// <summary>
     /// Add `tensors` together
@@ -921,6 +937,13 @@ public interface IOps
     void ResetAllocator(bool keepCachedMemory = true);
 
     /// <summary>
+    /// Called after every layer execution. It allows IOps to run cleanup operations
+    /// such as clearing temporary buffers only used in the scope of the last layer
+    /// executed.
+    /// </summary>
+    void PostLayerCleanup();
+
+    /// <summary>
     /// Set model executions reporter
     /// <param name="executionsReporter">model executions reporter</param>
     /// </summary>
@@ -943,7 +966,8 @@ internal interface IModelCompiler
     /// </summary>
     /// <param name="model">model</param>
     /// <param name="inputShapes">input shapes</param>
-    void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes);
+    /// <param name="vars">model variables</param>
+    void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes, IVars vars);
 
     /// <summary>
     /// Prepare for layer execution
@@ -971,7 +995,8 @@ public interface IVars : IDisposable
     /// <param name="model">model</param>
     /// <param name="optionalOpsToPrepareTensors">`IOps` to prepare tensors</param>
     /// <param name="optionalInputShapes">input shapes dictionary</param>
-    void PrepareStorage(Model model, IOps optionalOpsToPrepareTensors = null, IDictionary<string, TensorShape> optionalInputShapes = null);
+    /// <param name="takeoverWeights">takeoverWeights flag</param>
+    void PrepareStorage(Model model, IOps optionalOpsToPrepareTensors = null, IDictionary<string, TensorShape> optionalInputShapes = null, bool takeoverWeights = false);
 
     /// <summary>
     /// Gather layer inputs
@@ -1021,11 +1046,33 @@ public interface IVars : IDisposable
 }
 
 /// <summary>
+/// High level model execution peak memory usage information
+/// </summary>
+public readonly struct MemoryPeakSummary
+{
+    private readonly long PeakMemoryUsageGPU;
+    private readonly long PeakMemoryUsageCPU;
+    private readonly long PeakMemoryUsageGPUAndCPU;
+
+    public MemoryPeakSummary(long peakMemoryUsageGPU, long peakMemoryUsageCPU, long peakMemoryUsageGPUAndCPU)
+    {
+        PeakMemoryUsageGPU = peakMemoryUsageGPU;
+        PeakMemoryUsageCPU = peakMemoryUsageCPU;
+        PeakMemoryUsageGPUAndCPU = peakMemoryUsageGPUAndCPU;
+    }
+
+    public override string ToString()
+    {
+        return $"GPU: {PeakMemoryUsageGPU:N0} / CPU: {PeakMemoryUsageCPU:N0} / GPU and CPU: {PeakMemoryUsageGPUAndCPU:N0}.";
+    }
+}
+
+/// <summary>
 /// Interfaces for model execution reporter
-/// use .ToString() to convert to text representation
 /// </summary>
 public interface IModelExecutionsReporter
 {
+#if ENABLE_BARRACUDA_STATS
     /// <summary>
     /// Mark the model execution as started
     /// </summary>
@@ -1072,21 +1119,26 @@ public interface IModelExecutionsReporter
     /// <param name="context">context of the snapshot</param>
     /// <param name="layer">optional layer of the snapshot</param>
     /// </summary>
-    void TakeMemorySnapshot(IVars vars, string context, Layer layer=null);
+    void TakeMemorySnapshot(IOps ops, IVars vars, string context, Layer layer=null);
 
     /// <summary>
-    /// Return a string representation of the executions tracked so far.
+    /// Return a string representation of the executions tracked so far
+    /// as well as a quick summary of peak memory usage.
     /// <param name="spreadSheetFormat">if true report will be formatted as a spreadSheet.</param>
     /// </summary>
-    string GenerateStringReport(bool spreadSheetFormat);
+    string GenerateStringReport(out MemoryPeakSummary memoryPeakSummary, bool spreadSheetFormat);
+#endif //ENABLE_BARRACUDA_STATS
 }
+
 
 public interface IUniqueResource
 {
+#if ENABLE_BARRACUDA_STATS
     /// <summary>
     /// Returns a unique id for identification.
     /// </summary>
     int uniqueId { get; }
+#endif //ENABLE_BARRACUDA_STATS
 }
 
 public interface ITensorDataStatistics : IUniqueResource
@@ -1095,7 +1147,7 @@ public interface ITensorDataStatistics : IUniqueResource
     /// Returns the maximum number of element this tensorData can contain.
     /// </summary>
     int maxCapacity { get; }
-
+#if ENABLE_BARRACUDA_STATS
     /// <summary>
     /// Returns true if this tensor data is attached to any tensor.
     /// </summary>
@@ -1105,6 +1157,49 @@ public interface ITensorDataStatistics : IUniqueResource
     /// Returns true if this tensor data is reserved as GPU memory.
     /// </summary>
     bool isGPUMem { get; }
+#endif //ENABLE_BARRACUDA_STATS
+}
+
+#if ENABLE_BARRACUDA_STATS
+public struct TempMemoryStatistics : IUniqueResource
+{
+
+    public TempMemoryStatistics(int uniqueId, int size, bool isGPUMem, string name)
+    {
+        this.uniqueId = uniqueId;
+        this.size = size;
+        this.isGPUMem = isGPUMem;
+        this.name = name;
+    }
+
+    /// <inheritdoc/>
+    public int uniqueId { get; }
+
+    /// <summary>
+    /// Returns the capacity in byte of this temp memory.
+    /// </summary>
+    public int size { get; }
+
+    /// <summary>
+    /// Returns true if this temporary memory is reserved as GPU memory.
+    /// </summary>
+    public bool isGPUMem { get; }
+
+    /// <summary>
+    /// Returns name associated with this temp memory.
+    /// </summary>
+    public string name { get; }
+}
+#endif //ENABLE_BARRACUDA_STATS
+
+public interface IOpsStatistics
+{
+#if ENABLE_BARRACUDA_STATS
+    /// <summary>
+    /// Enumerator for temporary memory statistics.
+    /// </summary>
+    IEnumerable<TempMemoryStatistics> GetTempMemoryStatistics();
+#endif //ENABLE_BARRACUDA_STATS
 }
 
 public interface ITensorStatistics: IUniqueResource
@@ -1132,23 +1227,24 @@ public interface ITensorStatistics: IUniqueResource
 
 public interface IAllocatorStatistics: IUniqueResource
 {
+#if ENABLE_BARRACUDA_STATS
     /// <summary>
     /// Return this allocator name.
     /// </summary>
     string name { get; }
 
     /// <summary>
-    /// Bytes used by busy tensors.
+    /// Used bytes (sum of the parts of the tensorData used by tensors)
     /// </summary>
     long usedBytes { get; }
 
     /// <summary>
-    /// Busy bytes (used bytes + bytes lost to fragmentation)
+    /// Busy bytes (sum of used tensorData capacities in bytes)
     /// </summary>
     long busyBytes { get; }
 
     /// <summary>
-    /// Free bytes
+    /// Free bytes (sum of un-used tensorData capacities in bytes)
     /// </summary>
     long freeBytes { get; }
 
@@ -1166,10 +1262,12 @@ public interface IAllocatorStatistics: IUniqueResource
     /// Enumerator for tensors data statistics.
     /// </summary>
     IEnumerable<ITensorDataStatistics> GetTensorDatasStatistics();
+#endif //ENABLE_BARRACUDA_STATS
 }
 
 public interface IVarsStatistics
 {
+#if ENABLE_BARRACUDA_STATS
     /// <summary>
     /// Enumerator for allocators statistics.
     /// </summary>
@@ -1179,6 +1277,16 @@ public interface IVarsStatistics
     /// Enumerator for tensors statistics.
     /// </summary>
     IEnumerable<ITensorStatistics> GetTensorsStatistics();
+#endif //ENABLE_BARRACUDA_STATS
+}
+
+/// <summary>
+/// Enum to describe life time of a given allocation
+/// </summary>
+public enum AllocScope
+{
+    LayerOutput,
+    InternalToLayer
 }
 
 /// <summary>
@@ -1190,16 +1298,24 @@ public interface ITensorAllocator : IDisposable
     /// Allocate
     /// </summary>
     /// <param name="shape">shape</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <returns>allocated Tensor</returns>
-    Tensor Alloc(TensorShape shape);
+    Tensor Alloc(TensorShape shape, AllocScope scope = AllocScope.LayerOutput);
 
     /// <summary>
     /// Allocate with existing `ITensorData` buffer
     /// </summary>
     /// <param name="shape">shape</param>
     /// <param name="buffer">buffer</param>
+    /// <param name="scope">tensor lifetime scope</param>
     /// <returns>allocated Tensor</returns>
-    Tensor Alloc(TensorShape shape, ITensorData buffer);
+    Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope = AllocScope.LayerOutput);
+
+    /// <summary>
+    /// Allows ITensorAllocator to run cleanup operations such as clearing
+    /// temporary buffers only used in the scope of the last layer executed.
+    /// </summary>
+    void PostLayerCleanup();
 
     // MoveToDevice() callback is called from the following Tensor methods:
     // UploadToDevice(), AttachToDevice() and DetachFromDevice()

@@ -66,7 +66,7 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                 mergedLayer.datasets[1].itemSizeInBytes = 4;
                 mergedLayer.datasets[1].length = biasShape.length;
                 mergedLayer.datasets[1].offset = weightShape.length;
-                mergedLayer.weights = new float[weightShape.length + biasShape.length];
+                mergedLayer.weights = new BarracudaArray(weightShape.length + biasShape.length);
 
                 weightArray.CopyTo(mergedLayer.weights, 0);
                 if (constBias.datasets[0].shape.length == 1)

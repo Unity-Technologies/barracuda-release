@@ -48,6 +48,13 @@ public class StatsOps : IOps, IModelCompiler
         public static LayerStat operator +(LayerStat a, long b) => new LayerStat(a.total, b);
     };
 
+#if ENABLE_BARRACUDA_STATS
+    public IEnumerable<TempMemoryStatistics> GetTempMemoryStatistics()
+    {
+        return m_Ops.GetTempMemoryStatistics();
+    }
+#endif //ENABLE_BARRACUDA_STATS
+
     /// <summary>
     /// Create `StatsOps`
     /// </summary>
@@ -60,10 +67,16 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes)
+    public virtual void PostLayerCleanup()
+    {
+        m_Ops.PostLayerCleanup();
+    }
+
+    /// <inheritdoc/>
+    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes, IVars vars)
     {
         if (m_Ops is IModelCompiler)
-            ((IModelCompiler)m_Ops).PrepareModel(model, inputShapes);
+            ((IModelCompiler)m_Ops).PrepareModel(model, inputShapes, vars);
     }
 
     /// <inheritdoc/>
@@ -441,11 +454,11 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.LogSoftmax(Tensor X)
+    Tensor IOps.LogSoftmax(Tensor X, int axis)
     {
         Elementwise(X, Transcendental.Exponent);
         RegisterLayerStats();
-        return m_Ops.LogSoftmax(X);
+        return m_Ops.LogSoftmax(X, axis);
     }
 
     /// <inheritdoc/>
@@ -470,6 +483,14 @@ public class StatsOps : IOps, IModelCompiler
         Elementwise(X, Transcendental.Trigonometric);
         RegisterLayerStats();
         return m_Ops.Sigmoid(X);
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        Elementwise(X, Transcendental.Trigonometric);
+        RegisterLayerStats();
+        return m_Ops.HardSigmoid(X, alpha, beta);
     }
 
     /// <inheritdoc/>
@@ -694,6 +715,14 @@ public class StatsOps : IOps, IModelCompiler
         Elementwise(X, Transcendental.Trigonometric);
         RegisterLayerStats();
         return m_Ops.Tan(X);
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Erf(Tensor X)
+    {
+        Elementwise(X, 1 + Transcendental.Trigonometric);
+        RegisterLayerStats();
+        return m_Ops.Erf(X);
     }
 
     /// <inheritdoc/>
@@ -1115,7 +1144,9 @@ public class StatsOps : IOps, IModelCompiler
 
     private void RegisterLayerStats()
     {
+#if ENABLE_BARRACUDA_STATS
         GetModelExecutionsReporter()?.SetLayerALUAndMemStats(m_Alu.layer, m_Mem.layer);
+#endif //ENABLE_BARRACUDA_STATS
     }
 
     // -----

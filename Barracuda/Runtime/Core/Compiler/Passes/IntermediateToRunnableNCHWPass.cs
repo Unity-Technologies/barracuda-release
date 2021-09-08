@@ -121,9 +121,6 @@ namespace Unity.Barracuda.Compiler.Passes
             });
             rewriters.Add(Layer.Type.Activation, (layer, net) =>
             {
-                if (layer.activation == Layer.Activation.LogSoftmax)
-                    return TransposeInput0(layer, net);
-
                 return true;
             });
             // Pad

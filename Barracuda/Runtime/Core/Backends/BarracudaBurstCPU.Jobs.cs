@@ -1,5 +1,6 @@
 using UnityEngine;
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
@@ -9,12 +10,12 @@ using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 
 [assembly: BurstCompile(OptimizeFor = OptimizeFor.FastCompilation)]
-
 namespace Unity.Barracuda {
 
 // BarracudaBurstCPU.Core.cs -- definition of class BurstCPUOps, Pin(), BurstTensorData
 // BarracudaBurstCPU.Ops.cs  -- impl. IOps, job schedulers
 // BarracudaBurstCPU.Jobs.cs -- impl. jobs
+
 public partial class BurstCPUOps
 {
     internal static readonly Thread MainThread = Thread.CurrentThread;
@@ -31,7 +32,7 @@ public partial class BurstCPUOps
     [BurstCompile]
     internal unsafe struct ReadWriteMemResource
     {
-        [NoAlias][NativeDisableUnsafePtrRestriction] public float* ptr;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public float* ptr;
         internal ReadWriteMemResource(float* _ptr) => ptr = _ptr;
     }
 
@@ -63,15 +64,231 @@ public partial class BurstCPUOps
 
     #endregion
 
+    static unsafe float* AllocBlock(int blockSizeM, int blockSizeN)
+    {
+        int sz = blockSizeM * blockSizeN * sizeof(float);
+        // Allocator.Temp is the fastest allocator, but can only be used within jobs; No explicit need to deallocate
+        // Source: https://docs.unity3d.com/Packages/com.unity.collections@1.0/manual/allocation.html#allocatortemp
+        return (float*)UnsafeUtility.Malloc(sz, JobsUtility.CacheLineSize, Allocator.Temp);
+    }
+
+    static unsafe void FreeBlock(float* ptr)
+    {
+        // We are using Allocator.Temp, so there is no explicit need to deallocate
+        // if (ptr != null)
+        //     UnsafeUtility.Free(ptr, Allocator.Temp);
+    }
+
+    static unsafe void CopyBlock(float* blockOut, float* matrixIn, int row, int M, int col, int N, int blockSizeM, int blockSizeN)
+    {
+        var rowFinal = Math.Min(row + blockSizeM, M);
+        var count = Math.Min(col + blockSizeN, N) - col;
+
+        for (var i = row; i < rowFinal; i++)
+            MatrixUtils.CopyFloatArray(blockOut + (i - row) * blockSizeN, matrixIn + i * N + col, count);
+    }
+
+    static unsafe int CopyBlockWithPadding(float* matrixIn, int row, int M, int col, int N, float* blockOut, int blockSizeM, int blockSizeN, bool transpose = false)
+    {
+        MatrixUtils.ClearFloatArray(blockOut, 0, blockSizeM * blockSizeN);
+        var blockOutStride = blockSizeN;
+
+        var rowFinal = Math.Min(row + blockSizeM, M);
+        var count = Math.Min(col + blockSizeN, N) - col;
+
+        // @TODO: measure which one is better - sequential access over matrix memory or blockOut cache
+        if (transpose)
+        {
+            // sequential access over matrixIn, strided over blockOut
+            for (var j = 0; j < count; ++j)
+            for (var i = row; i < rowFinal; i++)
+                blockOut[(i - row) * blockOutStride + j] = matrixIn[i + (col + j) * M];
+        }
+        else
+            for (var i = row; i < rowFinal; i++)
+            {
+                MatrixUtils.CopyFloatArray(matrixIn + i * N + col, blockOut + (i - row) * blockOutStride, count);
+            }
+        return blockOutStride;
+    }
+
     [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
-    unsafe struct MatrixMultiplyJob : IJobParallelFor
+    internal unsafe struct MatrixMultiplyJob : IJobParallelFor
+    {
+        // Convention: M x N matrices (other areas in our code may be N x M)
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
+        public int AM, AN;
+        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
+        public int BM, BN;
+        [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* C;
+        public int CM, CN;
+        public bool transposeA;
+        public bool transposeB;
+
+        public int blockSizeM;
+        public int blockSizeN;
+        public int blockSizeK;
+
+        public JobHandle Schedule(JobHandle dependsOn)
+        {
+            return Schedule(blocksBatchCount:1, dependsOn);
+        }
+
+        public JobHandle Schedule(int blocksBatchCount, JobHandle dependsOn)
+        {
+            if (transposeA)
+            {
+                int tmp = AM; AM = AN; AN = tmp;
+            }
+            if (transposeB)
+            {
+                int tmp = BM; BM = BN; BN = tmp;
+            }
+
+            // TODO: Determine optimal kernel / block sizes for mobile/console; This code path is currently not used
+            // in production and instead MatrixMultiplyLegacyJob; However, this kernel size seemed to work best with
+            // mobile; An alternative is have codegen generate the whole job + kernel, so we can switch dynamically
+            // at runtime.
+#if UNITY_ANDROID || UNITY_IOS || UNITY_WSA || UNITY_PS4 || UNITY_PS5 || UNITY_XBOXONE
+            if (blockSizeM == 0 || blockSizeN == 0 || blockSizeK == 0)
+            {
+                blockSizeM = 64;
+                blockSizeN = 64;
+                blockSizeK = 16;
+            }
+#else
+            if (blockSizeM == 0 || blockSizeN == 0 || blockSizeK == 0)
+            {
+                // Profiling across a range of matrices for best block size revealed:
+                // (32, 384, 16) was the best common block size for matrices <= 576
+                // (32, 768, 32) for matrices > 576 and <= 1152
+                // (64, 96, 32) for matrices > 1200
+                int maxM = 32;
+                int maxN = 384;
+                int maxK = 16;
+
+                if (AM > 1200)
+                {
+                    maxM = 64;
+                    maxN = 96;
+                    maxK = 32;
+                }
+                else if (AM > 576)
+                {
+                    maxM = 32;
+                    maxN = 768;
+                    maxK = 32;
+                }
+
+                blockSizeM = Mathf.Min(AM, maxM);
+
+                const int kernelWidth = 24;
+                var sizeN = Mathf.ClosestPowerOfTwo(AN);
+                sizeN = (sizeN / kernelWidth) * kernelWidth;
+                sizeN = Mathf.Max(sizeN, kernelWidth);
+                blockSizeN = Mathf.Min(sizeN, maxN);
+
+                // Adjust block size down to the actual count of rows, so no allocation takes place needlessly
+                blockSizeK = Mathf.Min(BM, maxK);
+            }
+#endif
+
+            // Distribute jobs over a single axis
+            int longerAxis = AM;
+            int blockSizeForLongerAxis = blockSizeM;
+            if (BN > AM)
+            {
+                longerAxis = BN; blockSizeForLongerAxis = blockSizeN;
+            }
+
+            var workElements = (longerAxis + blockSizeForLongerAxis - 1) / blockSizeForLongerAxis;
+            return IJobParallelForExtensions.Schedule(this, workElements, blocksBatchCount, dependsOn);
+        }
+
+        public void Execute(int i)
+        {
+            int shorterAxis = BN;
+            int blockSizeForShorterAxis = blockSizeN;
+            if (BN > AM)
+            {
+                shorterAxis = AM; blockSizeForShorterAxis = blockSizeM;
+            }
+
+            float* blockTempA = null;
+            float* blockTempB = null;
+            float* blockTempC = null;
+
+            // this job is scheduled over the Max(AN, BM)
+            // need to pick the remaining (shorter) axis
+            for (int j = 0; j < shorterAxis; j += blockSizeForShorterAxis)
+            {
+                int rowA = (AM >= BN) ? i * blockSizeM: j;
+                int colB = (AM >= BN) ? j             : i * blockSizeN;
+
+                float* blockC = C + rowA * CN + colB;
+                int strideC = CN;
+
+                if (rowA + blockSizeM > CM || colB + blockSizeN > CN) // copy remainder of C into zero-padded block
+                {
+                    if (blockTempC == null)
+                        blockTempC = AllocBlock(blockSizeM, blockSizeN);
+                    blockC = blockTempC;
+                    strideC = CopyBlockWithPadding(C, rowA, CM, colB, CN, blockC, blockSizeM, blockSizeN);
+                }
+
+                for (int l = 0; l < AN; l += blockSizeK) // inner-loop
+                {
+                    float* blockA = A + rowA * AN + l;
+                    float* blockB = B + l * BN + colB;
+                    int strideA = AN;
+                    int strideB = BN;
+
+                    if (rowA + blockSizeM > AM || l + blockSizeK > AN || transposeA) // copy remainder of A or transposed A into zero-padded block
+                    {
+                        if (blockTempA == null)
+                            blockTempA = AllocBlock(blockSizeM, blockSizeK);
+                        blockA = blockTempA;
+                        strideA = CopyBlockWithPadding(A, rowA, AM, l, AN, blockA, blockSizeM, blockSizeK, transposeA);
+                    }
+
+                    if (colB + blockSizeN > BN || l + blockSizeK > BM || transposeB) // copy remainder of A or transposed A into zero-padded block
+                    {
+                        if (blockTempB == null)
+                            blockTempB = AllocBlock(blockSizeK, blockSizeN);
+                        blockB = blockTempB;
+                        strideB = CopyBlockWithPadding(B, l, BM, colB, BN, blockB, blockSizeK, blockSizeN, transposeB);
+                    }
+
+// Use defines instead of Application.isMobilePlatform || Application.isConsolePlatform, so we don't interrupt Burst
+// inlining or introduce a branch here in the inner loop
+#if UNITY_ANDROID || UNITY_IOS || UNITY_WSA || UNITY_PS4 || UNITY_PS5 || UNITY_XBOXONE
+                    MultiplyBlockUnroll1x8(blockA, strideA, blockB, strideB, blockC, strideC,
+                        blockSizeM, blockSizeK, Math.Min(blockSizeN, BN - colB));
+#else
+                    MultiplyBlockUnroll3x24(blockA, strideA, blockB, strideB, blockC, strideC,
+                        blockSizeM, blockSizeK, Math.Min(blockSizeN, BN - colB));
+#endif
+                }
+
+                if (blockC == blockTempC) // copy back
+                    CopyBlock(blockC, C, rowA, CM, colB, CN, blockSizeM, blockSizeN);
+
+                FreeBlock(blockTempA);
+                FreeBlock(blockTempB);
+                FreeBlock(blockTempC);
+            }
+        }
+    }
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
+    unsafe struct MatrixMultiplyLegacyJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
-        public int AN, AM;
+        public int AM, AN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
-        public int BN, BM;
+        public int BM, BN;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* C;
-        public int CN, CM;
+        public int CM, CN;
         public bool transposeA;
         public bool transposeB;
 
@@ -85,14 +302,14 @@ public partial class BurstCPUOps
         {
             if (transposeA)
             {
-                int tmp = AN; AN = AM; AM = tmp;
+                int tmp = AM; AM = AN; AN = tmp;
             }
             if (transposeB)
             {
-                int tmp = BN; BN = BM; BM = tmp;
+                int tmp = BM; BM = BN; BN = tmp;
             }
 
-            int n = math.max(AN, BM);
+            int n = math.max(AM, BN);
             int workElements = (n + blockSize - 1) / blockSize;
             return IJobParallelForExtensions.Schedule(this, workElements, blocksBatchCount, dependsOn);
         }
@@ -108,53 +325,53 @@ public partial class BurstCPUOps
 
                 // this job is scheduled over the Max(AN, BM)
                 // need to pick the remaining (shorter) axis
-                for (int j = 0; j < Math.Min(AN, BM); j += bs)
+                for (int j = 0; j < Math.Min(AM, BN); j += bs)
                 {
-                    int rowA = (AN > BM) ? i * bs: j;
-                    int colB = (AN > BM) ? j     : i * bs;
+                    int rowA = (AM > BN) ? i * bs: j;
+                    int colB = (AM > BN) ? j     : i * bs;
 
-                    float* blockC = C + rowA * CM + colB;
-                    int strideC = CM;
+                    float* blockC = C + rowA * CN + colB;
+                    int strideC = CN;
 
-                    if (rowA + bs > CN || colB + bs > CM) // copy remainder of C into zero-padded block
+                    if (rowA + bs > CM || colB + bs > CN) // copy remainder of C into zero-padded block
                     {
                         if (blockTempC == null)
                             blockTempC = AllocBlock();
                         blockC = blockTempC;
                         strideC = bs;
-                        MatrixUtils.CopyBlockWithPadding(C, rowA, CN, colB, CM, blockC, bs);
+                        MatrixUtils.CopyBlockWithPadding(C, rowA, CM, colB, CN, blockC, bs);
                     }
 
-                    for (int l = 0; l < AM; l += bs) // inner-loop
+                    for (int l = 0; l < AN; l += bs) // inner-loop
                     {
-                        float* blockA = A + rowA * AM +    l;
-                        float* blockB = B +    l * BM + colB;
-                        int strideA = AM;
-                        int strideB = BM;
+                        float* blockA = A + rowA * AN +    l;
+                        float* blockB = B +    l * BN + colB;
+                        int strideA = AN;
+                        int strideB = BN;
 
-                        if (rowA + bs > AN || l + bs > AM || transposeA) // copy remainder of A or transposed A into zero-padded block
+                        if (rowA + bs > AM || l + bs > AN || transposeA) // copy remainder of A or transposed A into zero-padded block
                         {
                             if (blockTempA == null)
                                 blockTempA = AllocBlock();
                             blockA = blockTempA;
                             strideA = bs;
-                            MatrixUtils.CopyBlockWithPadding(A, rowA, AN,    l, AM, blockA, bs, transposeA);
+                            MatrixUtils.CopyBlockWithPadding(A, rowA, AM,    l, AN, blockA, bs, transposeA);
                         }
 
-                        if (colB + bs > BM || l + bs > BN || transposeB) // copy remainder of A or transposed A into zero-padded block
+                        if (colB + bs > BN || l + bs > BM || transposeB) // copy remainder of A or transposed A into zero-padded block
                         {
                             if (blockTempB == null)
                                 blockTempB = AllocBlock();
                             blockB = blockTempB;
                             strideB = bs;
-                            MatrixUtils.CopyBlockWithPadding(B,    l, BN, colB, BM, blockB, bs, transposeB);
+                            MatrixUtils.CopyBlockWithPadding(B,    l, BM, colB, BN, blockB, bs, transposeB);
                         }
 
-                        MultiplyBlockUnroll16xh(blockA, strideA, blockB, strideB, blockC, strideC);
+						MultiplyBlockUnrollHx16(blockA, strideA, blockB, strideB, blockC, strideC);
                     }
 
                     if (blockC == blockTempC) // copy back
-                        MatrixUtils.CopyBlockWithPadding(blockC, C, rowA, CN, colB, CM, bs);
+                        MatrixUtils.CopyBlockWithPadding(blockC, C, rowA, CM, colB, CN, bs);
                 }
 
                 FreeBlock(blockTempA);
@@ -175,7 +392,7 @@ public partial class BurstCPUOps
                 UnsafeUtility.Free(ptr, Allocator.TempJob);
         }
 
-        static unsafe void MultiplyBlockUnroll16xh(float* Ap, int Astride, float* Bp, int Bstride, float* Cp, int Cstride)
+        static unsafe void MultiplyBlockUnrollHx16(float* Ap, int Astride, float* Bp, int Bstride, float* Cp, int Cstride)
         {
             for (int i = 0; i < blockSize; i++)
             {
@@ -240,18 +457,18 @@ public partial class BurstCPUOps
                     *(Cp + baseC +15) = sumF;
                 }
             }
-        }
+		}
     }
 
     [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MatrixMultiply3x2Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
-        public int AB, AN, AM;
+        public int AM, AN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
-        public int BN, BM;
+        public int BM, BN;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* C;
-        public int CN, CM;
+        public int CM, CN;
 
         public int dispatchThreadX, dispatchThreadY, dispatchThreadZ;
         public const int blockSize = 16;
@@ -274,8 +491,8 @@ public partial class BurstCPUOps
             int i = (threadID % dispatchThreadXY) % dispatchThreadX;
             int j = (threadID % dispatchThreadXY) / dispatchThreadX;
 
-            int batchOffSetA = (batch * AN * AM);
-            int batchOffSetC = (batch * CN * CM);
+            int batchOffSetA = (batch * AM * AN);
+            int batchOffSetC = (batch * CM * CN);
 
             int rowA = i * blockSize;
             int colB = j * blockSize;
@@ -286,12 +503,12 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempC = null;
 
-                float* blockC = C + rowA + CN * colB + batchOffSetC;
-                int strideC = CN;
+                float* blockC = C + rowA + CM * colB + batchOffSetC;
+                int strideC = CM;
 
-                if (rowA + blockSize > CN || colB + blockSize > CM) // copy remainder of C into zero-padded block
+                if (rowA + blockSize > CM || colB + blockSize > CN) // copy remainder of C into zero-padded block
                 {
-                    blockTempC = AllocBlock();
+                    blockTempC = AllocBlock(blockSize, blockSize);
                     strideC = blockSize;
                     blockC = blockTempC;
                 }
@@ -299,40 +516,40 @@ public partial class BurstCPUOps
                     for (int x = 0; x < blockSize; x++)
                         blockC[x + strideC * y] = 0.0f;
 
-                for (int l = 0; l < AM; l += blockSize) // inner-loop
+                for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + rowA + AN * l + batchOffSetA;
-                    float* blockB = B + l * BM + colB;
-                    int strideA = AN;
-                    int strideB = BM;
+                    float* blockA = A + rowA + AM * l + batchOffSetA;
+                    float* blockB = B + l * BN + colB;
+                    int strideA = AM;
+                    int strideB = BN;
 
-                    if (rowA + blockSize > AN || l + blockSize > AM) // copy remainder of A into zero-padded block
+                    if (rowA + blockSize > AM || l + blockSize > AN) // copy remainder of A into zero-padded block
                     {
                         if (blockTempA == null)
-                            blockTempA = AllocBlock();
+                            blockTempA = AllocBlock(blockSize, blockSize);
                         strideA = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempA[x + blockSize * y] = ((rowA + x) < AN && (l + y < AM)) ? blockA[x + AN * y] : 0.0f;
+                                blockTempA[x + blockSize * y] = ((rowA + x) < AM && (l + y < AN)) ? blockA[x + AM * y] : 0.0f;
 
                         blockA = blockTempA;
                     }
 
-                    if (colB + blockSize > BM || l + blockSize > BN) // copy remainder of B into zero-padded block
+                    if (colB + blockSize > BN || l + blockSize > BM) // copy remainder of B into zero-padded block
                     {
                         if (blockTempB == null)
-                            blockTempB = AllocBlock();
+                            blockTempB = AllocBlock(blockSize, blockSize);
                         strideB = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempB[x + blockSize * y] = ((colB + x) < BM && (l + y < BN)) ? blockB[x + BM * y] : 0.0f;
+                                blockTempB[x + blockSize * y] = ((colB + x) < BN && (l + y < BM)) ? blockB[x + BN * y] : 0.0f;
 
                         blockB = blockTempB;
                     }
 
-                    MultiplyBlockUnroll16xh(blockA, strideA, blockB, strideB, blockC, strideC);
+                    MultiplyBlockUnrollHx16(blockA, strideA, blockB, strideB, blockC, strideC);
                 }
 
                 if (blockC == blockTempC) // copy back
@@ -340,8 +557,8 @@ public partial class BurstCPUOps
                     for (int y = 0; y < blockSize; y++)
                         for (int x = 0; x < blockSize; x++)
                         {
-                            if (((rowA + x) < CN) && ((colB + y) < CM))
-                                C[(rowA + x) + CN * (colB + y) + batchOffSetC] = blockTempC[x + blockSize * y];
+                            if (((rowA + x) < CM) && ((colB + y) < CN))
+                                C[(rowA + x) + CM * (colB + y) + batchOffSetC] = blockTempC[x + blockSize * y];
                         }
                 }
 
@@ -351,19 +568,7 @@ public partial class BurstCPUOps
             }
         }
 
-        static unsafe float* AllocBlock()
-        {
-            const int sz = blockSize * blockSize * sizeof(float);
-            return (float*)UnsafeUtility.Malloc(sz, JobsUtility.CacheLineSize, Allocator.TempJob);
-        }
-
-        static unsafe void FreeBlock(float* ptr)
-        {
-            if (ptr != null)
-                UnsafeUtility.Free(ptr, Allocator.TempJob);
-        }
-
-        static unsafe void MultiplyBlockUnroll16xh(float* Ap, int Astride, float* Bp, int Bstride, float* Cp, int Cstride)
+        static void MultiplyBlockUnrollHx16(float* Ap, int Astride, float* Bp, int Bstride, float* Cp, int Cstride)
         {
             for (int i = 0; i < blockSize; i++)
             {
@@ -449,11 +654,11 @@ public partial class BurstCPUOps
     unsafe struct MatrixMultiply4x4Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
-        public int AB0, AB1, AN, AM;
+        public int AB0, AB1, AM, AN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
-        public int BB0, BB1, BN, BM;
+        public int BB0, BB1, BM, BN;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* C;
-        public int CB0, CB1, CN, CM;
+        public int CB1, CM, CN;
 
         public int dispatchThreadX, dispatchThreadY, dispatchThreadZ;
         public const int blockSize = 16;
@@ -477,9 +682,9 @@ public partial class BurstCPUOps
             int i = ((threadID / CB1) % dispatchThreadXY) % dispatchThreadX;
             int j = ((threadID / CB1) % dispatchThreadXY) / dispatchThreadX;
 
-            int batchOffSetA = ((batch0 % AB0) * AN * AM * AB1 + (batch1 % AB1));
-            int batchOffSetB = ((batch0 % BB0) * BN * BM * BB1 + (batch1 % BB1));
-            int batchOffSetC = (batch0 * CN * CM * CB1 + batch1);
+            int batchOffSetA = ((batch0 % AB0) * AM * AN * AB1 + (batch1 % AB1));
+            int batchOffSetB = ((batch0 % BB0) * BM * BN * BB1 + (batch1 % BB1));
+            int batchOffSetC = (batch0 * CM * CN * CB1 + batch1);
 
             int rowA = i * blockSize;
             int colB = j * blockSize;
@@ -490,13 +695,13 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempC = null;
 
-                float* blockC = C + (rowA * CM + colB)*CB1 + batchOffSetC;
-                int strideC = CM;
+                float* blockC = C + (rowA * CN + colB)*CB1 + batchOffSetC;
+                int strideC = CN;
                 int strideBatchC = CB1;
 
-                if (rowA + blockSize > CN || colB + blockSize > CM) // copy remainder of A into zero-padded block
+                if (rowA + blockSize > CM || colB + blockSize > CN) // copy remainder of A into zero-padded block
                 {
-                    blockTempC = AllocBlock();
+                    blockTempC = AllocBlock(blockSize, blockSize);
                     strideC = blockSize;
                     strideBatchC = 1;
                     blockC = blockTempC;
@@ -505,44 +710,44 @@ public partial class BurstCPUOps
                     for (int x = 0; x < blockSize; x++)
                         blockC[(x + strideC * y) * strideBatchC] = 0.0f;
 
-                for (int l = 0; l < AM; l += blockSize) // inner-loop
+                for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + (rowA * AM + l)*AB1 + batchOffSetA;
-                    float* blockB = B + (l * BM + colB)*BB1 + batchOffSetB;
-                    int strideA = AM;
+                    float* blockA = A + (rowA * AN + l)*AB1 + batchOffSetA;
+                    float* blockB = B + (l * BN + colB)*BB1 + batchOffSetB;
+                    int strideA = AN;
                     int strideBatchA = AB1;
-                    int strideB = BM;
+                    int strideB = BN;
                     int strideBatchB = BB1;
 
-                    if (rowA + blockSize > AN || l + blockSize > AM) // copy remainder of A into zero-padded block
+                    if (rowA + blockSize > AM || l + blockSize > AN) // copy remainder of A into zero-padded block
                     {
                         if (blockTempA == null)
-                            blockTempA = AllocBlock();
+                            blockTempA = AllocBlock(blockSize, blockSize);
                         strideA = blockSize;
                         strideBatchA = 1;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempA[x + blockSize * y] = ((rowA + y) < AN && (l + x < AM)) ? blockA[(x + AM * y)*AB1] : 0.0f;
+                                blockTempA[x + blockSize * y] = ((rowA + y) < AM && (l + x < AN)) ? blockA[(x + AN * y)*AB1] : 0.0f;
 
                         blockA = blockTempA;
                     }
 
-                    if (colB + blockSize > BM || l + blockSize > BN) // copy remainder of A into zero-padded block
+                    if (colB + blockSize > BN || l + blockSize > BM) // copy remainder of A into zero-padded block
                     {
                         if (blockTempB == null)
-                            blockTempB = AllocBlock();
+                            blockTempB = AllocBlock(blockSize, blockSize);
                         strideB = blockSize;
                         strideBatchB = 1;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempB[x + blockSize * y] = ((colB + x) < BM && (l + y < BN)) ? blockB[(x + BM * y)*BB1] : 0.0f;
+                                blockTempB[x + blockSize * y] = ((colB + x) < BN && (l + y < BM)) ? blockB[(x + BN * y)*BB1] : 0.0f;
 
                         blockB = blockTempB;
                     }
 
-                    MultiplyBlockUnroll16xh(blockA, strideA, strideBatchA, blockB, strideB, strideBatchB, blockC, strideC, strideBatchC);
+                    MultiplyBlockUnrollHx16(blockA, strideA, strideBatchA, blockB, strideB, strideBatchB, blockC, strideC, strideBatchC);
                 }
 
                 if (blockC == blockTempC) // copy back
@@ -550,8 +755,8 @@ public partial class BurstCPUOps
                     for (int y = 0; y < blockSize; y++)
                     for (int x = 0; x < blockSize; x++)
                     {
-                        if (((rowA + y) < CN) && (colB + x < CM))
-                            C[((rowA + y) * CM + (colB + x)) * CB1 + batchOffSetC] = blockTempC[x + blockSize * y];
+                        if (((rowA + y) < CM) && (colB + x < CN))
+                            C[((rowA + y) * CN + (colB + x)) * CB1 + batchOffSetC] = blockTempC[x + blockSize * y];
                     }
                 }
 
@@ -561,19 +766,7 @@ public partial class BurstCPUOps
             }
         }
 
-        static unsafe float* AllocBlock()
-        {
-            const int sz = blockSize * blockSize * sizeof(float);
-            return (float*)UnsafeUtility.Malloc(sz, JobsUtility.CacheLineSize, Allocator.TempJob);
-        }
-
-        static unsafe void FreeBlock(float* ptr)
-        {
-            if (ptr != null)
-                UnsafeUtility.Free(ptr, Allocator.TempJob);
-        }
-
-        static unsafe void MultiplyBlockUnroll16xh(float* Ap, int Astride, int ABatchStride, float* Bp, int Bstride, int BBatchStride, float* Cp, int Cstride, int CBatchStride)
+        static void MultiplyBlockUnrollHx16(float* Ap, int Astride, int ABatchStride, float* Bp, int Bstride, int BBatchStride, float* Cp, int Cstride, int CBatchStride)
         {
             for (int i = 0; i < blockSize; i++)
             {
@@ -657,12 +850,12 @@ public partial class BurstCPUOps
     unsafe struct Dense3Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
-        public int AB, AN, AM;
+        public int AM, AN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
-        public int BN, BM;
+        public int BM, BN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* C;
         [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* S;
-        public int SN, SM;
+        public int SM, SN;
 
         public int dispatchThreadX, dispatchThreadY, dispatchThreadZ;
         public const int blockSize = 16;
@@ -685,8 +878,8 @@ public partial class BurstCPUOps
             int i = (threadID % dispatchThreadXY) % dispatchThreadX;
             int j = (threadID % dispatchThreadXY) / dispatchThreadX;
 
-            int batchOffSetA = (batch * AN * AM);
-            int batchOffSetS = (batch * SN * SM);
+            int batchOffSetA = (batch * AM * AN);
+            int batchOffSetS = (batch * SM * SN);
 
             int rowA = i * blockSize;
             int colB = j * blockSize;
@@ -697,53 +890,53 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempS = null;
 
-                float* blockS = S + rowA + SN * colB + batchOffSetS;
-                int strideS = SN;
+                float* blockS = S + rowA + SM * colB + batchOffSetS;
+                int strideS = SM;
 
-                if (rowA + blockSize > SN || colB + blockSize > SM) // copy remainder of C into zero-padded block
+                if (rowA + blockSize > SM || colB + blockSize > SN) // copy remainder of C into zero-padded block
                 {
-                    blockTempS = AllocBlock();
+                    blockTempS = AllocBlock(blockSize, blockSize);
                     strideS = blockSize;
                     blockS = blockTempS;
                 }
                 for (int y = 0; y < blockSize; y++)
                     for (int x = 0; x < blockSize; x++)
-                        blockS[x + strideS * y] = (colB + y) < BM ? C[colB + y] : 0.0f;
+                        blockS[x + strideS * y] = (colB + y) < BN ? C[colB + y] : 0.0f;
 
-                for (int l = 0; l < AM; l += blockSize) // inner-loop
+                for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + rowA + AN * l + batchOffSetA;
-                    float* blockB = B + l * BM + colB;
-                    int strideA = AN;
-                    int strideB = BM;
+                    float* blockA = A + rowA + AM * l + batchOffSetA;
+                    float* blockB = B + l * BN + colB;
+                    int strideA = AM;
+                    int strideB = BN;
 
-                    if (rowA + blockSize > AN || l + blockSize > AM) // copy remainder of A into zero-padded block
+                    if (rowA + blockSize > AM || l + blockSize > AN) // copy remainder of A into zero-padded block
                     {
                         if (blockTempA == null)
-                            blockTempA = AllocBlock();
+                            blockTempA = AllocBlock(blockSize, blockSize);
                         strideA = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempA[x + blockSize * y] = ((rowA + x) < AN && (l + y < AM)) ? blockA[x + AN * y] : 0.0f;
+                                blockTempA[x + blockSize * y] = ((rowA + x) < AM && (l + y < AN)) ? blockA[x + AM * y] : 0.0f;
 
                         blockA = blockTempA;
                     }
 
-                    if (colB + blockSize > BM || l + blockSize > BN) // copy remainder of B into zero-padded block
+                    if (colB + blockSize > BN || l + blockSize > BM) // copy remainder of B into zero-padded block
                     {
                         if (blockTempB == null)
-                            blockTempB = AllocBlock();
+                            blockTempB = AllocBlock(blockSize, blockSize);
                         strideB = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempB[x + blockSize * y] = ((colB + x) < BM && (l + y < BN)) ? blockB[x + BM * y] : 0.0f;
+                                blockTempB[x + blockSize * y] = ((colB + x) < BN && (l + y < BM)) ? blockB[x + BN * y] : 0.0f;
 
                         blockB = blockTempB;
                     }
 
-                    MultiplyBlockUnroll16xh(blockA, strideA, blockB, strideB, blockS, strideS);
+                    MultiplyBlockUnrollHx16(blockA, strideA, blockB, strideB, blockS, strideS);
                 }
 
                 if (blockS == blockTempS) // copy back
@@ -751,8 +944,8 @@ public partial class BurstCPUOps
                     for (int y = 0; y < blockSize; y++)
                         for (int x = 0; x < blockSize; x++)
                         {
-                            if (((rowA + x) < SN) && ((colB + y) < SM))
-                                S[(rowA + x) + SN * (colB + y) + batchOffSetS] = blockTempS[x + blockSize * y];
+                            if (((rowA + x) < SM) && ((colB + y) < SN))
+                                S[(rowA + x) + SM * (colB + y) + batchOffSetS] = blockTempS[x + blockSize * y];
                         }
                 }
 
@@ -762,19 +955,7 @@ public partial class BurstCPUOps
             }
         }
 
-        static unsafe float* AllocBlock()
-        {
-            const int sz = blockSize * blockSize * sizeof(float);
-            return (float*)UnsafeUtility.Malloc(sz, JobsUtility.CacheLineSize, Allocator.TempJob);
-        }
-
-        static unsafe void FreeBlock(float* ptr)
-        {
-            if (ptr != null)
-                UnsafeUtility.Free(ptr, Allocator.TempJob);
-        }
-
-        static unsafe void MultiplyBlockUnroll16xh(float* Ap, int Astride, float* Bp, int Bstride, float* Sp, int Sstride)
+        static void MultiplyBlockUnrollHx16(float* Ap, int Astride, float* Bp, int Bstride, float* Sp, int Sstride)
         {
             for (int i = 0; i < blockSize; i++)
             {
@@ -1249,6 +1430,19 @@ public partial class BurstCPUOps
         }
     }
 
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
+    unsafe struct HardSigmoidJob : IJobParallelFor, IJobResourceDeclarationXO
+    {
+        public ReadOnlyMemResource X { get; set; }
+        public ReadWriteMemResource O { get; set; }
+        [ReadOnly] public float alpha, beta;
+        public void Execute(int i)
+        {
+            O.ptr[i] = math.max(0.0f, math.min(1.0f, alpha * X.ptr[i] + beta));
+        }
+    }
+
     [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
     unsafe struct EluJob : IJobParallelFor, IJobResourceDeclarationXO
     {
@@ -1351,11 +1545,15 @@ public partial class BurstCPUOps
         public ReadOnlyMemResource S { get; set; }
         public ReadOnlyMemResource B { get; set; }
         public ReadWriteMemResource O { get; set; }
-        [ReadOnly] public int inChannels;
+        [ReadOnly] public int offsetReduce;
+        [ReadOnly] public int reduceDim;
         public void Execute(int i)
         {
-            int n = (i / inChannels);
-            O.ptr[i] = (X.ptr[i] - B.ptr[n]) - math.log(S.ptr[n]);
+            int x = i % offsetReduce;
+            int y = ((i / offsetReduce) % reduceDim);
+            int z = ((i / offsetReduce) / reduceDim);
+
+            O.ptr[i] = (X.ptr[i] - B.ptr[z * offsetReduce + x]) - math.log(S.ptr[z * offsetReduce + x]);
         }
     }
 
@@ -1602,6 +1800,78 @@ public partial class BurstCPUOps
         public void Execute(int i)
         {
             O.ptr[i] = math.tan(X.ptr[i]);
+        }
+    }
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Default, FloatPrecision = FloatPrecision.Standard)]
+    unsafe struct ErfJob : IJobParallelFor, IJobResourceDeclarationXO
+    {
+        public ReadOnlyMemResource X { get; set; }
+        public ReadWriteMemResource O { get; set; }
+        public void Execute(int i)
+        {
+            float v = X.ptr[i];
+
+            // Abramowitz/Stegun approximations
+            // erf(x) = -erf(-x)
+            float x = math.abs(v);
+
+            float p = 0.3275911f;
+            float a1 = 0.254829592f; float a2 = -0.284496736f; float a3 = 1.421413741f;
+            float a4 = -1.453152027f; float a5 = 1.061405429f;
+
+            float t = 1.0f / (1.0f + p * x);
+            float t2 = t * t;
+            float t3 = t2 * t;
+            float t4 = t3 * t;
+            float t5 = t4 * t;
+
+            O.ptr[i] = math.sign(v) * (1 - (a1 * t + a2 * t2 + a3 * t3 + a4 * t4 + a5 * t5) * math.exp(-x * x));
+        }
+    }
+
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
+    unsafe struct RandomNormalJob : IJobParallelFor, IJobResourceDeclarationO
+    {
+        public ReadWriteMemResource O { get; set; }
+
+        public Unity.Mathematics.Random rng;
+        public float mean;
+        public float scale;
+
+        float Gaussian(float mean, float stdDev)
+        {
+            float u, v, s;
+            do {
+                u = rng.NextFloat() * 2 - 1;
+                v = rng.NextFloat() * 2 - 1;
+                s = u * u + v * v;
+            } while (s >= 1 || s == 0);
+            float mul = Mathf.Sqrt(-2.0f * Mathf.Log(s) / s);
+            return mean + stdDev * u * mul;
+        }
+
+        public void Execute(int i)
+        {
+            rng = Unity.Mathematics.Random.CreateFromIndex((uint)(i));
+            O.ptr[i] = Gaussian(mean, scale);
+        }
+    }
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
+    unsafe struct RandomUniformJob : IJobParallelFor, IJobResourceDeclarationO
+    {
+        public ReadWriteMemResource O { get; set; }
+
+        public Unity.Mathematics.Random rng;
+        public float mean;
+        public float scale;
+
+        public void Execute(int i)
+        {
+            rng = Unity.Mathematics.Random.CreateFromIndex((uint)(i));
+            O.ptr[i] = mean + scale * rng.NextFloat();
         }
     }
 
@@ -2273,7 +2543,7 @@ public partial class BurstCPUOps
             float j = math.tanh(j_mad);
             float f = 1f / (1f + math.exp(-f_mad));
             float o = 1f / (1f + math.exp(-o_mad));
-               
+
             float state_c_mul = cell[threadId_r] * f;
             float i_j_mul = i * j;
             float state_c = state_c_mul + i_j_mul;
@@ -2290,14 +2560,14 @@ public partial class BurstCPUOps
     unsafe struct LSTMDense3Job : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
-        public int AB, AN, AM;
+        public int AM, AN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
-        public int BN, BM;
+        public int BM, BN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* C;
-        public int CN, CM;
+        public int CN;
 
         [NoAlias][NativeDisableUnsafePtrRestriction] public unsafe float* S;
-        public int SN, SM;
+        public int SM, SN;
 
         public int dispatchThreadX, dispatchThreadY, dispatchThreadZ;
         public const int blockSize = 16;
@@ -2311,7 +2581,6 @@ public partial class BurstCPUOps
             return IJobParallelForExtensions.Schedule(this, dispatchThreadX * dispatchThreadY * dispatchThreadZ, blocksBatchCount, dependsOn);
         }
 
-
         public void Execute(int threadID)
         {
             int dispatchThreadXY = dispatchThreadX * dispatchThreadY;
@@ -2320,8 +2589,8 @@ public partial class BurstCPUOps
             int i = (threadID % dispatchThreadXY) % dispatchThreadX;
             int j = (threadID % dispatchThreadXY) / dispatchThreadX;
 
-            int batchOffSetA = (batch * AN * AM);
-            int batchOffSetS = (batch * SN * SM);
+            int batchOffSetA = (batch * AM * AN);
+            int batchOffSetS = (batch * SM * SN);
 
             int rowA = i * blockSize;
             int colB = j * blockSize;
@@ -2332,53 +2601,53 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempS = null;
 
-                float* blockS = S + rowA * SM + colB + batchOffSetS;
-                int strideS = SM;
+                float* blockS = S + rowA * SN + colB + batchOffSetS;
+                int strideS = SN;
 
-                if (rowA + blockSize > SN || colB + blockSize > SM) // copy remainder of C into zero-padded block
+                if (rowA + blockSize > SM || colB + blockSize > SN) // copy remainder of C into zero-padded block
                 {
-                    blockTempS = AllocBlock();
+                    blockTempS = AllocBlock(blockSize, blockSize);
                     strideS = blockSize;
                     blockS = blockTempS;
                 }
                 for (int y = 0; y < blockSize; y++)
                     for (int x = 0; x < blockSize; x++)
-                        blockS[x + strideS * y] = (colB + x) < BM ? C[(colB + x)%CM] : 0.0f;
+                        blockS[x + strideS * y] = (colB + x) < BN ? C[(colB + x)%CN] : 0.0f;
 
-                for (int l = 0; l < AM; l += blockSize) // inner-loop
+                for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + rowA * AM + l + batchOffSetA;
-                    float* blockB = B + l * BM + colB;
-                    int strideA = AM;
-                    int strideB = BM;
+                    float* blockA = A + rowA * AN + l + batchOffSetA;
+                    float* blockB = B + l * BN + colB;
+                    int strideA = AN;
+                    int strideB = BN;
 
-                    if (rowA + blockSize > AN || l + blockSize > AM) // copy remainder of A into zero-padded block
+                    if (rowA + blockSize > AM || l + blockSize > AN) // copy remainder of A into zero-padded block
                     {
                         if (blockTempA == null)
-                            blockTempA = AllocBlock();
+                            blockTempA = AllocBlock(blockSize, blockSize);
                         strideA = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempA[x + blockSize * y] = ((rowA + y) < AN && (l + x < AM)) ? blockA[x + AM * y] : 0.0f;
+                                blockTempA[x + blockSize * y] = ((rowA + y) < AM && (l + x < AN)) ? blockA[x + AN * y] : 0.0f;
 
                         blockA = blockTempA;
                     }
 
-                    if (colB + blockSize > BM || l + blockSize > BN) // copy remainder of B into zero-padded block
+                    if (colB + blockSize > BN || l + blockSize > BM) // copy remainder of B into zero-padded block
                     {
                         if (blockTempB == null)
-                            blockTempB = AllocBlock();
+                            blockTempB = AllocBlock(blockSize, blockSize);
                         strideB = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempB[x + blockSize * y] = ((colB + x) < BM && (l + y < BN)) ? blockB[x + BM * y] : 0.0f;
+                                blockTempB[x + blockSize * y] = ((colB + x) < BN && (l + y < BM)) ? blockB[x + BN * y] : 0.0f;
 
                         blockB = blockTempB;
                     }
 
-                    MultiplyBlockUnroll16xh(blockA, strideA, blockB, strideB, blockS, strideS);
+                    MultiplyBlockUnrollHx16(blockA, strideA, blockB, strideB, blockS, strideS);
                 }
 
                 if (blockS == blockTempS) // copy back
@@ -2386,8 +2655,8 @@ public partial class BurstCPUOps
                     for (int y = 0; y < blockSize; y++)
                         for (int x = 0; x < blockSize; x++)
                         {
-                            if (((rowA + y) < SN) && ((colB + x) < SM))
-                                S[(rowA + y) * SM + (colB + x) + batchOffSetS] = blockTempS[x + blockSize * y];
+                            if (((rowA + y) < SM) && ((colB + x) < SN))
+                                S[(rowA + y) * SN + (colB + x) + batchOffSetS] = blockTempS[x + blockSize * y];
                         }
                 }
 
@@ -2397,19 +2666,7 @@ public partial class BurstCPUOps
             }
         }
 
-        static unsafe float* AllocBlock()
-        {
-            const int sz = blockSize * blockSize * sizeof(float);
-            return (float*)UnsafeUtility.Malloc(sz, JobsUtility.CacheLineSize, Allocator.TempJob);
-        }
-
-        static unsafe void FreeBlock(float* ptr)
-        {
-            if (ptr != null)
-                UnsafeUtility.Free(ptr, Allocator.TempJob);
-        }
-
-        static unsafe void MultiplyBlockUnroll16xh(float* Ap, int Astride, float* Bp, int Bstride, float* Sp, int Sstride)
+        static void MultiplyBlockUnrollHx16(float* Ap, int Astride, float* Bp, int Bstride, float* Sp, int Sstride)
         {
             for (int i = 0; i < blockSize; i++)
             {
@@ -2494,14 +2751,14 @@ public partial class BurstCPUOps
     unsafe struct LSTMDenseJob : IJobParallelFor
     {
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
-        public int AN, AM;
+        public int AM, AN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
-        public int BN, BM;
+        public int BM, BN;
         [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* C;
-        public int CN, CM;
+        public int CN;
 
         [NoAlias][NativeDisableUnsafePtrRestriction] public unsafe float* S;
-        public int SN, SM;
+        public int SM, SN;
 
         public int dispatchThreadX, dispatchThreadY;
         public const int blockSize = 16;
@@ -2530,53 +2787,53 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempS = null;
 
-                float* blockS = S + rowA * SM + colB;
-                int strideS = SM;
+                float* blockS = S + rowA * SN + colB;
+                int strideS = SN;
 
-                if (rowA + blockSize > SN || colB + blockSize > SM) // copy remainder of C into zero-padded block
+                if (rowA + blockSize > SM || colB + blockSize > SN) // copy remainder of C into zero-padded block
                 {
-                    blockTempS = AllocBlock();
+                    blockTempS = AllocBlock(blockSize, blockSize);
                     strideS = blockSize;
                     blockS = blockTempS;
                 }
                 for (int y = 0; y < blockSize; y++)
                     for (int x = 0; x < blockSize; x++)
-                        blockS[x + strideS * y] = (colB + x) < BM ? C[(colB + x)%CM] : 0.0f;
+                        blockS[x + strideS * y] = (colB + x) < BN ? C[(colB + x)%CN] : 0.0f;
 
-                for (int l = 0; l < AM; l += blockSize) // inner-loop
+                for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + rowA * AM + l;
-                    float* blockB = B + l * BM + colB;
-                    int strideA = AM;
-                    int strideB = BM;
+                    float* blockA = A + rowA * AN + l;
+                    float* blockB = B + l * BN + colB;
+                    int strideA = AN;
+                    int strideB = BN;
 
-                    if (rowA + blockSize > AN || l + blockSize > AM) // copy remainder of A into zero-padded block
+                    if (rowA + blockSize > AM || l + blockSize > AN) // copy remainder of A into zero-padded block
                     {
                         if (blockTempA == null)
-                            blockTempA = AllocBlock();
+                            blockTempA = AllocBlock(blockSize, blockSize);
                         strideA = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempA[x + blockSize * y] = ((rowA + y) < AN && (l + x < AM)) ? blockA[x + AM * y] : 0.0f;
+                                blockTempA[x + blockSize * y] = ((rowA + y) < AM && (l + x < AN)) ? blockA[x + AN * y] : 0.0f;
 
                         blockA = blockTempA;
                     }
 
-                    if (colB + blockSize > BM || l + blockSize > BN) // copy remainder of B into zero-padded block
+                    if (colB + blockSize > BN || l + blockSize > BM) // copy remainder of B into zero-padded block
                     {
                         if (blockTempB == null)
-                            blockTempB = AllocBlock();
+                            blockTempB = AllocBlock(blockSize, blockSize);
                         strideB = blockSize;
 
                         for (int y = 0; y < blockSize; y++)
                             for (int x = 0; x < blockSize; x++)
-                                blockTempB[x + blockSize * y] = ((colB + x) < BM && (l + y < BN)) ? blockB[x + BM * y] : 0.0f;
+                                blockTempB[x + blockSize * y] = ((colB + x) < BN && (l + y < BM)) ? blockB[x + BN * y] : 0.0f;
 
                         blockB = blockTempB;
                     }
 
-                    MultiplyBlockUnroll16xh(blockA, strideA, blockB, strideB, blockS, strideS);
+                    MultiplyBlockUnrollHx16(blockA, strideA, blockB, strideB, blockS, strideS);
                 }
 
                 if (blockS == blockTempS) // copy back
@@ -2584,8 +2841,8 @@ public partial class BurstCPUOps
                     for (int y = 0; y < blockSize; y++)
                         for (int x = 0; x < blockSize; x++)
                         {
-                            if (((rowA + y) < SN) && ((colB + x) < SM))
-                                S[(rowA + y) * SM + (colB + x)] = blockTempS[x + blockSize * y];
+                            if (((rowA + y) < SM) && ((colB + x) < SN))
+                                S[(rowA + y) * SN + (colB + x)] = blockTempS[x + blockSize * y];
                         }
                 }
 
@@ -2595,19 +2852,7 @@ public partial class BurstCPUOps
             }
         }
 
-        static unsafe float* AllocBlock()
-        {
-            const int sz = blockSize * blockSize * sizeof(float);
-            return (float*)UnsafeUtility.Malloc(sz, JobsUtility.CacheLineSize, Allocator.TempJob);
-        }
-
-        static unsafe void FreeBlock(float* ptr)
-        {
-            if (ptr != null)
-                UnsafeUtility.Free(ptr, Allocator.TempJob);
-        }
-
-        static unsafe void MultiplyBlockUnroll16xh(float* Ap, int Astride, float* Bp, int Bstride, float* Sp, int Sstride)
+        static void MultiplyBlockUnrollHx16(float* Ap, int Astride, float* Bp, int Bstride, float* Sp, int Sstride)
         {
             for (int i = 0; i < blockSize; i++)
             {
@@ -2668,16 +2913,16 @@ public partial class BurstCPUOps
                     sumF += A * BF;
                 }
 
-                *(Sp + i * Sstride + 0) = sum0;
-                *(Sp + i * Sstride + 1) = sum1;
-                *(Sp + i * Sstride + 2) = sum2;
-                *(Sp + i * Sstride + 3) = sum3;
-                *(Sp + i * Sstride + 4) = sum4;
-                *(Sp + i * Sstride + 5) = sum5;
-                *(Sp + i * Sstride + 6) = sum6;
-                *(Sp + i * Sstride + 7) = sum7;
-                *(Sp + i * Sstride + 8) = sum8;
-                *(Sp + i * Sstride + 9) = sum9;
+                *(Sp + i * Sstride + 0 ) = sum0;
+                *(Sp + i * Sstride + 1 ) = sum1;
+                *(Sp + i * Sstride + 2 ) = sum2;
+                *(Sp + i * Sstride + 3 ) = sum3;
+                *(Sp + i * Sstride + 4 ) = sum4;
+                *(Sp + i * Sstride + 5 ) = sum5;
+                *(Sp + i * Sstride + 6 ) = sum6;
+                *(Sp + i * Sstride + 7 ) = sum7;
+                *(Sp + i * Sstride + 8 ) = sum8;
+                *(Sp + i * Sstride + 9 ) = sum9;
                 *(Sp + i * Sstride + 10) = sumA;
                 *(Sp + i * Sstride + 11) = sumB;
                 *(Sp + i * Sstride + 12) = sumC;

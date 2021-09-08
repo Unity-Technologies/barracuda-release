@@ -43,6 +43,11 @@ namespace Unity.Barracuda.ONNX
         // - Tensorflow appends :0 to all node names
         bool m_FixTf2OnnxExportIssues;
 
+        /// <summary>
+        /// Model imported event
+        /// </summary>
+        public static event Action<object, Model> ModelImported;
+
         private readonly Dictionary<string, ONNXTensor> m_OverrideGlobalInputs = new Dictionary<string, ONNXTensor>()
         {
             { "sequence_length:0", new ONNXTensor(new Tensor(1, 1, new[] { 1f }), new [] { 1 }) },
@@ -178,6 +183,8 @@ namespace Unity.Barracuda.ONNX
 
             if (legacyMLAgentsLSTMNetwork)
                 model.Warnings.Add(new Model.ImporterWarning("model", "Using legacy importer since legacy LSTM network was detected; Support will be removed in Barracuda v2.0"));
+
+            ModelImported?.Invoke(onnxModel, model);
 
             return model;
         }
@@ -600,15 +607,14 @@ namespace Unity.Barracuda.ONNX
             Add("PRelu", (net, node)    => { net.PRelu(node.Name, node.Input0, node.Input1); });
             Add("LogSoftmax", (net, node) =>
             {
-                node.UnsupportedAttribute("axis", 1);
-
-                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
-                net.LogSoftmax(node.Name, node.Input0);
+                const int defaultAxis = 1;
+                int axis = node.AxisOptional(defaultAxis);
+                net.LogSoftmax(node.Name, node.Input0, axis, axisIs8D: true); // keep axis as is
             });
             // TODO: Add("Hardmax", (net, node)      => { net.Hardmax(node.Name, node.Input0); node.UnsupportedAttribute("axis", 1); });
             Add("Softplus", (net, node)     => { net.Softplus(node.Name, node.Input0); });
             // TODO: Add("Softsign", (net, node)     => { net.Softsign(node.Name, node.Input0); });
-            // TODO: Add("HardSigmoid", (net, node)  => { net.HardSigmoid(node.Name, node.Input0, node.AlphaOptional(0.2f), node.BetaOptional(0.5f)); });
+            Add("HardSigmoid", (net, node) => { net.HardSigmoid(node.Name, node.Input0, node.AlphaOptional(0.2f), node.BetaOptional(0.5f)); });
             Add("Exp", (net, node)      => { net.Exp(node.Name, node.Input0); });
             Add("Log", (net, node)      => { net.Log(node.Name, node.Input0); });
             Add("Reciprocal", (net, node) => { net.Reciprocal(node.Name, node.Input0); });
@@ -644,6 +650,7 @@ namespace Unity.Barracuda.ONNX
             Add("Sin", (net, node) => { net.Sin(node.Name, node.Input0); });
             Add("Sinh", (net, node) => { net.Sinh(node.Name, node.Input0); });
             Add("Tan", (net, node) => { net.Tan(node.Name, node.Input0); });
+            Add("Erf", (net, node) => { net.Erf(node.Name, node.Input0); });
 
             string[] GetArithmeticOpInputs(ONNXNodeWrapper node, ModelBuilder net)
             {

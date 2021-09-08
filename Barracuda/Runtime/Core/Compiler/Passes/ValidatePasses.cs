@@ -132,6 +132,14 @@ namespace Unity.Barracuda.Compiler.Passes
                             ValidationHelper.AppendWarning(true, name, "ValidateIntermediateNCHWModelLayers::StridedSlice starts=0 && ends=0 will result in slicing whole tensor and not empty tensor", ref warnings, MessageType.Warning);
                     }
                 }
+                else if (type == Layer.Type.Unsqueeze)
+                {
+                    ValidationHelper.AppendWarning(l.pool.Length == 1, name, "ValidateIntermediateNCHWModelLayers::Unsqueeze unsupported multi axis Unsqueeze", ref warnings, MessageType.Warning);
+                }
+                else if (type == Layer.Type.Squeeze)
+                {
+                    ValidationHelper.AppendWarning(l.pool.Length == 1, name, "ValidateIntermediateNCHWModelLayers::Squeeze unsupported multi axis Squeeze", ref warnings, MessageType.Warning);
+                }
             }
         }
     }

@@ -52,7 +52,7 @@ namespace Unity.Barracuda
                 new[]
                 {
                     "Reciprocal_Flat", "Reciprocal_FlatStrict", "Reciprocal_Loop", "Sqrt_Flat", "Sqrt_FlatStrict",
-                    "Sqrt_Loop"
+                    "Sqrt_Loop", "HardSigmoid_Flat", "HardSigmoid_FlatStrict", "HardSigmoid_Loop"
                 });
 
             RegisterKernels("Barracuda/ActivationBase",
@@ -70,18 +70,19 @@ namespace Unity.Barracuda
                     "Asinh_Flat", "Asinh_FlatStrict", "Asinh_Loop", "Atan_Flat", "Atan_FlatStrict", "Atan_Loop",
                     "Atanh_Flat", "Atanh_FlatStrict", "Atanh_Loop", "Cos_Flat", "Cos_FlatStrict", "Cos_Loop",
                     "Cosh_Flat", "Cosh_FlatStrict", "Cosh_Loop", "Sin_Flat", "Sin_FlatStrict", "Sin_Loop", "Sinh_Flat",
-                    "Sinh_FlatStrict", "Sinh_Loop", "Tan_Flat", "Tan_FlatStrict", "Tan_Loop", "Relu_NHWC", "Relu_NCHW",
-                    "Relu_CNyx_NHWC", "Relu_Nyxc_NHWC", "Relu6_NHWC", "Relu6_NCHW", "Relu6_CNyx_NHWC",
+                    "Sinh_FlatStrict", "Sinh_Loop", "Tan_Flat", "Tan_FlatStrict", "Tan_Loop", "Erf_Flat", "Erf_FlatStrict", "Erf_Loop",
+                    "Relu_NHWC", "Relu_NCHW", "Relu_CNyx_NHWC", "Relu_Nyxc_NHWC", "Relu6_NHWC", "Relu6_NCHW", "Relu6_CNyx_NHWC",
                     "Relu6_Nyxc_NHWC", "PRelu_NHWC", "PRelu_NCHW", "PRelu_CNyx2_NHWC", "Selu_NHWC", "Selu_NCHW",
                     "Selu_CNyx_NHWC", "Selu_Nyxc_NHWC", "Tanh_NHWC", "Tanh_NCHW", "Tanh_CNyx_NHWC", "Tanh_Nyxc_NHWC",
                     "Swish_NHWC", "Swish_NCHW", "Swish_CNyx_NHWC", "Swish_Nyxc_NHWC", "Softplus_NHWC", "Softplus_NCHW",
                     "Softplus_CNyx_NHWC", "Softplus_Nyxc_NHWC", "Sigmoid_NHWC", "Sigmoid_NCHW", "Sigmoid_CNyx_NHWC",
-                    "Sigmoid_Nyxc_NHWC", "Elu_NHWC", "Elu_NCHW", "Elu_CNyx_NHWC", "Elu_Nyxc_NHWC", "LeakyRelu_NHWC",
+                    "Sigmoid_Nyxc_NHWC", "HardSigmoid_NHWC", "HardSigmoid_NCHW", "HardSigmoid_CNyx_NHWC", "HardSigmoid_Nyxc_NHWC",
+                    "Elu_NHWC", "Elu_NCHW", "Elu_CNyx_NHWC", "Elu_Nyxc_NHWC", "LeakyRelu_NHWC",
                     "LeakyRelu_NCHW", "LeakyRelu_CNyx_NHWC", "LeakyRelu_Nyxc_NHWC", "Exp_NHWC", "Exp_NCHW",
                     "Exp_CNyx_NHWC", "Exp_Nyxc_NHWC", "Log_NHWC", "Log_NCHW", "Log_CNyx_NHWC", "Log_Nyxc_NHWC",
                     "Sqrt_NHWC", "Sqrt_NCHW", "Sqrt_CNyx_NHWC", "Sqrt_Nyxc_NHWC", "Pow_NHWC", "Pow_NCHW",
-                    "Pow_CNyx_NHWC", "Pow_Nyxc_NHWC", "Softmax_NHWC", "Softmax_NCHW", "LogSoftmax_NHWC",
-                    "LogSoftmax_NCHW", "Clip_NHWC", "Clip_NCHW", "Clip_CNyx_NHWC", "Clip_Nyxc_NHWC", "Acos_NHWC",
+                    "Pow_CNyx_NHWC", "Pow_Nyxc_NHWC",
+                    "Clip_NHWC", "Clip_NCHW", "Clip_CNyx_NHWC", "Clip_Nyxc_NHWC", "Acos_NHWC",
                     "Acos_NCHW", "Acos_CNyx_NHWC", "Acos_Nyxc_NHWC", "Acosh_NHWC", "Acosh_NCHW", "Acosh_CNyx_NHWC",
                     "Acosh_Nyxc_NHWC", "Asin_NHWC", "Asin_NCHW", "Asin_CNyx_NHWC", "Asin_Nyxc_NHWC", "Asinh_NHWC",
                     "Asinh_NCHW", "Asinh_CNyx_NHWC", "Asinh_Nyxc_NHWC", "Atan_NHWC", "Atan_NCHW", "Atan_CNyx_NHWC",
@@ -89,7 +90,7 @@ namespace Unity.Barracuda
                     "Cos_NCHW", "Cos_CNyx_NHWC", "Cos_Nyxc_NHWC", "Cosh_NHWC", "Cosh_NCHW", "Cosh_CNyx_NHWC",
                     "Cosh_Nyxc_NHWC", "Sin_NHWC", "Sin_NCHW", "Sin_CNyx_NHWC", "Sin_Nyxc_NHWC", "Sinh_NHWC",
                     "Sinh_NCHW", "Sinh_CNyx_NHWC", "Sinh_Nyxc_NHWC", "Tan_NHWC", "Tan_NCHW", "Tan_CNyx_NHWC",
-                    "Tan_Nyxc_NHWC"
+                    "Tan_Nyxc_NHWC", "Erf_NHWC", "Erf_NCHW", "Erf_CNyx_NHWC", "Erf_Nyxc_NHWC"
                 });
 
             RegisterKernels("Barracuda/Broadcast_NHWC",
@@ -100,7 +101,7 @@ namespace Unity.Barracuda
                     "BroadcastGreater_NHWC", "BroadcastGreaterEqual_NHWC", "BroadcastLess_NHWC",
                     "BroadcastLessEqual_NHWC", "BroadcastEqual_NHWC", "BroadcastLogicalOr_NHWC",
                     "BroadcastLogicalAnd_NHWC", "BroadcastLogicalXor_NHWC", "BroadcastWhere_NHWC",
-                    "BroadcastDivExpSub_NHWC"
+                    "BroadcastDivExpSub_NHWC", "LogSoftmaxEnd_NHWC"
                 });
 
             RegisterKernels("Barracuda/Broadcast_NCHW",
@@ -111,7 +112,7 @@ namespace Unity.Barracuda
                     "BroadcastGreater_NCHW", "BroadcastGreaterEqual_NCHW", "BroadcastLess_NCHW",
                     "BroadcastLessEqual_NCHW", "BroadcastEqual_NCHW", "BroadcastLogicalOr_NCHW",
                     "BroadcastLogicalAnd_NCHW", "BroadcastLogicalXor_NCHW", "BroadcastWhere_NCHW",
-                    "BroadcastDivExpSub_NCHW"
+                    "BroadcastDivExpSub_NCHW", "LogSoftmaxEnd_NCHW"
                 });
 
             RegisterKernels("Barracuda/Conv2dA_NHWC",
@@ -145,6 +146,33 @@ namespace Unity.Barracuda
                     "Conv2DTransPadFill_NCHW", "KernelWinograd_3x3",
                     "Conv2DWinograd_2x2_Kernel3x3_StrictC8StrictK16_T16x16_R4x4_NCHW",
                     "Conv2DWinograd_2x2_Kernel3x3_StrictC8LaxK16_T16x16_R4x4_NCHW"
+                });
+            RegisterKernels("Barracuda/Conv2dMobile",
+                new[]
+                {
+                    //"Conv2D_Default_T8x8_R4x4_NHWC",
+                    //"Conv2D_Default_T8x8_R4x4_NHWC",
+                    "Conv2D_Winograd_2x2_Kernel3x3_LDS_NHWC",
+                    "Conv2D_Winograd_2x2_Kernel3x3_LDS_NHWC",
+                    //"Conv2D_Winograd_2x2_Kernel3x3_NHWC",
+                    //"Conv2D_Winograd_2x2_Kernel3x3_NHWC",
+                    //"Conv2D_Kernel1x1_1x4x4_NHWC",
+                    //"Conv2D_Kernel1x1_1x4x4_NCHW",
+                    "Conv2D_KernelKxK_T16x16_R4x4_NHWC",
+                    "Conv2D_KernelKxK_T16x16_R4x4_NCHW",
+                    "Conv2D_Kernel1x1_T16x16_R4x4_NHWC",
+                    "Conv2D_Kernel1x1_T16x16_R4x4_NCHW",
+                    "Conv2D_KernelKxK_T8x8_R4x4_NHWC",
+                    "Conv2D_KernelKxK_T8x8_R4x4_NCHW",
+                    "Conv2D_Kernel1x1_T8x8_R4x4_NHWC",
+                    "Conv2D_Kernel1x1_T8x8_R4x4_NCHW", 
+                    "DepthwiseConv2D_Default_NHWC",
+                    "DepthwiseConv2D_Default_NCHW",
+                    "DepthwiseConv2D_Winograd_2x2_Kernel3x3_NHWC",
+                    "DepthwiseConv2D_Winograd_2x2_Kernel3x3_NCHW",
+                    //"DepthwiseConv2D_Winograd_2x2_Kernel5x5_NHWC",
+                    //"DepthwiseConv2D_Winograd_2x2_Kernel5x5_NCHW",
+                    //"KernelWinograd_5x5"
                 });
 
             RegisterKernels("Barracuda/Conv3d",

@@ -109,7 +109,7 @@ internal class BarracudaBackendsFactory
             PatchModel(model, additionalOutputs, trimOutputs));
 
         ops.SetModelExecutionsReporter(modelExecutionsReporter);
-        return new GenericWorker(model, ops, vars, workerConfiguration.verbose);
+        return new GenericWorker(model, ops, vars, workerConfiguration.verbose, workerConfiguration.takeoverWeights);
     }
 
     internal static Model PatchModel(Model model, string[] additionalOutputs, string[] trimOutputs = null)

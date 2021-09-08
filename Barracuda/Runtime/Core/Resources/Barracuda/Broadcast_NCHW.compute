@@ -16,6 +16,7 @@
 #pragma kernel BroadcastLogicalXor_NCHW CHANNELS_FIRST=1
 #pragma kernel BroadcastWhere_NCHW CHANNELS_FIRST=1
 #pragma kernel BroadcastDivExpSub_NCHW CHANNELS_FIRST=1
+#pragma kernel LogSoftmaxEnd_NCHW CHANNELS_FIRST=1
 
 
 #include "Broadcast.cginc"

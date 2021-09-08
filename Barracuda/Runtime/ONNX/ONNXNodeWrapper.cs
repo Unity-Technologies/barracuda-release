@@ -394,15 +394,29 @@ namespace Unity.Barracuda.ONNX
 
                 Assert.IsTrue(starts.Length == ends.Length);
 
-                if ((starts.Length < 2) ||
-                    (starts[0] != 0)    || (starts[1] != 0) ||     // N
-                    (  ends[0] != 0)    || (  ends[1] != 0))       // C
-                    Warn("Only spatial (H and W) padding is currently supported." +
-                        " Non spatial padding (N and C) will be ignored and default to 0.");
+                bool[] dimHavePadding = new bool[starts.Length];
+                for (int i = 0; i < starts.Length; ++i)  {
+                    dimHavePadding[i] = starts[i] != 0 && ends[i] != 0;
+                }
 
-                // Skip non-spatial dimensions N, C (NCHW layout)
-                starts = starts.Skip(2).ToArray();
-                ends = ends.Skip(2).ToArray();
+                if (dimHavePadding.SequenceEqual(new bool []{ false, true, true, false }))
+                {
+                    // Look like this padding operator is defined over NHWC layout
+                    // We skip first and last dimension thus
+                    starts = starts.Skip(1).Take(2).ToArray();
+                    ends = ends.Skip(1).Take(2).ToArray();
+                }
+                else
+                {
+                    if ((starts.Length < 2) ||
+                        (starts[0] != 0) || (starts[1] != 0) || // N
+                        (ends[0] != 0) || (ends[1] != 0)) // C
+                        Warn("Only spatial (H and W) padding is currently supported." +
+                             " Non spatial padding (N and C) will be ignored and default to 0.");
+                    // Skip non-spatial dimensions N, C (NCHW layout)
+                    starts = starts.Skip(2).ToArray();
+                    ends = ends.Skip(2).ToArray();
+                }
             }
 
             // See: https://github.com/onnx/onnx/blob/master/docs/Operators.md#Pad

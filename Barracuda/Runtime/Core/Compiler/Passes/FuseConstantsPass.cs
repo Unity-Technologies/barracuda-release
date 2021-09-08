@@ -26,9 +26,8 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
 
                 // NN is a directed graph, if we just fused constants + shapes, update following nodes
                 // TODO optimization, pass in index, or add shape
-
                 if (ModelOptimizer.IsLayerConstant(layer))
-                    knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape.ToArray(), layer.weights);
+                    knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape, layer.weights);
 
                 bool allInputsAreKnown = layer.inputs.Length > 0 ? knownLayersValue.ContainsKey(layer.inputs[0]) : false;
                 for (int i = 1; i < layer.inputs.Length; i++)
@@ -87,8 +86,8 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
 
                 c.axis = tensor.shape.dimensions;
 
-                c.weights = new float[tensor.length];
-                Array.Copy(tensor.ToReadOnlyArray(), c.weights, tensor.length);
+                c.weights = new BarracudaArray(tensor.length);
+                BarracudaArray.Copy(tensor.ToReadOnlyArray(), c.weights, tensor.length);
                 model.layers.Insert(0, c);
             }
 

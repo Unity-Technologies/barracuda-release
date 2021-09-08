@@ -31,24 +31,24 @@ namespace Unity.Barracuda
                    Application.platform == RuntimePlatform.OSXPlayer;
         }
 
-        public unsafe void SGEMM(float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
+        public unsafe void SGEMM(float* Ap, int AM, int AN, float* Bp, int BM, int BN, float* Cp, int CM, int CN,
             int bs,
             bool transposeA = false, bool transposeB = false)
         {
             cblas_sgemm(CBLAS_ORDER.CblasRowMajor, transposeA ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
                 transposeB ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
-                AN, BM, BN, 1.0f, Ap, AM, Bp, BM, 1.0f, Cp, CM);
+                AM, BN, BM, 1.0f, Ap, AN, Bp, BN, 1.0f, Cp, CN);
         }
 
         public unsafe JobHandle ScheduleSGEMM(JobHandle dependsOn,
-            float* Ap, int AN, int AM, float* Bp, int BN, int BM, float* Cp, int CN, int CM,
+            float* Ap, int AM, int AN, float* Bp, int BM, int BN, float* Cp, int CM, int CN,
             int bs,
             bool transposeA = false, bool transposeB = false)
         {
             var job = new SGEMMJob();
-            job.Ap = Ap; job.AN = AN; job.AM = AM;
-            job.Bp = Bp; job.BN = BN; job.BM = BM;
-            job.Cp = Cp; job.CN = CN; job.CM = CM;
+            job.Ap = Ap; job.AM = AM; job.AN = AN;
+            job.Bp = Bp; job.BM = BM; job.BN = BN;
+            job.Cp = Cp; job.CM = CM; job.CN = CN;
             job.transposeA = transposeA;
             job.transposeB = transposeB;
             job.bs = bs;
@@ -58,11 +58,11 @@ namespace Unity.Barracuda
         unsafe struct SGEMMJob : IJob
         {
             [NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* Ap;
-            public int AN, AM;
+            public int AM, AN;
             [NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* Bp;
-            public int BN, BM;
+            public int BM, BN;
             [NativeDisableUnsafePtrRestriction]           public unsafe float* Cp;
-            public int CN, CM;
+            public int CM, CN;
             public int bs;
             public bool transposeA;
             public bool transposeB;
@@ -71,7 +71,7 @@ namespace Unity.Barracuda
             {
                 cblas_sgemm(CBLAS_ORDER.CblasRowMajor, transposeA ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
                     transposeB ? CBLAS_TRANSPOSE.CblasTrans : CBLAS_TRANSPOSE.CblasNoTrans,
-                    AN, BM, BN, 1.0f, Ap, AM, Bp, BM, 1.0f, Cp, CM);
+                    AM, BN, BM, 1.0f, Ap, AN, Bp, BN, 1.0f, Cp, CN);
             }
         }
 

@@ -1,4 +1,5 @@
 using System.IO;
+using Unity.Barracuda.Editor;
 using UnityEditor;
 using UnityEngine;
 #if UNITY_2020_2_OR_NEWER
@@ -26,6 +27,10 @@ namespace Unity.Barracuda
         public override void OnImportAsset(AssetImportContext ctx)
         {
             var model = File.ReadAllBytes(ctx.assetPath);
+
+            // Analyze model and send analytics if enabled
+            var nnModel = ModelLoader.Load(ctx.assetPath, skipWeights:true);
+            BarracudaAnalytics.SendBarracudaImportEvent(null, nnModel);
 
             var assetData = ScriptableObject.CreateInstance<NNModelData>();
             assetData.Value = model;

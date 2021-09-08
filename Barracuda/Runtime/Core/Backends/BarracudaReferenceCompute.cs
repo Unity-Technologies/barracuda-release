@@ -27,11 +27,11 @@ internal static class ComputeHelper
 /// <summary>
 /// `Tensor` data storage for GPU backends
 /// </summary>
-public class ComputeTensorData : UniqueResource, ITensorData
+public class ComputeTensorData : UniqueResourceId, ITensorData
 {
     private bool m_DisposeBufferAfterUse;
     private ComputeBuffer m_Buffer;
-    private TensorShape m_FullBufferShape;
+    private TensorShape m_Shape;
     private int m_Offset;
     private ComputeInfo.ChannelsOrder m_OnDeviceChannelsOrder;
 
@@ -79,7 +79,7 @@ public class ComputeTensorData : UniqueResource, ITensorData
             m_Buffer.SetData(zeros);
         }
 
-        m_FullBufferShape = shape;
+        m_Shape = shape;
         m_Offset = 0;
 
         m_DisposeBufferAfterUse = true;
@@ -97,12 +97,12 @@ public class ComputeTensorData : UniqueResource, ITensorData
     /// <param name="offset">offset</param>
     /// <param name="buffername">buffer name</param>
     /// <param name="onDeviceChannelsOrder">channels order</param>
-    public ComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset, string buffername, ComputeInfo.ChannelsOrder onDeviceChannelsOrder)
+    internal ComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset, string buffername, ComputeInfo.ChannelsOrder onDeviceChannelsOrder)
     {
         m_OnDeviceChannelsOrder = onDeviceChannelsOrder;
         name = buffername;
         m_Buffer = buffer;
-        m_FullBufferShape = shape;
+        m_Shape = shape;
         m_Offset = offset;
 
         m_DisposeBufferAfterUse = false;
@@ -139,25 +139,27 @@ public class ComputeTensorData : UniqueResource, ITensorData
     /// <inheritdoc/>
     public virtual void Reserve(int count)
     {
-        if (m_Offset + count > maxCapacity)
+        if (count > maxCapacity)
             throw new ArgumentException("ComputeTensorData buffer is too small to reserve " + count + " elements.");
     }
 
     /// <inheritdoc/>
     public virtual void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
     {
-        var count = shape.length;
+        var numItemToCopy = shape.length;
+        var numItemAvailableInData = data.Length - managedBufferStartIndex;
+
         Assert.IsTrue(managedBufferStartIndex >= 0);
-        Assert.IsTrue(managedBufferStartIndex + count <= data.Length);
+        Assert.IsTrue(numItemToCopy <= numItemAvailableInData);
 
         if (m_OnDeviceChannelsOrder == ComputeInfo.ChannelsOrder.NCHW)
         {
             //Transpose from HWC to CHW, TODO use a compute shader or threaded code.
             Profiler.BeginSample("Tensor.Upload_ChannelFirstTranpose");
-            float[] chwData = new float[count];
+            float[] chwData = new float[numItemToCopy];
             if (shape.Is4D())
             {
-                for (int readIndex=0; readIndex < count; ++readIndex)
+                for (int readIndex=0; readIndex < numItemToCopy; ++readIndex)
                 {
                     int b = 0, h = 0, w = 0, ch = 0;
                     shape.GetPositionsFromIndex(readIndex, ref b, ref h, ref w, ref ch);
@@ -167,7 +169,7 @@ public class ComputeTensorData : UniqueResource, ITensorData
             }
             else
             {
-                for (int readIndex=0; readIndex < count; ++readIndex)
+                for (int readIndex=0; readIndex < numItemToCopy; ++readIndex)
                 {
                     int s = 0, r = 0, n = 0, t = 0, d = 0, h = 0, w = 0, ch = 0;
                     shape.GetPositionsFromIndex(readIndex, ref s, ref r, ref n, ref t, ref d, ref h, ref w, ref ch);
@@ -176,11 +178,11 @@ public class ComputeTensorData : UniqueResource, ITensorData
                 }
             }
             Profiler.EndSample();
-            m_Buffer.SetData(chwData, 0, m_Offset, count);
+            m_Buffer.SetData(chwData, 0, m_Offset, numItemToCopy);
         }
         else
         {
-            m_Buffer.SetData(data, managedBufferStartIndex, m_Offset, count);
+            m_Buffer.SetData(data, managedBufferStartIndex, m_Offset, numItemToCopy);
         }
 
         m_AsyncDownloadSchedulingFrame = -1;
@@ -375,7 +377,7 @@ public class ComputeTensorData : UniqueResource, ITensorData
         if (isAndroidPlayer && m_Offset != 0)
         {
             //On mobile GetData does not take m_Offset into account, need a full download.
-            var fullData = new float[maxCapacity];
+            var fullData = new float[m_Buffer.count];
             m_Buffer.GetData(fullData);
             Array.Copy(fullData, m_Offset, data, 0, count);
         }
@@ -391,16 +393,16 @@ public class ComputeTensorData : UniqueResource, ITensorData
     }
 
     /// <inheritdoc/>
-    public virtual float[] SharedAccess(out int offset)
+    public virtual BarracudaArray SharedAccess(out int offset)
     {
-        offset = m_Offset;
-        return Download(new TensorShape(0,0,0,maxCapacity));
+        offset = 0;
+        return new BarracudaArrayFromManagedArray(Download(new TensorShape(0, 0, 0, maxCapacity)));//fp16?
     }
 
     /// <inheritdoc/>
     public virtual int maxCapacity { get
     {
-        return m_Buffer.count;
+        return m_Shape.length;
     } }
 
     /// <inheritdoc/>
@@ -428,13 +430,13 @@ public class ComputeTensorData : UniqueResource, ITensorData
 #endif
 
         return string.Format("(GPU:{0}#{1} {2} buffer: {3} created at: {4})",
-            name, GetHashCode(), m_FullBufferShape, m_Buffer, allocationSource);
+            name, GetHashCode(), m_Shape, m_Buffer, allocationSource);
     }
 }
 
 internal class SharedComputeTensorData : ComputeTensorData
 {
-    public SharedComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset = 0, string buffername = "", ComputeInfo.ChannelsOrder channelsOrder = ComputeInfo.ChannelsOrder.NHWC) : base(buffer, shape, offset, buffername, channelsOrder) {}
+    public SharedComputeTensorData(ComputeBuffer buffer, TensorShape shape, int offset, string buffername = "", ComputeInfo.ChannelsOrder channelsOrder = ComputeInfo.ChannelsOrder.NHWC) : base(buffer, shape, offset, buffername, channelsOrder) {}
 }
 
 internal class TextureFormatUtils
@@ -646,7 +648,7 @@ internal class TextureFormatUtils
 /// <summary>
 /// Texture based `Tensor` storage
 /// </summary>
-public class TextureAsTensorData : UniqueResource, ITensorData
+public class TextureAsTensorData : UniqueResourceId, ITensorData
 {
     /// <summary>
     /// Flip flag enum
@@ -691,12 +693,24 @@ public class TextureAsTensorData : UniqueResource, ITensorData
         // TODO: PickFirstChannel,
     }
 
+    /// <summary>
+    /// multiplies scales texture value
+    /// </summary>
+    public Vector4 scale { get { return m_scale; } }
+    /// <summary>
+    /// subtracts bias texture value
+    /// </summary>
+    public Vector4 bias { get { return m_bias; } }
+
+
     private TensorShape m_Shape;
     private Texture[] m_Textures;
     private int m_InterpretPixelAsChannels;
     private InterpretDepthAs m_InterpretDepthAs;
     private InterpretColorAs m_InterpretColorAs;
     private Flip m_Flip;
+    private Vector4 m_scale, m_bias;
+
 
     /// <summary>
     /// Shape
@@ -739,7 +753,23 @@ public class TextureAsTensorData : UniqueResource, ITensorData
     /// <exception cref="ArgumentException">thrown if textures array is empty or texture types are different</exception>
     /// <exception cref="InvalidOperationException">thrown if unsupported texture type is supplied</exception>
     public TextureAsTensorData(Texture[] textures, int interpretPixelAsChannels = -1,
-        Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels)
+        Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels) :
+        this(textures, flip, depthAs, colorAs, Vector4.one, Vector4.zero, interpretPixelAsChannels) { }
+
+    /// <summary>
+    /// Create `TextureAsTensorData` from supplied `textures`
+    /// </summary>
+    /// <param name="textures">backing textures</param>
+    /// <param name="interpretPixelAsChannels">interpret pixel as channels</param>
+    /// <param name="flip">flip</param>
+    /// <param name="depthAs">depth as</param>
+    /// <param name="colorAs">color as</param>
+    /// <param name="scale">multiplies `scale` to texture values</param>
+    /// <param name="bias">substracts `bias` from texture values</param>
+    /// <exception cref="ArgumentException">thrown if textures array is empty or texture types are different</exception>
+    /// <exception cref="InvalidOperationException">thrown if unsupported texture type is supplied</exception>
+    public TextureAsTensorData(Texture[] textures,
+    Flip flip, InterpretDepthAs depthAs, InterpretColorAs colorAs, Vector4 scale, Vector4 bias, int interpretPixelAsChannels)
     {
         if (textures.Length < 1)
             throw new ArgumentException("Textures array must be non empty");
@@ -758,6 +788,9 @@ public class TextureAsTensorData : UniqueResource, ITensorData
         m_InterpretDepthAs = depthAs;
         m_InterpretColorAs = colorAs;
         m_Flip = flip;
+
+        m_scale = scale;
+        m_bias = bias;
 
         var width = textures[0].width;
         var height = textures[0].height;
@@ -840,10 +873,10 @@ public class TextureAsTensorData : UniqueResource, ITensorData
     }
 
     /// <inheritdoc/>
-    public virtual float[] SharedAccess(out int offset)
+    public virtual BarracudaArray SharedAccess(out int offset)
     {
         offset = 0;
-        return Download(shape);
+        return new BarracudaArrayFromManagedArray(Download(shape));//fp16?
     }
 
     /// <inheritdoc/>
@@ -924,9 +957,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.SetTensor(name, X.shape, XonDevice.buffer, XonDevice.offset);
     }
 
-    internal Tensor NewTensor(ComputeFunc fn, string name, TensorShape shape)
+    internal Tensor NewTensor(ComputeFunc fn, string name, TensorShape shape, AllocScope scope = AllocScope.LayerOutput)
     {
-        var o = NewTensor(shape, name);
+        var o = NewTensor(shape, scope, name);
         fn.SetTensor(name, shape, Pin(o).buffer);
         return o;
     }
@@ -947,6 +980,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         fn.SetTensor("O", texData.shape, tensorData.buffer);
         fn.shader.SetBool("_FlipY", texData.flip == TextureAsTensorData.Flip.Y);
+        fn.shader.SetVector("_Scale", texData.scale);
+        fn.shader.SetVector("_Bias", texData.bias);
 
         var offsets = new int[] { 0,0,0,0 };
         foreach (var tex in texData.textures)
@@ -1740,18 +1775,44 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     /// <inheritdoc/>
-    public override Tensor LogSoftmax(Tensor X)
+    public override Tensor LogSoftmax(Tensor X, int axis)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
-            return base.LogSoftmax(X);
+        axis = X.shape.Axis(axis);
+        var Oshape = X.shape;
 
-        var O = X.shape;
+        int reducedDim = X.shape[axis];
+        var XShape = X.shape.ToArray();
+
+        if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
+        {
+            XShape[TensorShape.DataBatch + 1] = Oshape[TensorShape.C];
+            for (int i = TensorShape.DataBatch + 1; i < TensorShape.C; i++)
+                XShape[i + 1] = Oshape[i];
+
+            if (axis == TensorShape.C)
+                axis = TensorShape.DataBatch + 1;
+            else if (axis > TensorShape.DataBatch)
+                axis += 1;
+        }
+
+        int height = 1;
+        for (var i = 0; i < axis; i++)
+            height *= XShape[i];
+
+        int width = 1;
+        for (var i = axis + 1; i < X.shape.rank; i++)
+            width *= XShape[i];
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "LogSoftmax", GetModelExecutionsReporter());
 
+        var strides = new[] { height, reducedDim, width, 0, 0 };
+        fn.shader.SetInts("_Stride", strides);
+
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
+        var O =  Dispatch(fn, Oshape, height, width, 1);
+
+        return O;
     }
 
     /// <inheritdoc/>
@@ -1770,6 +1831,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor Sigmoid(Tensor X)
     {
         return Activation("Sigmoid", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        return Activation("HardSigmoid", X, alpha, beta);
     }
 
     /// <inheritdoc/>
@@ -1932,6 +1999,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor Tan(Tensor X)
     {
         return Activation("Tan", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Erf(Tensor X)
+    {
+        return Activation("Erf", X);
     }
 
     /// <inheritdoc/>
@@ -2254,7 +2327,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(X.length, newShape.length);
         Assert.AreEqual(ComputeInfo.ChannelsOrder.NCHW, ComputeInfo.channelsOrder);
 
-        var O = NewTensor(newShape, "O");
+        var O = NewTensor(newShape, AllocScope.LayerOutput, "O");
 
         if (X.shape.Is4D() && newShape.Is4D())
         {
@@ -2293,7 +2366,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         // However here in CopyAndReshape we want to both copy and change the shape,
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
-        var O = NewTensor(newShape, "O");
+        var O = NewTensor(newShape, AllocScope.LayerOutput, "O");
         var fn = new ComputeFunc(ComputeShaderContext.Reference, isNHWCCopy?"Copy":"Copy8D", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         var copyShape = X.shape;
@@ -2321,7 +2394,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor Flatten(Tensor X)
     {
         var newShape = X.shape.Flatten();
-        if (X.shape == newShape)
+        if (X.shape == newShape || ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
             return base.Flatten(X);
 
         return CopyAndReshape_NCHW(X, newShape);
@@ -2481,14 +2554,15 @@ public class ReferenceComputeOps : ReferenceCPUOps
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || !TensorExtensions.Is8DAxisConvertibleTo4D(axis))
             return base.Concat(tensors, axis);
 
-        var O = TensorExtensions.Concat(tensors, axis);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy", GetModelExecutionsReporter());
+
+        var O = NewTensor(TensorExtensions.Concat(tensors, axis));
+
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
-        axis = O.Axis(axis);
-        var axisNCHW = TensorExtensions.Convert8DAxisTo4D(axis);
+        axis = O.shape.Axis(axis);
+        var axisNHWC = TensorExtensions.Convert8DAxisTo4D(axis);
 
-        var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy", GetModelExecutionsReporter());
-        var result = NewTensor(fn, "O", O);
         foreach (var inputTensor in tensors)
         {
             // input can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
@@ -2496,12 +2570,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
             var X = GetTensorInCurrentMemoryLayout(inputTensor);
 
             SetTensor(fn, "X", X);
+            SetTensor(fn, "O", O);
+
             fn.shader.SetInts("_Pad", offsets);
+
             fn.Dispatch(X.channels, X.width, X.height);
 
-            offsets[axisNCHW] += X.shape[axis];
+            offsets[axisNHWC] += X.shape[axis];
         }
-        return result;
+
+        return O;
     }
 
     private void Set8DParamsForShader(int[] srcValues, int[] firstSplit, int[] secondSplit)
@@ -2815,11 +2893,13 @@ internal struct ComputeFunc
 
         ComputeDebugUtils.PrepareDispatch();
 
+#if ENABLE_BARRACUDA_STATS
         if (executionReporter != null)
         {
             var dispatchInfo = DispatchInfo.CreateFromComputeFunc(this, workItemsX, workItemsY, workItemsZ);
             executionReporter.AddLayerDispatch(dispatchInfo);
         }
+#endif //ENABLE_BARRACUDA_STATS
 
         shader.Dispatch(kernelIndex, x, y, z);
 

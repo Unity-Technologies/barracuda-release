@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityEngine.Assertions;
 using System;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Jobs.LowLevel.Unsafe;
 
@@ -14,6 +13,19 @@ namespace Unity.Barracuda {
 
 public partial class BurstCPUOps
 {
+    public enum BLAS
+    {
+        Disabled = 0,
+        Native,
+        Any
+    }
+
+    /// <summary>
+    /// EXPERIMENTAL: Select BLAS preference
+    /// Production code should stick to default (Native) for now.
+    /// </summary>
+    public static BLAS PreferBLAS { get; set; } = BLAS.Native;
+
     internal static JobHandle Dependencies(JobHandle job, JobHandle job2)
     {
         return JobHandle.CombineDependencies(job, job2);
@@ -29,6 +41,12 @@ public partial class BurstCPUOps
 
     /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    {
+        return MatMul(X, xTranspose, Y, yTranspose, null, null, null);
+    }
+
+    public Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose,
+        int? blockSizeM, int? blockSizeN, int? blockSizeK)
     {
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
@@ -62,44 +80,65 @@ public partial class BurstCPUOps
         ScheduleSGEMM(
             pinX, X.flatHeight, X.flatWidth,
             pinY, Y.flatHeight, Y.flatWidth,
-            pinO, O.flatHeight, O.flatWidth);
+            pinO, O.flatHeight, O.flatWidth,
+            blockSizeM: blockSizeM, blockSizeN: blockSizeN, blockSizeK: blockSizeK);
 
         return O;
     }
 
     //O += X x K
     private unsafe void ScheduleSGEMM(
-        BurstTensorData pinX, int XN, int XM,
-        BurstTensorData pinK, int KN, int KM,
-        BurstTensorData pinO, int ON, int OM,
-        bool transposeA = false, bool transposeB = false, int kernelOffset = 0)
+        BurstTensorData pinX, int XM, int XN,
+        BurstTensorData pinK, int KM, int KN,
+        BurstTensorData pinO, int OM, int ON,
+        bool transposeA = false, bool transposeB = false, int kernelOffset = 0,
+        int? blockSizeM = null, int? blockSizeN = null, int? blockSizeK = null)
     {
         JobHandle dependOn = Dependencies(pinO.reuse, pinX.fence, pinK.fence);
 
         JobHandle jobFence = new JobHandle();
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrK = &pinK.array[pinK.offset+kernelOffset],
-            ptrO = &pinO.array[pinO.offset])
+        float* ptrX = pinX.array.AddressAt(pinX.offset);
+        float* ptrK = pinK.array.AddressAt(pinK.offset + kernelOffset);
+        float* ptrO = pinO.array.AddressAt(pinO.offset);
+
+        if (PreferBLAS != BLAS.Disabled)
         {
-            if (m_UseBlas)
-            {
-                jobFence = blas.ScheduleSGEMM(dependOn,
-                    ptrX, XN, XM,
-                    ptrK, KN, KM,
-                    ptrO, ON, OM,
-                    16, transposeA, transposeB);
-            }
-            else
-            {
-                var job = new MatrixMultiplyJob();
-                job.A = ptrX; job.AN = XN; job.AM = XM;
-                job.B = ptrK; job.BN = KN; job.BM = KM;
-                job.C = ptrO; job.CN = ON; job.CM = OM;
-                job.transposeA = transposeA;
-                job.transposeB = transposeB;
-                jobFence = job.Schedule(dependOn);
-            }
+            jobFence = blas.ScheduleSGEMM(dependOn,
+                ptrX, XM, XN,
+                ptrK, KM, KN,
+                ptrO, OM, ON,
+                16, transposeA, transposeB);
+        }
+        else if (Application.isMobilePlatform || Application.isConsolePlatform)
+        {
+            var job = new MatrixMultiplyLegacyJob();
+            job.A = ptrX; job.AM = XM; job.AN = XN;
+            job.B = ptrK; job.BM = KM; job.BN = KN;
+            job.C = ptrO; job.CM = OM; job.CN = ON;
+            job.transposeA = transposeA;
+            job.transposeB = transposeB;
+
+            jobFence = job.Schedule(dependOn);
+        }
+        else
+        {
+            var job = new MatrixMultiplyJob();
+            job.A = ptrX; job.AM = XM; job.AN = XN;
+            job.B = ptrK; job.BM = KM; job.BN = KN;
+            job.C = ptrO; job.CM = OM; job.CN = ON;
+            job.transposeA = transposeA;
+            job.transposeB = transposeB;
+
+            if (blockSizeM.HasValue)
+                job.blockSizeM = blockSizeM.Value;
+
+            if (blockSizeN.HasValue)
+                job.blockSizeN = blockSizeN.Value;
+
+            if (blockSizeK.HasValue)
+                job.blockSizeK = blockSizeK.Value;
+
+            jobFence = job.Schedule(dependOn);
         }
 
         pinO.fence = pinX.reuse = pinK.reuse = jobFence;
@@ -133,23 +172,21 @@ public partial class BurstCPUOps
 
         unsafe
         {
-            fixed (float*
-                ptrX = &pinX.array[pinX.offset],
-                ptrY = &pinY.array[pinY.offset],
-                ptrO = &pinO.array[pinO.offset])
             {
+                float* ptrX = pinX.array.AddressAt(pinX.offset);
+                float* ptrY = pinY.array.AddressAt(pinY.offset);
+                float* ptrO = pinO.array.AddressAt(pinO.offset);
                 {   // O += X * K
                     var job = new MatrixMultiply3x2Job();
                     job.A = ptrX;
-                    job.AB = xb;
-                    job.AN = xh;
-                    job.AM = xw;
+                    job.AM = xh;
+                    job.AN = xw;
                     job.B = ptrY;
-                    job.BN = yh;
-                    job.BM = yw;
+                    job.BM = yh;
+                    job.BN = yw;
                     job.C = ptrO;
-                    job.CN = xh;
-                    job.CM = yw;
+                    job.CM = xh;
+                    job.CN = yw;
 
                     job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
                     job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
@@ -179,28 +216,26 @@ public partial class BurstCPUOps
 
         unsafe
         {
-            fixed (float*
-                ptrX = &pinX.array[pinX.offset],
-                ptrY = &pinY.array[pinY.offset],
-                ptrO = &pinO.array[pinO.offset])
             {
+                float* ptrX = pinX.array.AddressAt(pinX.offset);
+                float* ptrY = pinY.array.AddressAt(pinY.offset);
+                float* ptrO = pinO.array.AddressAt(pinO.offset);
                 {   // O += X * K
                     var job = new MatrixMultiply4x4Job();
                     job.A = ptrX;
                     job.AB0 = xb0;
                     job.AB1 = xb1;
-                    job.AN = xh;
-                    job.AM = xw;
+                    job.AM = xh;
+                    job.AN = xw;
                     job.B = ptrY;
                     job.BB0 = yb0;
                     job.BB1 = yb1;
-                    job.BN = yh;
-                    job.BM = yw;
+                    job.BM = yh;
+                    job.BN = yw;
                     job.C = ptrO;
-                    job.CB0 = ob0;
                     job.CB1 = ob1;
-                    job.CN = xh;
-                    job.CM = yw;
+                    job.CM = xh;
+                    job.CN = yw;
 
                     job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
                     job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
@@ -231,35 +266,31 @@ public partial class BurstCPUOps
 
         unsafe
         {
-            fixed (float*
-                ptrX = &pinX.array[pinX.offset],
-                ptrW = &pinW.array[pinW.offset],
-                ptrB = &pinB.array[pinB.offset],
-                ptrO = &pinO.array[pinO.offset])
-                {
-                    {   // O += X * K
-                    var job = new Dense3Job();
-                    job.A = ptrX;
-                    job.AB = xb;
-                    job.AN = xh;
-                    job.AM = xw;
-                    job.B = ptrW;
-                    job.BN = yh;
-                    job.BM = yw;
-                    job.C = ptrB;
-                    job.S = ptrO;
-                    job.SN = xh;
-                    job.SM = yw;
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrW = pinW.array.AddressAt(pinW.offset);
+            float* ptrB = pinB.array.AddressAt(pinB.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
+            {
+                var job = new Dense3Job();
+                job.A = ptrX;
+                job.AM = xh;
+                job.AN = xw;
+                job.B = ptrW;
+                job.BM = yh;
+                job.BN = yw;
+                job.C = ptrB;
+                job.S = ptrO;
+                job.SM = xh;
+                job.SN = yw;
 
-                    job.dispatchThreadX = ((xh + Dense3Job.blockSize - 1) / Dense3Job.blockSize);
-                    job.dispatchThreadY = ((yw + Dense3Job.blockSize - 1) / Dense3Job.blockSize);
-                    job.dispatchThreadZ = xb;
+                job.dispatchThreadX = ((xh + Dense3Job.blockSize - 1) / Dense3Job.blockSize);
+                job.dispatchThreadY = ((yw + Dense3Job.blockSize - 1) / Dense3Job.blockSize);
+                job.dispatchThreadZ = xb;
 
-                    pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
-                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
-                }
+                pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
+                    job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
             }
-        }
+		}
 
         return O;
     }
@@ -287,11 +318,30 @@ public partial class BurstCPUOps
             job.ScheduleXO(pinB, pinO);
         }
 
-        // O += X * K
-        ScheduleSGEMM(
-            pinX, X.flatHeight, X.flatWidth,
-            pinW, W.flatHeight, W.flatWidth,
-            pinO, O.flatHeight, O.flatWidth);
+        unsafe
+        {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrW = pinW.array.AddressAt(pinW.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
+
+            if (PreferBLAS != BLAS.Disabled)
+            {
+                pinO.fence = pinX.reuse =
+                    blas.ScheduleSGEMM(
+                        Dependencies(pinO.fence, pinX.fence),
+                        ptrX, X.flatHeight, X.flatWidth,
+                        ptrW, W.flatHeight, W.flatWidth,
+                        ptrO, O.flatHeight, O.flatWidth,
+                        16);
+            }
+            else
+            {
+                ScheduleSGEMM(
+                    pinX, X.flatHeight, X.flatWidth,
+                    pinW, W.flatHeight, W.flatWidth,
+                    pinO, O.flatHeight, O.flatWidth);
+            }
+        }
 
         return ApplyFusedActivation(O, fusedActivation);
     }
@@ -324,7 +374,7 @@ public partial class BurstCPUOps
 
         var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
         var T = pointwiseConvolution ? null:                       // pointwise convolution is just O=X*K, we can completely skip Im2Col()
-                NewTensor(O.batch, O.height, O.width, inChannels); // T holds slice of Im2Col(X)
+                NewTensor(O.batch, O.height, O.width, inChannels, AllocScope.LayerOutput, "Conv2DUsingIm2ColSliced/T"); // T holds slice of Im2Col(X)
 
         var outElements = O.batch * O.height * O.width;
         var inWidth = X.width;
@@ -375,105 +425,115 @@ public partial class BurstCPUOps
         //  3) pad() can be optimized for top and bottom of the tensor by writing 0s across the whole row.
 
         // O += conv(X, K)
-        int kernelOffset = 0;
-        for (int dy = 0; dy < kernelHeight; ++dy)
-        for (int dx = 0; dx < kernelWidth; ++dx)
+        unsafe
         {
-            //T=im2col(X) else T=X
-            if (!pointwiseConvolution)
+            float* ptrT = pinT.array.AddressAt(pinT.offset);
+            float* ptrK = pinK.array.AddressAt(pinK.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
+
+            int kernelOffset = 0;
+            for (int dy = 0; dy < kernelHeight; ++dy)
+            for (int dx = 0; dx < kernelWidth; ++dx)
             {
-
-                var offsetX = dx - pad[0];
-                var offsetY = dy - pad[1];
-
-                var strideX = stride[0];
-                var strideY = stride[1];
-
-                var firstPixel =             0 * strideX + offsetX;
-                var lastPixel  = (T.width - 1) * strideX + offsetX;
-                int numberOfPixelsToPadLeft  = SafeIntDivCeil(Math.Max(0, 0 - firstPixel                ), strideX);   // count(x * stride[0] + offsetX < 0)
-                int numberOfPixelsToPadRight = SafeIntDivCeil(Math.Max(0,      lastPixel - (inWidth - 1)), strideX);   // count(x * stride[0] + offsetX >= inWidth)
-                int numberOfPixelsToSkipFromInputRow = (offsetX >= 0 || strideX == 0) ? offsetX :                     // strideX == 0 protects against div-by-zero
-                    lastPixel % strideX;                                                                              // first(x * stride[0] + offsetX >= 0) == (inWidth * stride[0] + offsetX) % stride[0]
-                int numberOfPixelsToCopyFromInputRow = T.width - numberOfPixelsToPadLeft - numberOfPixelsToPadRight;
-
-                if (UnityEngine.Debug.isDebugBuild) // only to Assert correctness of the values above
+                //T=im2col(X) else T=X
+                if (!pointwiseConvolution)
                 {
-                    // validate above calculations with alternative approach
-                    int assertNumberOfPixelsToPadLeft = 0;
-                    int assertNumberOfPixelsToPadRight = 0;
-                    int assertNumberOfPixelsToSkipFromInputRow = 0;
-                    for (var x = 0; x < T.width; ++x)
-                    {
-                        var readX = x * strideX + offsetX;
-                        if (readX < 0)
-                            assertNumberOfPixelsToPadLeft++;
-                        else
-                        {
-                            assertNumberOfPixelsToSkipFromInputRow = readX;
-                            break;
-                        }
-                    }
-                    for (var x = T.width - 1; x >= 0; --x)
-                    {
-                        var readX = x * strideX + offsetX;
-                        if (readX >= inWidth)
-                            assertNumberOfPixelsToPadRight++;
-                        else
-                            break;
-                    }
-                    int assertNumberOfPixelsToCopyFromInputRow = T.width - assertNumberOfPixelsToPadLeft - assertNumberOfPixelsToPadRight;
+                    var offsetX = dx - pad[0];
+                    var offsetY = dy - pad[1];
 
-                    Assert.AreEqual(numberOfPixelsToPadLeft,            assertNumberOfPixelsToPadLeft);
-                    Assert.AreEqual(numberOfPixelsToPadRight,           assertNumberOfPixelsToPadRight);
-                    Assert.AreEqual(numberOfPixelsToSkipFromInputRow,   assertNumberOfPixelsToSkipFromInputRow);
-                    Assert.AreEqual(numberOfPixelsToCopyFromInputRow,   assertNumberOfPixelsToCopyFromInputRow);
+                    var strideX = stride[0];
+                    var strideY = stride[1];
+
+                            var firstPixel = 0 * strideX + offsetX;
+                            var lastPixel = (T.width - 1) * strideX + offsetX;
+                            int numberOfPixelsToPadLeft = SafeIntDivCeil(Math.Max(0, 0 - firstPixel), strideX); // count(x * stride[0] + offsetX < 0)
+                            int numberOfPixelsToPadRight = SafeIntDivCeil(Math.Max(0, lastPixel - (inWidth - 1)), strideX); // count(x * stride[0] + offsetX >= inWidth)
+                            int numberOfPixelsToSkipFromInputRow = (offsetX >= 0 || strideX == 0)
+                                ? offsetX
+                                : // strideX == 0 protects against div-by-zero
+                                lastPixel % strideX; // first(x * stride[0] + offsetX >= 0) == (inWidth * stride[0] + offsetX) % stride[0]
+                    int numberOfPixelsToCopyFromInputRow = T.width - numberOfPixelsToPadLeft - numberOfPixelsToPadRight;
+
+                    if (UnityEngine.Debug.isDebugBuild) // only to Assert correctness of the values above
+                    {
+                        // validate above calculations with alternative approach
+                        int assertNumberOfPixelsToPadLeft = 0;
+                        int assertNumberOfPixelsToPadRight = 0;
+                        int assertNumberOfPixelsToSkipFromInputRow = 0;
+                        for (var x = 0; x < T.width; ++x)
+                        {
+                            var readX = x * strideX + offsetX;
+                            if (readX < 0)
+                                assertNumberOfPixelsToPadLeft++;
+                            else
+                            {
+                                assertNumberOfPixelsToSkipFromInputRow = readX;
+                                break;
+                            }
+                        }
+
+                        for (var x = T.width - 1; x >= 0; --x)
+                        {
+                            var readX = x * strideX + offsetX;
+                            if (readX >= inWidth)
+                                assertNumberOfPixelsToPadRight++;
+                            else
+                                break;
+                        }
+
+                        int assertNumberOfPixelsToCopyFromInputRow = T.width - assertNumberOfPixelsToPadLeft - assertNumberOfPixelsToPadRight;
+
+                                Assert.AreEqual(numberOfPixelsToPadLeft, assertNumberOfPixelsToPadLeft);
+                                Assert.AreEqual(numberOfPixelsToPadRight, assertNumberOfPixelsToPadRight);
+                                Assert.AreEqual(numberOfPixelsToSkipFromInputRow, assertNumberOfPixelsToSkipFromInputRow);
+                                Assert.AreEqual(numberOfPixelsToCopyFromInputRow, assertNumberOfPixelsToCopyFromInputRow);
+                    }
+
+                    Assert.IsTrue(numberOfPixelsToPadLeft >= 0);
+                    Assert.IsTrue(numberOfPixelsToPadRight >= 0);
+                    Assert.IsTrue(numberOfPixelsToCopyFromInputRow >= 0);
+                    Assert.IsTrue(numberOfPixelsToSkipFromInputRow >= 0);
+                    Assert.IsTrue(numberOfPixelsToPadLeft + numberOfPixelsToPadRight <= T.width);
+                    Assert.IsTrue(numberOfPixelsToSkipFromInputRow <= X.width);
+                    Assert.IsTrue(numberOfPixelsToCopyFromInputRow <= X.width);
+                    Assert.AreEqual(numberOfPixelsToPadLeft + numberOfPixelsToCopyFromInputRow + numberOfPixelsToPadRight, T.width);
+
+                    // extra clamp for safety since we are in the unsafe code block
+                            numberOfPixelsToPadLeft = Math.Min(Math.Max(0, numberOfPixelsToPadLeft), T.width);
+                            numberOfPixelsToPadRight = Math.Min(Math.Max(0, numberOfPixelsToPadRight), T.width - numberOfPixelsToPadLeft);
+                    numberOfPixelsToSkipFromInputRow = Math.Min(Math.Max(0, numberOfPixelsToSkipFromInputRow), X.width);
+                    numberOfPixelsToCopyFromInputRow = Math.Min(Math.Max(0, numberOfPixelsToCopyFromInputRow), X.width - numberOfPixelsToSkipFromInputRow);
+
+                    var job = new Im2ColSliceJob();
+                            job.inOutBatch = batch;
+                            job.inOutChannels = inChannels;
+                            job.inHeight = X.height;
+                            job.inStrideN = X.height * X.width * X.channels;
+                            job.inStrideH = X.width * X.channels;
+                            job.inStrideW = X.channels;
+                            job.outWidth = T.width;
+                            job.outStrideN = T.height * T.width * T.channels;
+                            job.outStrideH = T.width * T.channels;
+                            job.strideX = strideX;
+                            job.strideY = strideY;
+                            job.offsetY = offsetY;
+                            job.padLeft = numberOfPixelsToPadLeft;
+                            job.padRight = numberOfPixelsToPadRight;
+                    job.skipFromInputRow = numberOfPixelsToSkipFromInputRow;
+                    job.copyFromInputRow = numberOfPixelsToCopyFromInputRow;
+
+                    job.ScheduleXO(pinX, pinT, T.height, 16);
                 }
 
-                Assert.IsTrue(numberOfPixelsToPadLeft >= 0);
-                Assert.IsTrue(numberOfPixelsToPadRight >= 0);
-                Assert.IsTrue(numberOfPixelsToCopyFromInputRow >= 0);
-                Assert.IsTrue(numberOfPixelsToSkipFromInputRow >= 0);
-                Assert.IsTrue(numberOfPixelsToPadLeft + numberOfPixelsToPadRight <= T.width);
-                Assert.IsTrue(numberOfPixelsToSkipFromInputRow <= X.width);
-                Assert.IsTrue(numberOfPixelsToCopyFromInputRow <= X.width);
-                Assert.AreEqual(numberOfPixelsToPadLeft + numberOfPixelsToCopyFromInputRow + numberOfPixelsToPadRight, T.width);
+                // O += slice(T) * slice(K)
+                // With T=im2col(X) if pointwiseConvolution else T=X
+                ScheduleSGEMM(
+                    pinT, outElements, inChannels,
+                                pinK, inChannels, outChannels,
+                                pinO, outElements, outChannels, transposeA: false, transposeB: false, kernelOffset);
 
-                // extra clamp for safety since we are in the unsafe code block
-                numberOfPixelsToPadLeft          = Math.Min(Math.Max(0, numberOfPixelsToPadLeft), T.width);
-                numberOfPixelsToPadRight         = Math.Min(Math.Max(0, numberOfPixelsToPadRight), T.width - numberOfPixelsToPadLeft);
-                numberOfPixelsToSkipFromInputRow = Math.Min(Math.Max(0, numberOfPixelsToSkipFromInputRow), X.width);
-                numberOfPixelsToCopyFromInputRow = Math.Min(Math.Max(0, numberOfPixelsToCopyFromInputRow), X.width - numberOfPixelsToSkipFromInputRow);
-
-                var job = new Im2ColSliceJob();
-                job.inOutBatch       = batch;
-                job.inOutChannels    = inChannels;
-                job.inHeight         = X.height;
-                job.inStrideN        = X.height * X.width * X.channels;
-                job.inStrideH        =            X.width * X.channels;
-                job.inStrideW        =                      X.channels;
-                job.outWidth         = T.width;
-                job.outStrideN       = T.height * T.width * T.channels;
-                job.outStrideH       =            T.width * T.channels;
-                job.strideX          = strideX;
-                job.strideY          = strideY;
-                job.offsetY          = offsetY;
-                job.padLeft          = numberOfPixelsToPadLeft;
-                job.padRight         = numberOfPixelsToPadRight;
-                job.skipFromInputRow = numberOfPixelsToSkipFromInputRow;
-                job.copyFromInputRow = numberOfPixelsToCopyFromInputRow;
-
-                job.ScheduleXO(pinX, pinT, T.height, 16);
+                kernelOffset += inChannels * outChannels;
             }
-
-            // O += slice(T) * slice(K)
-            // With T=im2col(X) if pointwiseConvolution else T=X
-            ScheduleSGEMM(
-                pinT, outElements, inChannels,
-                pinK, inChannels,  outChannels,
-                pinO, outElements, outChannels, transposeA:false, transposeB:false, kernelOffset);
-
-            kernelOffset += inChannels * outChannels;
         }
 
         //Calling Dispose on BurstTensorData will sync the fences, so this is a performance VS memory peak tradeoff here.
@@ -713,6 +773,21 @@ public partial class BurstCPUOps
     }
 
     /// <inheritdoc/>
+    public override Tensor HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var job = new HardSigmoidJob();
+        job.alpha = alpha;
+        job.beta = beta;
+        job.ScheduleXO(X, O, O.length, 1024);
+
+        return O;
+    }
+
+
+    /// <inheritdoc/>
     public override Tensor Elu(Tensor X, float alpha)
     {
         var O = NewTensorLike(X);
@@ -830,42 +905,47 @@ public partial class BurstCPUOps
     }
 
     /// <inheritdoc/>
-    public override Tensor LogSoftmax(Tensor X)
+    public override Tensor LogSoftmax(Tensor X, int axis)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
-            return base.LogSoftmax(X);
-
         var O = NewTensor(X.shape);
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
+
+        axis = X.shape.Axis(axis);
 
         var pinX = Pin(X);
         var pinO = Pin(O, uploadCache: false);
 
         //Allocate memory
         Allocator memoryAllocator = Allocator.TempJob;
-        var reduceOpMemSize = O.flatHeight * sizeof(float);
+        var reduceOpShape = X.shape.Reduce(axis);
+        var reduceOpMemSize = reduceOpShape.length * sizeof(float);
         s_maxValues.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
         s_expSums.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator);
+
+        int offsetReduce = 1;
+        for (int i = 7; i >= axis; i--)
+            offsetReduce *= reduceOpShape[i];
 
         // x_max = X.max(axis=1)
         {
             var job = new ReduceMaxJob();
-            job.offsetReduce = 1;
-            job.reduceDim = O.flatWidth;
-            job.ScheduleXO(pinX, s_maxValues, O.flatHeight, 1024);
+            job.offsetReduce = offsetReduce;
+            job.reduceDim = X.shape[axis];
+            job.ScheduleXO(pinX, s_maxValues, reduceOpShape.length, 1024);
         }
         // e_x_sum = Sum[exp(x[:,c] - x_max[:]), c]
         {
             var job = new ExpBiasReduceJob();
-            job.offsetReduce = 1;
-            job.reduceDim = O.flatWidth;
-            job.ScheduleXBO(pinX, s_maxValues, s_expSums, O.flatHeight, 1024);
+            job.offsetReduce = offsetReduce;
+            job.reduceDim = X.shape[axis];
+            job.ScheduleXBO(pinX, s_maxValues, s_expSums, reduceOpShape.length, 1024);
         }
-        // exp(x[n,c] - x_max[n]) / e_x_sum[n]
+        // (x[n,c] - x_max[n]) - log(e_x_sum[n])
         {
             var job = new LogSoftmaxEndJob();
-            job.inChannels = O.flatWidth;
+            job.offsetReduce = offsetReduce;
+            job.reduceDim = X.shape[axis];
             job.ScheduleXSBO(pinX, s_expSums, s_maxValues, pinO, O.length, 1024);
         }
         // free memory (in job)
@@ -1145,6 +1225,18 @@ public partial class BurstCPUOps
         Assert.AreEqual(O.length, X.length);
 
         var job = new TanJob();
+        job.ScheduleXO(X, O, O.length, 1024);
+
+        return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Erf(Tensor X)
+    {
+        var O = NewTensorLike(X);
+        Assert.AreEqual(O.length, X.length);
+
+        var job = new ErfJob();
         job.ScheduleXO(X, O, O.length, 1024);
 
         return O;
@@ -1691,22 +1783,26 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor Transpose(Tensor X, int[] permutations)
     {
-        permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
-        var O = NewTensor(X.shape.Permute(permutations));
+
+        var outPermutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(
+                                                X.shape, new NativeArray<int>(permutations, Allocator.Temp));
+        var O = NewTensor(X.shape.Permute(outPermutations));
 
         var job = new TransposeJob();
         job.shapeX = X.shape;
         job.shapeO = O.shape;
-        unsafe {
-            job.permutations[0] = permutations[0];
-            job.permutations[1] = permutations[1];
-            job.permutations[2] = permutations[2];
-            job.permutations[3] = permutations[3];
-            job.permutations[4] = permutations[4];
-            job.permutations[5] = permutations[5];
-            job.permutations[6] = permutations[6];
-            job.permutations[7] = permutations[7];
+        unsafe
+        {
+            job.permutations[0] = outPermutations[0];
+            job.permutations[1] = outPermutations[1];
+            job.permutations[2] = outPermutations[2];
+            job.permutations[3] = outPermutations[3];
+            job.permutations[4] = outPermutations[4];
+            job.permutations[5] = outPermutations[5];
+            job.permutations[6] = outPermutations[6];
+            job.permutations[7] = outPermutations[7];
         }
+
         job.ScheduleXO(X, O, O.length, 1024);
 
         return O;
@@ -1828,6 +1924,36 @@ public partial class BurstCPUOps
         return O;
     }
 
+    public override Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
+    {
+        var O = NewTensor(s);
+
+        var pinO = Pin(O, uploadCache: false);
+
+        var job = new RandomNormalJob();
+        job.rng = new Unity.Mathematics.Random((uint)seed);
+        job.mean = mean;
+        job.scale = scale;
+        job.ScheduleO(pinO, 0, O.length, 1024);
+
+        return O;
+    }
+
+    public override Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
+    {
+        var O = NewTensor(s);
+
+        var pinO = Pin(O, uploadCache: false);
+
+        var job = new RandomUniformJob();
+        job.rng = new Unity.Mathematics.Random((uint)seed);
+        job.mean = mean;
+        job.scale = scale;
+        job.ScheduleO(pinO, 0, O.length, 1024);
+
+        return O;
+    }
+
     Tensor LSTMDense3(Tensor X, Tensor W, Tensor B)
     {
         int xb = X.batch, xh = X.width, xw = X.channels;
@@ -1843,33 +1969,30 @@ public partial class BurstCPUOps
 
         unsafe
         {
-            fixed (float*
-                ptrX = &pinX.array[pinX.offset],
-                ptrW = &pinW.array[pinW.offset],
-                ptrB = &pinB.array[pinB.offset],
-                ptrO = &pinO.array[pinO.offset])
-                {
-                    var job = new LSTMDense3Job();
-                    job.A = ptrX;
-                    job.AB = xb;
-                    job.AN = xh;
-                    job.AM = xw;
-                    job.B = ptrW;
-                    job.BN = yh;
-                    job.BM = yw;
-                    job.C = ptrB;
-                    job.CN = B.batch;
-                    job.CM = B.channels;
-                    job.S = ptrO;
-                    job.SN = xh;
-                    job.SM = yw;
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrW = pinW.array.AddressAt(pinW.offset);
+            float* ptrB = pinB.array.AddressAt(pinB.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
+            {
+                var job = new LSTMDense3Job();
+                job.A = ptrX;
+                job.AM = xh;
+                job.AN = xw;
+                job.B = ptrW;
+                job.BM = yh;
+                job.BN = yw;
+                job.C = ptrB;
+                job.CN = B.channels;
+                job.S = ptrO;
+                job.SM = xh;
+                job.SN = yw;
 
-                    job.dispatchThreadX = ((xh + LSTMDense3Job.blockSize - 1) / LSTMDense3Job.blockSize);
-                    job.dispatchThreadY = ((yw + LSTMDense3Job.blockSize - 1) / LSTMDense3Job.blockSize);
-                    job.dispatchThreadZ = xb;
+                job.dispatchThreadX = ((xh + LSTMDense3Job.blockSize - 1) / LSTMDense3Job.blockSize);
+                job.dispatchThreadY = ((yw + LSTMDense3Job.blockSize - 1) / LSTMDense3Job.blockSize);
+                job.dispatchThreadZ = xb;
 
-                    pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
-                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
+                pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
+                    job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
             }
         }
 
@@ -1891,31 +2014,29 @@ public partial class BurstCPUOps
 
         unsafe
         {
-            fixed (float*
-                ptrX = &pinX.array[pinX.offset],
-                ptrW = &pinW.array[pinW.offset],
-                ptrB = &pinB.array[pinB.offset],
-                ptrO = &pinO.array[pinO.offset])
-                {
-                    var job = new LSTMDenseJob();
-                    job.A = ptrX;
-                    job.AN = xh;
-                    job.AM = xw;
-                    job.B = ptrW;
-                    job.BN = yh;
-                    job.BM = yw;
-                    job.C = ptrB;
-                    job.CN = B.batch;
-                    job.CM = B.channels;
-                    job.S = ptrO;
-                    job.SN = xh;
-                    job.SM = yw;
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrW = pinW.array.AddressAt(pinW.offset);
+            float* ptrB = pinB.array.AddressAt(pinB.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
+            {
+                var job = new LSTMDenseJob();
+                job.A = ptrX;
+                job.AM = xh;
+                job.AN = xw;
+                job.B = ptrW;
+                job.BM = yh;
+                job.BN = yw;
+                job.C = ptrB;
+                job.CN = B.channels;
+                job.S = ptrO;
+                job.SM = xh;
+                job.SN = yw;
 
-                    job.dispatchThreadX = ((xh + LSTMDenseJob.blockSize - 1) / LSTMDenseJob.blockSize);
-                    job.dispatchThreadY = ((yw + LSTMDenseJob.blockSize - 1) / LSTMDenseJob.blockSize);
+                job.dispatchThreadX = ((xh + LSTMDenseJob.blockSize - 1) / LSTMDenseJob.blockSize);
+                job.dispatchThreadY = ((yw + LSTMDenseJob.blockSize - 1) / LSTMDenseJob.blockSize);
 
-                    pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
-                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
+                pinO.fence = pinX.reuse = pinW.reuse = pinB.reuse =
+                    job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinW.fence, pinB.fence));
             }
         }
 
@@ -1928,7 +2049,7 @@ public partial class BurstCPUOps
         const int g_i = 0, g_o = 1, g_f = 2, g_j = 3;
 
         TensorShape xShape = X.shape; // X shape is [seq_length, batch_size, input_size]
-        int sequenceLength = xShape.batch; 
+        int sequenceLength = xShape.batch;
         int batchSize = xShape.channels;
         int inputSize = xShape.width;
         int hiddenSize = cell.channels;
@@ -1949,7 +2070,8 @@ public partial class BurstCPUOps
 
         // transpose once for sequential Dense access
         Tensor Xt = Transpose(X, new[] { 0, 1, 3, 2 });
-        if (!m_UseBlas)
+        var useBLAS = PreferBLAS != BLAS.Disabled;
+        if (!useBLAS)
         {
             i_mad_w = LSTMDense3(Xt, W[g_i], Wb[g_i]);
             j_mad_w = LSTMDense3(Xt, W[g_j], Wb[g_j]);
@@ -1961,7 +2083,7 @@ public partial class BurstCPUOps
         for (int s = 0; s < sequenceLength; s++)
         {
             Tensor X_sequence = null;
-            if (m_UseBlas)
+            if (useBLAS)
             {
                 X_sequence = StridedSlice(Xt, new[] { s, 0, 0, 0 }, new[] { s + 1, int.MaxValue, int.MaxValue, int.MaxValue }, new[] { 1, 1, 1, 1 });
                 X_sequence = X_sequence.Reshape(new TensorShape(batchSize, inputSize));
@@ -1985,14 +2107,13 @@ public partial class BurstCPUOps
 
             unsafe
             {
-                fixed (float*
-                    ptrCell = &pinCell.array[pinCell.offset],
-                    ptrImadW = &pinImadW.array[pinImadW.offset], ptrImadR = &pinImadR.array[pinImadR.offset],
-                    ptrJmadW = &pinJmadW.array[pinJmadW.offset], ptrJmadR = &pinJmadR.array[pinJmadR.offset],
-                    ptrFmadW = &pinFmadW.array[pinFmadW.offset], ptrFmadR = &pinFmadR.array[pinFmadR.offset],
-                    ptrOmadW = &pinOmadW.array[pinOmadW.offset], ptrOmadR = &pinOmadR.array[pinOmadR.offset],
-                    ptrCellOut = &pinCellOut.array[pinCellOut.offset], ptrHiddenOut = &pinHiddenOut.array[pinHiddenOut.offset],
-                    ptrO = &pinO.array[pinO.offset])
+                float* ptrCell = pinCell.array.AddressAt(pinCell.offset);
+                float* ptrImadW = pinImadW.array.AddressAt(pinImadW.offset); float* ptrImadR = pinImadR.array.AddressAt(pinImadR.offset);
+                float* ptrJmadW = pinJmadW.array.AddressAt(pinJmadW.offset); float* ptrJmadR = pinJmadR.array.AddressAt(pinJmadR.offset);
+                float* ptrFmadW = pinFmadW.array.AddressAt(pinFmadW.offset); float* ptrFmadR = pinFmadR.array.AddressAt(pinFmadR.offset);
+                float* ptrOmadW = pinOmadW.array.AddressAt(pinOmadW.offset); float* ptrOmadR = pinOmadR.array.AddressAt(pinOmadR.offset);
+                float* ptrCellOut = pinCellOut.array.AddressAt(pinCellOut.offset); float* ptrHiddenOut = pinHiddenOut.array.AddressAt(pinHiddenOut.offset);
+                float* ptrO = pinO.array.AddressAt(pinO.offset);
                 {
                     var job = new LSTMEndJob();
                     job.cell_out = ptrCellOut;
@@ -2008,7 +2129,7 @@ public partial class BurstCPUOps
                     job.cell = ptrCell;
                     job.O = ptrO;
                     job.sequenceIndexO = s;
-                    job.sequenceIndexI = m_UseBlas ? 0 : s;
+                    job.sequenceIndexI = useBLAS ? 0 : s;
                     job.batchSize = batchSize;
                     job.hiddenSize = hiddenSize;
                     job.batchSizeR = hidden.batch;
@@ -2031,7 +2152,7 @@ public partial class BurstCPUOps
             f_mad_r.Dispose();
             o_mad_r.Dispose();
 
-            if (m_UseBlas)
+            if (useBLAS)
             {
                 X_sequence.Dispose();
                 i_mad_w.Dispose();
@@ -2044,7 +2165,7 @@ public partial class BurstCPUOps
         pinO.fence = jobFence;
 
         Xt.Dispose();
-        if (!m_UseBlas)
+        if (!useBLAS)
         {
             i_mad_w.Dispose();
             j_mad_w.Dispose();

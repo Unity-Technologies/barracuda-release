@@ -27,14 +27,28 @@ public class CompareOps : IOps, IModelCompiler
         m_Epsilon = epsilon;
     }
 
+#if ENABLE_BARRACUDA_STATS
+    public IEnumerable<TempMemoryStatistics> GetTempMemoryStatistics()
+    {
+        return m_Ops1.GetTempMemoryStatistics();
+    }
+#endif //ENABLE_BARRACUDA_STATS
+
     /// <inheritdoc/>
-    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes)
+    public virtual void PostLayerCleanup()
+    {
+        m_Ops1.PostLayerCleanup();
+        m_Ops2.PostLayerCleanup();
+    }
+
+    /// <inheritdoc/>
+    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes, IVars vars)
     {
         if (m_Ops1 is IModelCompiler)
-            ((IModelCompiler)m_Ops1).PrepareModel(model, inputShapes);
+            ((IModelCompiler)m_Ops1).PrepareModel(model, inputShapes, vars);
 
         if (m_Ops2 is IModelCompiler)
-            ((IModelCompiler)m_Ops2).PrepareModel(model, inputShapes);
+            ((IModelCompiler)m_Ops2).PrepareModel(model, inputShapes, vars);
     }
 
     /// <inheritdoc/>
@@ -372,10 +386,10 @@ public class CompareOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.LogSoftmax(Tensor X)
+    Tensor IOps.LogSoftmax(Tensor X, int axis)
     {
-        var Y = m_Ops1.LogSoftmax(X);
-        var Z = m_Ops2.LogSoftmax(X);
+        var Y = m_Ops1.LogSoftmax(X, axis);
+        var Z = m_Ops2.LogSoftmax(X, axis);
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.LogSoftmax);
         return Y;
     }
@@ -404,6 +418,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Sigmoid(X);
         var Z = m_Ops2.Sigmoid(X);
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Sigmoid);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        var Y = m_Ops1.HardSigmoid(X, alpha, beta);
+        var Z = m_Ops2.HardSigmoid(X, alpha, beta);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.HardSigmoid);
         return Y;
     }
 
@@ -656,6 +679,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Tan(X);
         var Z = m_Ops2.Tan(X);
         CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Tan);
+        return Y;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.Erf(Tensor X)
+    {
+        var Y = m_Ops1.Erf(X);
+        var Z = m_Ops2.Erf(X);
+        CheckSame(Y, Z, Layer.Type.Activation + " " + Layer.Activation.Erf);
         return Y;
     }
 

@@ -73,6 +73,7 @@ internal class ModelOptimizer
             case Layer.FusedActivation.Sin:
             case Layer.FusedActivation.Sinh:
             case Layer.FusedActivation.Tan:
+            case Layer.FusedActivation.Erf:
                 return true;
             default:
                 return false;
@@ -260,8 +261,8 @@ internal class ModelOptimizer
 
             layer.datasets = new Layer.DataSet[constantLayers[constInput].datasets.Length];
             Array.Copy(constantLayers[constInput].datasets, layer.datasets, constantLayers[constInput].datasets.Length);
-            layer.weights = new float[constantLayers[constInput].weights.Length];
-            Array.Copy(constantLayers[constInput].weights, layer.weights, constantLayers[constInput].weights.Length);
+            layer.weights = new BarracudaArray(constantLayers[constInput].weights.Length);
+            BarracudaArray.Copy(constantLayers[constInput].weights, layer.weights, constantLayers[constInput].weights.Length);
 
             model.layers[l].inputs = layer.inputs.Where(x => x != constInput).ToArray();
         }
@@ -287,8 +288,8 @@ internal class ModelOptimizer
             for(int d = 0; d < constInput.datasets.Length; ++d)
                 constInput.datasets[d].name = name;
 
-            constInput.weights = new float[layer.weights.Length];
-            Array.Copy(layer.weights, constInput.weights, layer.weights.Length);
+            constInput.weights = new BarracudaArray(layer.weights.Length);
+            BarracudaArray.Copy(layer.weights, constInput.weights, layer.weights.Length);
 
             Array.Resize(ref layer.inputs, layer.inputs.Length + 1);
             layer.inputs[layer.inputs.Length-1] = constInput.name;
@@ -296,7 +297,7 @@ internal class ModelOptimizer
             newConstants.Add(constInput);
 
             layer.datasets = new Layer.DataSet[0];
-            layer.weights = new float[0];
+            layer.weights = new BarracudaArray(0);//TODO fp16
         }
         newConstants.AddRange(model.layers);
         model.layers = newConstants;

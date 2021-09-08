@@ -375,7 +375,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
         bool ConvertActivation(Layer layer, ModelBuilder net)
         {
-            if (!(layer.activation == Layer.Activation.Softmax))
+            if (layer.activation != Layer.Activation.Softmax && layer.activation != Layer.Activation.LogSoftmax)
                 return true;
 
             string input0 = layer.inputs[0];

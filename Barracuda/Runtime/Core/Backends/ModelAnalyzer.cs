@@ -447,7 +447,26 @@ internal class ModelAnalyzer
                 shape[l.axis] = input1Shape.Value.length;
 
                 O = new TensorShape(shape);
-            }
+
+                if (l.pool != null && l.pool.Length == 2 && l.pool[1] > 1)
+                {
+                    int xRank = l.pool[0];
+                    int indicesRank = l.pool[1];
+                    var oShape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToList(O.Value, xRank);
+                    var indicesShape = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaShapeToList(input1Shape.Value, indicesRank);
+
+                    int axis = Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaAxisToTensor(l.axis, xRank);
+                    oShape.InsertRange(axis, indicesShape);
+                    oShape.RemoveAt(axis + indicesShape.Count);
+
+                    O = (O.Value).Reshape(Compiler.IRShapeInferenceHelper.ShapeInference.BarracudaLayoutToTensorShapeLayout(oShape.ToArray()));
+
+                    // rank 2 -> 3
+                    if (xRank == 2 && oShape.Count == 3)
+                        O = (O.Value).Permute(new int[] { 0, 1, 3, 2 });
+                }
+
+        }
             else if (
                 l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)

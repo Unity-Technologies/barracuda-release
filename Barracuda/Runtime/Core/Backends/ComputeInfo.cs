@@ -55,6 +55,24 @@ namespace Unity.Barracuda
         public static string graphicsDeviceVendor = "";
 
         /// <summary>
+        /// Helper for hardware selection
+        /// </summary>
+        public static bool IsMobileGPU() { return
+            (Application.platform == RuntimePlatform.Android) ||
+            (Application.platform == RuntimePlatform.IPhonePlayer) ||
+            graphicsDeviceVendor.Contains("Intel");
+        }
+        public static bool IsiPhoneGPU() { return
+            (Application.platform == RuntimePlatform.IPhonePlayer);
+        }
+        public static bool IsQualcommGPU() { return
+            (Application.platform == RuntimePlatform.Android) && graphicsDeviceVendor.Contains("Qualcomm");
+        }
+        public static bool IsARMGPU() { return
+            (Application.platform == RuntimePlatform.Android) && graphicsDeviceVendor.Contains("ARM");
+        }
+
+        /// <summary>
         /// EXPERIMENTAL: Select Channel order of the compute backends.
         /// Production code should stick to default (NHWC) for now.
         /// </summary>

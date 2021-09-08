@@ -1,0 +1,1546 @@
+//Winograd
+#pragma kernel DepthwiseConv2D_Winograd_2x2_Kernel3x3_NHWC  CHANNELS_FIRST=0 OUTPUT_SHAPE=2 KERNEL_SHAPE=3
+#pragma kernel DepthwiseConv2D_Winograd_2x2_Kernel3x3_NCHW  CHANNELS_FIRST=1 OUTPUT_SHAPE=2 KERNEL_SHAPE=3
+#pragma kernel DepthwiseConv2D_Winograd_2x2_Kernel5x5_NHWC  CHANNELS_FIRST=0 OUTPUT_SHAPE=2 KERNEL_SHAPE=5
+#pragma kernel DepthwiseConv2D_Winograd_2x2_Kernel5x5_NCHW  CHANNELS_FIRST=1 OUTPUT_SHAPE=2 KERNEL_SHAPE=5
+//#pragma kernel KernelWinograd_3x3 KERNEL_SHAPE=3
+#pragma kernel KernelWinograd_5x5 KERNEL_SHAPE=5
+//Default
+#pragma kernel DepthwiseConv2D_Default_NHWC  CHANNELS_FIRST=0 KERNEL_SHAPE=1
+#pragma kernel DepthwiseConv2D_Default_NCHW  CHANNELS_FIRST=1 KERNEL_SHAPE=1
+
+// Conv
+#pragma kernel Conv2D_Kernel1x1_1x4x4_NHWC  CHANNELS_FIRST=0 KERNEL_SHAPE=1 IBLOCK=1 KBLOCK=4 JBLOCK=4
+#pragma kernel Conv2D_Kernel1x1_1x4x4_NCHW  CHANNELS_FIRST=1 KERNEL_SHAPE=1 IBLOCK=1 KBLOCK=4 JBLOCK=4
+// Winograd
+#pragma kernel Conv2D_Winograd_2x2_Kernel3x3_LDS_NHWC  CHANNELS_FIRST=0 OUTPUT_SHAPE=2 KERNEL_SHAPE=3 USELDS=1
+#pragma kernel Conv2D_Winograd_2x2_Kernel3x3_LDS_NCHW  CHANNELS_FIRST=1 OUTPUT_SHAPE=2 KERNEL_SHAPE=3 USELDS=1
+#pragma kernel Conv2D_Winograd_2x2_Kernel3x3_NHWC  CHANNELS_FIRST=0 OUTPUT_SHAPE=2 KERNEL_SHAPE=3 USELDS=0
+#pragma kernel Conv2D_Winograd_2x2_Kernel3x3_NCHW  CHANNELS_FIRST=1 OUTPUT_SHAPE=2 KERNEL_SHAPE=3 USELDS=0
+// 4x4
+#pragma kernel Conv2D_KernelKxK_T16x16_R4x4_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_PER_TG=256 SUFFIX=KernelKxK_T16x16_R
+#pragma kernel Conv2D_KernelKxK_T16x16_R4x4_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=4 KERNEL_PER_TG=256 SUFFIX=KernelKxK_T16x16_R
+
+#pragma kernel Conv2D_Kernel1x1_T16x16_R4x4_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_PER_TG=256 SUFFIX=Kernel1x1_T16x16_R KERNEL_1x1=1
+#pragma kernel Conv2D_Kernel1x1_T16x16_R4x4_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=4 KERNEL_PER_TG=256 SUFFIX=Kernel1x1_T16x16_R KERNEL_1x1=1
+
+#pragma kernel Conv2D_KernelKxK_T8x8_R4x4_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_PER_TG=64 SUFFIX=KernelKxK_T8x8_R
+#pragma kernel Conv2D_KernelKxK_T8x8_R4x4_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=4 KERNEL_PER_TG=64 SUFFIX=KernelKxK_T8x8_R
+
+#pragma kernel Conv2D_Kernel1x1_T8x8_R4x4_NCHW  CHANNELS_FIRST=1 BLOCK_SIZE=4 KERNEL_PER_TG=64 SUFFIX=Kernel1x1_T8x8_R KERNEL_1x1=1
+#pragma kernel Conv2D_Kernel1x1_T8x8_R4x4_NHWC  CHANNELS_FIRST=0 BLOCK_SIZE=4 KERNEL_PER_TG=64 SUFFIX=Kernel1x1_T8x8_R KERNEL_1x1=1
+
+//Default
+#pragma kernel Conv2D_Default_T8x8_R4x4_NCHW  CHANNELS_FIRST=1
+#pragma kernel Conv2D_Default_T8x8_R4x4_NHWC  CHANNELS_FIRST=0
+
+
+#include "Tensor.cginc"
+#define UNITY_SHADER_NO_UPGRADE 1
+
+TENSOR_DECL(X)
+TENSOR_DECL(K)
+TENSOR_DECL(B)
+TENSOR_DECL(WBK)
+TENSOR_DECL_RW(O)
+
+uint4 _Pad;
+uint4 _Stride;
+
+float ffma(float a, float b, float c) { return dot(float2(a, c), float2(b, 1)); }
+
+
+#define CACHE_DEPTH 8
+
+[numthreads(8, 8, 1)]
+void KERNEL_FUNC(Conv2D_Default_T8x8_R4x4)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	//DISPATCH ARGS(K.kernelCount, O.width, O.height);
+	TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+	uint w = O.width;
+	uint h = O.height;
+	uint maxBiasIndex = O.channels - 1;
+
+	uint k = dispatchThreadID.x;
+
+	uint4 xxyy = 4 * dispatchThreadID.y + uint4(0,1,2,3);
+	uint4 xx = (xxyy % w);
+	uint4 yy = (xxyy / w);
+
+	
+	
+	for (uint n = 0; n < O.batch; ++n)
+	{
+		float4 acc0 = float4(B.FastGet(min(4 * k + 0, maxBiasIndex)), B.FastGet(min(4 * k + 1, maxBiasIndex)), B.FastGet(min(4 * k + 2, maxBiasIndex)), B.FastGet(min(4 * k + 3, maxBiasIndex)));
+		float4 acc1 = acc0;
+		float4 acc2 = acc0;
+		float4 acc3 = acc0;
+
+
+		for (uint dy = 0; dy < K.GetKernelHeight(); ++dy)
+		{
+			for (uint dx = 0; dx < K.GetKernelWidth(); ++dx)
+			{
+				uint kernelOffset = dy * X.channels * K.GetKernelWidth() + dx * X.channels;
+
+				bool4 maskX =
+					yy * _Stride.y - _Pad.y + dy >= 0 &&
+					yy * _Stride.y - _Pad.y + dy < X.height &&
+					xx * _Stride.x - _Pad.x + dx >= 0 &&
+					xx * _Stride.x - _Pad.x + dx < X.width;
+
+				uint4 readX = n * X.height * X.width * X.channels + ((yy * _Stride.y - _Pad.y + dy) * X.width + (xx * _Stride.x - _Pad.x + dx)) * X.channels;
+
+				for (uint c = 0; c < X.channels; c += CACHE_DEPTH)
+				{
+					for (uint cc = 0; cc < CACHE_DEPTH; ++cc)
+					{
+						float4 v;
+
+						bool maskC = c + cc < X.channels;
+						v.x = X.MaskedGet(maskX.x && maskC, readX.x + c + cc);
+						v.y = X.MaskedGet(maskX.y && maskC, readX.y + c + cc);
+						v.z = X.MaskedGet(maskX.z && maskC, readX.z + c + cc);
+						v.w = X.MaskedGet(maskX.w && maskC, readX.w + c + cc);
+
+						uint readK = (kernelOffset + c + cc) * O.channels;
+						float4 w = float4(K.MaskedGet(4*k+0 < O.channels,readK + 4*k+0),
+										  K.MaskedGet(4*k+1 < O.channels,readK + 4*k+1),
+										  K.MaskedGet(4*k+2 < O.channels,readK + 4*k+2),
+										  K.MaskedGet(4*k+3 < O.channels,readK + 4*k+3));
+
+
+						acc0 += v.x * w;
+						acc1 += v.y * w;
+						acc2 += v.z * w;
+						acc3 += v.w * w;
+					}
+					GroupMemoryBarrierWithGroupSync();
+				}
+			}
+		}
+
+		if (xxyy.x < h * w && 4 * k + 0 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.x * O.channels + 4 * k + 0, acc0.x);
+		if (xxyy.x < h * w && 4 * k + 1 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.x * O.channels + 4 * k + 1, acc0.y);
+		if (xxyy.x < h * w && 4 * k + 2 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.x * O.channels + 4 * k + 2, acc0.z);
+		if (xxyy.x < h * w && 4 * k + 3 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.x * O.channels + 4 * k + 3, acc0.w);
+
+		if (xxyy.y < h * w && 4 * k + 0 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.y * O.channels + 4 * k + 0, acc1.x);
+		if (xxyy.y < h * w && 4 * k + 1 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.y * O.channels + 4 * k + 1, acc1.y);
+		if (xxyy.y < h * w && 4 * k + 2 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.y * O.channels + 4 * k + 2, acc1.z);
+		if (xxyy.y < h * w && 4 * k + 3 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.y * O.channels + 4 * k + 3, acc1.w);
+		
+		if (xxyy.z < h * w && 4 * k + 0 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.z * O.channels + 4 * k + 0, acc2.x);
+		if (xxyy.z < h * w && 4 * k + 1 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.z * O.channels + 4 * k + 1, acc2.y);
+		if (xxyy.z < h * w && 4 * k + 2 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.z * O.channels + 4 * k + 2, acc2.z);
+		if (xxyy.z < h * w && 4 * k + 3 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.z * O.channels + 4 * k + 3, acc2.w);
+		
+		if (xxyy.w < h * w && 4 * k + 0 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.w * O.channels + 4 * k + 0, acc3.x);
+		if (xxyy.w < h * w && 4 * k + 1 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.w * O.channels + 4 * k + 1, acc3.y);
+		if (xxyy.w < h * w && 4 * k + 2 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.w * O.channels + 4 * k + 2, acc3.z);
+		if (xxyy.w < h * w && 4 * k + 3 < O.channels)
+			O.FastSetWithActivation(n * h * w * O.channels + xxyy.w * O.channels + 4 * k + 3, acc3.w);
+	}
+}
+
+#undef CACHE_DEPTH
+
+[numthreads(32, 2, 2)]
+void KERNEL_FUNC(DepthwiseConv2D_Default)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(K.kernelCount, O.width, O.height);
+    TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+    uint k = dispatchThreadID.x;
+    uint x = dispatchThreadID.y;
+    uint y = dispatchThreadID.z;
+
+    if (k >= K.channels) return;
+    if (x >= O.width) return;
+    if (y >= O.height) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        float acc = B.FastGet(k);
+        for (uint dy = 0; dy < K.GetKernelHeight(); ++dy)
+            for (uint dx = 0; dx < K.GetKernelWidth(); ++dx)
+            {
+                uint2 pos = uint2(x, y) * _Stride.xy + uint2(dx, dy);
+                float v = X.SafeGet(n, pos, k, _Pad.xy);
+                acc += v * K.Get(dy, dx, 0, k);
+            }
+
+        O.SetWithActivation(n, y, x, k, acc);
+    }
+}
+
+#if USELDS
+	#if CHANNELS_FIRST
+		#define FUNC_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE) KERNEL##_##OUTPUT_SHAPE##x##OUTPUT_SHAPE##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE##_LDS_NCHW
+		#define CACHE_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE, TENSOR) KERNEL##_##OUTPUT_SHAPE##x##OUTPUT_SHAPE##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE_Cache_##TENSOR##_NCHW
+	#else
+		#define FUNC_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE) KERNEL##_##OUTPUT_SHAPE##x##OUTPUT_SHAPE##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE##_LDS_NHWC
+		#define CACHE_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE, TENSOR) KERNEL##_##OUTPUT_SHAPE##x##OUTPUT_SHAPE##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE_Cache_##TENSOR##_NHWC
+	#endif
+#else
+	#if CHANNELS_FIRST
+		#define FUNC_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE) KERNEL##_##OUTPUT_SHAPE##x##OUTPUT_SHAPE##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE##_NCHW
+	#else
+		#define FUNC_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE) KERNEL##_##OUTPUT_SHAPE##x##OUTPUT_SHAPE##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE##_NHWC
+	#endif
+#endif
+#define FUNC_NAME(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE) FUNC_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE)
+#define CACHE_NAME(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE, TENSOR) CACHE_NAME_CALL(KERNEL, OUTPUT_SHAPE, KERNEL_SHAPE, TENSOR)
+
+// https://github.com/andravin/wincnn
+// https://arxiv.org/pdf/1509.09308.pdf
+#if KERNEL_SHAPE == 3
+// Winograd: 4x4 image, 3x3 kernel, 2x2 output
+inline float4x4 ApplyWinnogradB(float4x4 d)
+{
+    // BT x u x B, used mathematica to express the operation using only +/-
+    //return float4x4(float4( d[0][0] - d[0][2] - d[2][0] + d[2][2],  d[0][1] + d[0][2] - d[2][1] - d[2][2], -d[0][1] + d[0][2] + d[2][1] - d[2][2], -d[0][1] + d[0][3] + d[2][1] - d[2][3]),
+    //                float4( d[1][0] - d[1][2] + d[2][0] - d[2][2],  d[1][1] + d[1][2] + d[2][1] + d[2][2], -d[1][1] + d[1][2] - d[2][1] + d[2][2], -d[1][1] + d[1][3] - d[2][1] + d[2][3]),
+    //                float4(-d[1][0] + d[1][2] + d[2][0] - d[2][2], -d[1][1] - d[1][2] + d[2][1] + d[2][2],  d[1][1] - d[1][2] - d[2][1] + d[2][2],  d[1][1] - d[1][3] - d[2][1] + d[2][3]),
+    //                float4(-d[1][0] + d[1][2] + d[3][0] - d[3][2], -d[1][1] - d[1][2] + d[3][1] + d[3][2],  d[1][1] - d[1][2] - d[3][1] + d[3][2],  d[1][1] - d[1][3] - d[3][1] + d[3][3])
+    //    );
+    // re-order operations to lower register pressure
+    float4x4 TU;
+    float4x4 U;
+    TU[0][0] = d[0][0] - d[2][0];
+    TU[0][1] = d[0][1] - d[2][1];
+    TU[0][2] = d[0][2] - d[2][2];
+    TU[0][3] = d[0][3] - d[2][3];
+
+    TU[1][0] = d[1][0] + d[2][0];
+    TU[1][1] = d[1][1] + d[2][1];
+    TU[1][2] = d[1][2] + d[2][2];
+    TU[1][3] = d[1][3] + d[2][3];
+
+    TU[2][0] = d[2][0] - d[1][0];
+    TU[2][1] = d[2][1] - d[1][1];
+    TU[2][2] = d[2][2] - d[1][2];
+    TU[2][3] = d[2][3] - d[1][3];
+
+    TU[3][0] = d[3][0] - d[1][0];
+    TU[3][1] = d[3][1] - d[1][1];
+    TU[3][2] = d[3][2] - d[1][2];
+    TU[3][3] = d[3][3] - d[1][3];
+
+
+    U[0][0] = TU[0][0] - TU[0][2];
+    U[0][1] = TU[0][1] + TU[0][2];
+    U[0][2] = TU[0][2] - TU[0][1];
+    U[0][3] = TU[0][3] - TU[0][1];
+
+    U[1][0] = TU[1][0] - TU[1][2];
+    U[1][1] = TU[1][1] + TU[1][2];
+    U[1][2] = TU[1][2] - TU[1][1];
+    U[1][3] = TU[1][3] - TU[1][1];
+
+    U[2][0] = TU[2][0] - TU[2][2];
+    U[2][1] = TU[2][1] + TU[2][2];
+    U[2][2] = TU[2][2] - TU[2][1];
+    U[2][3] = TU[2][3] - TU[2][1];
+
+    U[3][0] = TU[3][0] - TU[3][2];
+    U[3][1] = TU[3][1] + TU[3][2];
+    U[3][2] = TU[3][2] - TU[3][1];
+    U[3][3] = TU[3][3] - TU[3][1];
+
+    return U;
+}
+
+inline float2x2 ApplyWinnogradA(float4x4 uv)
+{
+    // A x u x A, used mathematica to express the operation using only +/-
+    // return float2x2(float2(uv[0][0] + uv[0][1] + uv[0][2] + uv[1][0] + uv[1][1] + uv[1][2] + uv[2][0] + uv[2][1] + uv[2][2], uv[0][1] - uv[0][2] + uv[0][3] + uv[1][1] - uv[1][2] + uv[1][3] + uv[2][1] - uv[2][2] + uv[2][3]),
+    //                 float2(uv[1][0] + uv[1][1] + uv[1][2] - uv[2][0] - uv[2][1] - uv[2][2] + uv[3][0] + uv[3][1] + uv[3][2], uv[1][1] - uv[1][2] + uv[1][3] - uv[2][1] + uv[2][2] - uv[2][3] + uv[3][1] - uv[3][2] + uv[3][3])
+    //                );
+    // re-order operations to lower register pressure
+    float2x4 TY;
+    float2x2 Y;
+    TY[0][0] = uv[0][0] + uv[0][1] + uv[0][2];
+    TY[0][1] = uv[1][0] + uv[1][1] + uv[1][2];
+    TY[0][2] = uv[2][0] + uv[2][1] + uv[2][2];
+    TY[0][3] = uv[3][0] + uv[3][1] + uv[3][2];
+
+    TY[1][0] = uv[0][1] - uv[0][2] + uv[0][3];
+    TY[1][1] = uv[1][1] - uv[1][2] + uv[1][3];
+    TY[1][2] = uv[2][1] - uv[2][2] + uv[2][3];
+    TY[1][3] = uv[3][1] - uv[3][2] + uv[3][3];
+
+
+    Y[0][0] = TY[0][0] + TY[0][1] + TY[0][2];
+    Y[0][1] = TY[1][0] + TY[1][1] + TY[1][2];
+    Y[1][0] = TY[0][1] - TY[0][2] + TY[0][3];
+    Y[1][1] = TY[1][1] - TY[1][2] + TY[1][3];
+
+    return Y;
+}
+
+#elif KERNEL_SHAPE == 5
+// Winograd: 4x4 image, 3x3 kernel, 2x2 output
+inline float2x2 ApplyWinnogradA(float4 u0, float4 u1, float4 u2, float4 u3, float4 u4, float4 u5, float4 u6, float4 u7, float4 u8)
+{
+    // mul(Winograd_AT, mul(v*u, Winograd_A));
+    //static const float2x6 Winograd_AT = {{1, 1, 1, 1, 1, 0}, {0, 1, -1, 2, -2, 1}}
+    //static const float6x2 Winograd_A = {{1, 0}, {1, 1}, {1, -1}, {1, 2}, {1, -2}, {0, 1}}
+
+	float2x2 Y;
+	Y[0][0] = dot(u0, float4(1, 1,  1, 1)) + dot(u1, float4( 1, 0,  1, 1)) + dot(u2, float4( 1,  1,  1,  0)) + dot(u3, float4( 1,  1,  1, 1)) + dot(u4, float4( 1, 0,  1, 1)) + dot(u5, float4( 1,  1,  1,  0)) + dot(u6, float4( 1,  1,  1, 1)) + dot(u7, float4( 1, 0,  0, 0));
+	Y[0][1] = dot(u0, float4(0, 1, -1, 2)) + dot(u1, float4(-2, 1,  0, 1)) + dot(u2, float4(-1,  2, -2,  1)) + dot(u3, float4( 0,  1, -1, 2)) + dot(u4, float4(-2, 1,  0, 1)) + dot(u5, float4(-1,  2, -2,  1)) + dot(u6, float4( 0,  1, -1, 2)) + dot(u7, float4(-2, 1,  0, 0));
+	Y[1][0] = dot(u1, float4(0, 0,  1, 1)) + dot(u2, float4( 1, 1,  1, 0)) + dot(u3, float4(-1, -1, -1, -1)) + dot(u4, float4(-1,  0,  2, 2)) + dot(u5, float4( 2, 2,  2, 0)) + dot(u6, float4(-2, -2, -2, -2)) + dot(u7, float4(-2,  0,  1, 1)) + dot(u8, float4( 1, 1,  1, 0));
+	Y[1][1] = dot(u1, float4(0, 0,  0, 1)) + dot(u2, float4(-1, 2, -2, 1)) + dot(u3, float4( 0, -1,  1, -2)) + dot(u4, float4( 2, -1,  0, 2)) + dot(u5, float4(-2, 4, -4, 2)) + dot(u6, float4( 0, -2,  2, -4)) + dot(u7, float4( 4, -2,  0, 1)) + dot(u8, float4(-1, 2, -2, 1));
+
+	return Y;
+}
+
+inline void ApplyWinnogradB(float3x3 d00, float3x3 d01, float3x3 d10, float3x3 d11,
+	in out float4 u0, in out float4 u1, in out float4 u2, in out float4 u3, in out float4 u4, in out float4 u5, in out float4 u6, in out float4 u7, in out float4 u8)
+{
+	// mul(Winograd_BT, mul(d, Winograd_B));
+	//static const float6x6 Winograd_BT = {{4,  0, -5,  0, 1, 0},
+	//                                     {0, -4, -4,  1, 1, 0},
+	//                                     {0,  4, -4, -1, 1, 0},
+	//                                     {0, -2, -1,  2, 1, 0},
+	//                                     {0,  2, -1, -2, 1, 0},
+	//                                     {0,  4,  0, -5, 0, 1}}
+	//static const float6x6 Winograd_B = {{ 4,  0,  0,  0,  0, 0},
+	//									  { 0, -4,  4, -2,  2, 4},
+	//									  {-5, -4, -4, -1, -1, 0},
+	//									  { 0,  1, -1,  2, -2, -5},
+	//									  { 1,  1,  1,  1,  1, 0},
+	//									  { 0,  0,  0,  0,  0, 1}}
+	float3x3 a00 = mul(float3x3(float3(4,  0, -5), float3(0, -4, -4), float3(0, 4, -4)), d00) + mul(float3x3(float3(0, 1, 0), float3( 1, 1, 0), float3(-1, 1, 0)), d10);
+	float3x3 a01 = mul(float3x3(float3(4,  0, -5), float3(0, -4, -4), float3(0, 4, -4)), d01) + mul(float3x3(float3(0, 1, 0), float3( 1, 1, 0), float3(-1, 1, 0)), d11);
+	float3x3 a10 = mul(float3x3(float3(0, -2, -1), float3(0,  2, -1), float3(0, 4,  0)), d00) + mul(float3x3(float3(2, 1, 0), float3(-2, 1, 0), float3(-5, 0, 1)), d10);
+	float3x3 a11 = mul(float3x3(float3(0, -2, -1), float3(0,  2, -1), float3(0, 4,  0)), d01) + mul(float3x3(float3(2, 1, 0), float3(-2, 1, 0), float3(-5, 0, 1)), d11);
+
+	float3x3 y00 = mul(a00, float3x3(float3(4, 0, 0), float3( 0, -4, 4), float3(-5, -4, -4))) + mul(a01, float3x3(float3(0,  1, -1), float3(1, 1, 1), float3(0, 0, 0)));
+	float3x3 y01 = mul(a00, float3x3(float3(0, 0, 0), float3(-2,  2, 4), float3(-1, -1,  0))) + mul(a01, float3x3(float3( 2, -2, -5), float3(1, 1, 0), float3(0, 0, 1)));
+	float3x3 y10 = mul(a10, float3x3(float3(4, 0, 0), float3( 0, -4, 4), float3(-5, -4, -4))) + mul(a11, float3x3(float3(0,  1, -1), float3(1, 1, 1), float3(0, 0, 0)));
+	float3x3 y11 = mul(a10, float3x3(float3(0, 0, 0), float3(-2,  2, 4), float3(-1, -1,  0))) + mul(a11, float3x3(float3( 2, -2, -5), float3(1, 1, 0), float3(0, 0, 1)));
+	
+	u0.x *= y00[0][0];
+	u0.y *= y00[0][1];
+	u0.z *= y00[0][2];
+	u0.w *= y01[0][0];
+		 
+	u1.x *= y01[0][1];
+	u1.y *= y01[0][2];
+	u1.z *= y00[1][0];
+	u1.w *= y00[1][1];
+		 
+	u2.x *= y00[1][2];
+	u2.y *= y01[1][0];
+	u2.z *= y01[1][1];
+	u2.w *= y01[1][2];
+		 
+	u3.x *= y00[2][0];
+	u3.y *= y00[2][1];
+	u3.z *= y00[2][2];
+	u3.w *= y01[2][0];
+		 
+	u4.x *= y01[2][1];
+	u4.y *= y01[2][2];
+	u4.z *= y10[0][0];
+	u4.w *= y10[0][1];
+		 
+	u5.x *= y10[0][2];
+	u5.y *= y11[0][0];
+	u5.z *= y11[0][1];
+	u5.w *= y11[0][2];
+		 
+	u6.x *= y10[1][0];
+	u6.y *= y10[1][1];
+	u6.z *= y10[1][2];
+	u6.w *= y11[1][0];
+		 
+	u7.x *= y11[1][1];
+	u7.y *= y11[1][2];
+	u7.z *= y10[2][0];
+	u7.w *= y10[2][1];
+		 
+	u8.x *= y10[2][2];
+	u8.y *= y11[2][0];
+	u8.z *= y11[2][1];
+	u8.w *= y11[2][2];
+}
+#endif
+
+#if KERNEL_SHAPE == 3
+[numthreads(16, 4, 4)]
+#elif KERNEL_SHAPE == 5
+[numthreads(32, 2, 2)]
+#endif
+void FUNC_NAME(DepthwiseConv2D_Winograd, OUTPUT_SHAPE, KERNEL_SHAPE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex, uint3 groupID : SV_GroupID)
+{
+    //DISPATCH ARGS(K.kernelCount, O.width, O.height);
+    TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+
+    uint k = dispatchThreadID.x;
+    uint x = 2*dispatchThreadID.y;
+    uint y = 2*dispatchThreadID.z;
+
+    if (k >= K.channels) return;
+
+    for (uint n = 0; n < O.batch; ++n)
+    {
+		float2x2 acc = B.FastGet(k);
+
+        #if KERNEL_SHAPE == 3
+            // 16 loads per thread
+            float4x4 d;
+            d[0][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 0), k, _Pad.xy);
+            d[0][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 0), k, _Pad.xy);
+            d[0][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 0), k, _Pad.xy);
+            d[0][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 0), k, _Pad.xy);
+			 												  
+            d[1][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 1), k, _Pad.xy);
+            d[1][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 1), k, _Pad.xy);
+            d[1][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 1), k, _Pad.xy);
+            d[1][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 1), k, _Pad.xy);
+			 												  
+            d[2][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 2), k, _Pad.xy);
+            d[2][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 2), k, _Pad.xy);
+            d[2][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 2), k, _Pad.xy);
+            d[2][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 2), k, _Pad.xy);
+			 												  
+            d[3][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 3), k, _Pad.xy);
+            d[3][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 3), k, _Pad.xy);
+            d[3][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 3), k, _Pad.xy);
+            d[3][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 3), k, _Pad.xy);
+
+
+            float4x4 v;
+            v[0][0] = K.Get(0, 0, 0, k);
+            v[0][1] = K.Get(0, 1, 0, k);
+            v[0][2] = K.Get(0, 2, 0, k);
+            v[0][3] = K.Get(0, 3, 0, k);
+									
+            v[1][0] = K.Get(1, 0, 0, k);
+            v[1][1] = K.Get(1, 1, 0, k);
+            v[1][2] = K.Get(1, 2, 0, k);
+            v[1][3] = K.Get(1, 3, 0, k);
+									
+            v[2][0] = K.Get(2, 0, 0, k);
+            v[2][1] = K.Get(2, 1, 0, k);
+            v[2][2] = K.Get(2, 2, 0, k);
+            v[2][3] = K.Get(2, 3, 0, k);
+									
+            v[3][0] = K.Get(3, 0, 0, k);
+            v[3][1] = K.Get(3, 1, 0, k);
+            v[3][2] = K.Get(3, 2, 0, k);
+            v[3][3] = K.Get(3, 3, 0, k);
+
+            float4x4 u = ApplyWinnogradB(d);
+
+            acc += ApplyWinnogradA(v*u);
+
+        #elif KERNEL_SHAPE == 5
+			//float v[6][6];
+			float4 v0, v1, v2, v3, v4, v5, v6, v7, v8;
+			v0.x = K.Get(0, 0, 0, k);
+			v0.y = K.Get(0, 1, 0, k);
+			v0.z = K.Get(0, 2, 0, k);
+			v0.w = K.Get(0, 3, 0, k);
+
+			v1.x = K.Get(0, 4, 0, k);
+			v1.y = K.Get(0, 5, 0, k);
+			v1.z = K.Get(1, 0, 0, k);
+			v1.w = K.Get(1, 1, 0, k);
+
+			v2.x = K.Get(1, 2, 0, k);
+			v2.y = K.Get(1, 3, 0, k);
+			v2.z = K.Get(1, 4, 0, k);
+			v2.w = K.Get(1, 5, 0, k);
+
+			v3.x = K.Get(2, 0, 0, k);
+			v3.y = K.Get(2, 1, 0, k);
+			v3.z = K.Get(2, 2, 0, k);
+			v3.w = K.Get(2, 3, 0, k);
+
+			v4.x = K.Get(2, 4, 0, k);
+			v4.y = K.Get(2, 5, 0, k);
+			v4.z = K.Get(3, 0, 0, k);
+			v4.w = K.Get(3, 1, 0, k);
+
+			v5.x = K.Get(3, 2, 0, k);
+			v5.y = K.Get(3, 3, 0, k);
+			v5.z = K.Get(3, 4, 0, k);
+			v5.w = K.Get(3, 5, 0, k);
+
+			v6.x = K.Get(4, 0, 0, k);
+			v6.y = K.Get(4, 1, 0, k);
+			v6.z = K.Get(4, 2, 0, k);
+			v6.w = K.Get(4, 3, 0, k);
+
+			v7.x = K.Get(4, 4, 0, k);
+			v7.y = K.Get(4, 5, 0, k);
+			v7.z = K.Get(5, 0, 0, k);
+			v7.w = K.Get(5, 1, 0, k);
+
+			v8.x = K.Get(5, 2, 0, k);
+			v8.y = K.Get(5, 3, 0, k);
+			v8.z = K.Get(5, 4, 0, k);
+			v8.w = K.Get(5, 5, 0, k);
+
+			float3x3 d00, d01, d10, d11;
+			d00[0][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 0), k, _Pad.xy);
+			d00[0][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 0), k, _Pad.xy);
+			d00[0][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 0), k, _Pad.xy);
+			d01[0][0] = X.SafeGet(n, uint2(x, y) + uint2(3, 0), k, _Pad.xy);
+			d01[0][1] = X.SafeGet(n, uint2(x, y) + uint2(4, 0), k, _Pad.xy);
+			d01[0][2] = X.SafeGet(n, uint2(x, y) + uint2(5, 0), k, _Pad.xy);
+
+			d00[1][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 1), k, _Pad.xy);
+			d00[1][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 1), k, _Pad.xy);
+			d00[1][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 1), k, _Pad.xy);
+			d01[1][0] = X.SafeGet(n, uint2(x, y) + uint2(3, 1), k, _Pad.xy);
+			d01[1][1] = X.SafeGet(n, uint2(x, y) + uint2(4, 1), k, _Pad.xy);
+			d01[1][2] = X.SafeGet(n, uint2(x, y) + uint2(5, 1), k, _Pad.xy);
+
+			d00[2][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 2), k, _Pad.xy);
+			d00[2][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 2), k, _Pad.xy);
+			d00[2][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 2), k, _Pad.xy);
+			d01[2][0] = X.SafeGet(n, uint2(x, y) + uint2(3, 2), k, _Pad.xy);
+			d01[2][1] = X.SafeGet(n, uint2(x, y) + uint2(4, 2), k, _Pad.xy);
+			d01[2][2] = X.SafeGet(n, uint2(x, y) + uint2(5, 2), k, _Pad.xy);
+
+			d10[0][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 3), k, _Pad.xy);
+			d10[0][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 3), k, _Pad.xy);
+			d10[0][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 3), k, _Pad.xy);
+			d11[0][0] = X.SafeGet(n, uint2(x, y) + uint2(3, 3), k, _Pad.xy);
+			d11[0][1] = X.SafeGet(n, uint2(x, y) + uint2(4, 3), k, _Pad.xy);
+			d11[0][2] = X.SafeGet(n, uint2(x, y) + uint2(5, 3), k, _Pad.xy);
+
+			d10[1][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 4), k, _Pad.xy);
+			d10[1][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 4), k, _Pad.xy);
+			d10[1][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 4), k, _Pad.xy);
+			d11[1][0] = X.SafeGet(n, uint2(x, y) + uint2(3, 4), k, _Pad.xy);
+			d11[1][1] = X.SafeGet(n, uint2(x, y) + uint2(4, 4), k, _Pad.xy);
+			d11[1][2] = X.SafeGet(n, uint2(x, y) + uint2(5, 4), k, _Pad.xy);
+
+			d10[2][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 5), k, _Pad.xy);
+			d10[2][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 5), k, _Pad.xy);
+			d10[2][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 5), k, _Pad.xy);
+			d11[2][0] = X.SafeGet(n, uint2(x, y) + uint2(3, 5), k, _Pad.xy);
+			d11[2][1] = X.SafeGet(n, uint2(x, y) + uint2(4, 5), k, _Pad.xy);
+			d11[2][2] = X.SafeGet(n, uint2(x, y) + uint2(5, 5), k, _Pad.xy);
+
+		
+			//float u[6][6];
+			//float4 u0, u1, u2, u3, u4, u5, u6, u7, u8;
+			ApplyWinnogradB(d00, d01, d10, d11, v0, v1, v2, v3, v4, v5, v6, v7, v8);
+		
+			//u[0][0] *= v[0][0]; u[0][1] *= v[0][1]; u[0][2] *= v[0][2]; u[0][3] *= v[0][3]; u[0][4] *= v[0][4]; u[0][5] *= v[0][5];
+			//u[1][0] *= v[1][0]; u[1][1] *= v[1][1]; u[1][2] *= v[1][2]; u[1][3] *= v[1][3]; u[1][4] *= v[1][4]; u[1][5] *= v[1][5];
+			//u[2][0] *= v[2][0]; u[2][1] *= v[2][1]; u[2][2] *= v[2][2]; u[2][3] *= v[2][3]; u[2][4] *= v[2][4]; u[2][5] *= v[2][5];
+			//u[3][0] *= v[3][0]; u[3][1] *= v[3][1]; u[3][2] *= v[3][2]; u[3][3] *= v[3][3]; u[3][4] *= v[3][4]; u[3][5] *= v[3][5];
+			//u[4][0] *= v[4][0]; u[4][1] *= v[4][1]; u[4][2] *= v[4][2]; u[4][3] *= v[4][3]; u[4][4] *= v[4][4]; u[4][5] *= v[4][5];
+			//u[5][0] *= v[5][0]; u[5][1] *= v[5][1]; u[5][2] *= v[5][2]; u[5][3] *= v[5][3]; u[5][4] *= v[5][4]; u[5][5] *= v[5][5];
+
+			//u0 *= v0;
+			//u1 *= v1;
+			//u2 *= v2;
+			//u3 *= v3;
+			//u4 *= v4;
+			//u5 *= v5;
+			//u6 *= v6;
+			//u7 *= v7;
+			//u8 *= v8;
+		
+            acc += ApplyWinnogradA(v0, v1, v2, v3, v4, v5, v6, v7, v8);
+        #endif
+
+		#if KERNEL_SHAPE == 3
+			if (y + 0 < O.height && x + 0 < O.width)
+				O.SetWithActivation(n, y + 0, x + 0, k, acc[0][0]);
+			if (y + 0 < O.height && x + 1 < O.width)
+				O.SetWithActivation(n, y + 0, x + 1, k, acc[0][1]);
+			if (y + 1 < O.height && x + 0 < O.width)
+				O.SetWithActivation(n, y + 1, x + 0, k, acc[1][0]);
+			if (y + 1 < O.height && x + 1 < O.width)
+				O.SetWithActivation(n, y + 1, x + 1, k, acc[1][1]);
+		#elif KERNEL_SHAPE == 5
+			if (y + 0 < O.height && x + 0 < O.width)
+				O.SetWithActivation(n, y + 0, x + 0, k, acc[0][0]);
+			if (y + 0 < O.height && x + 1 < O.width)
+				O.SetWithActivation(n, y + 0, x + 1, k, acc[0][1]);
+			if (y + 1 < O.height && x + 0 < O.width)
+				O.SetWithActivation(n, y + 1, x + 0, k, acc[1][0]);
+			if (y + 1 < O.height && x + 1 < O.width)
+				O.SetWithActivation(n, y + 1, x + 1, k, acc[1][1]);
+		#endif
+    }
+}
+
+#define CACHEBLOCK 32
+
+#if USELDS
+groupshared float CACHE_NAME(Conv2D_Winograd, OUTPUT_SHAPE, KERNEL_SHAPE, LDS)[2175];
+#endif
+
+[numthreads(32, 2, 2)]
+void FUNC_NAME(Conv2D_Winograd, OUTPUT_SHAPE, KERNEL_SHAPE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex, uint3 groupID : SV_GroupID)
+{
+	//DISPATCH ARGS(K.kernelCount, O.width, O.height);
+	TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+#if USELDS
+	#define LDS_ CACHE_NAME(Conv2D_Winograd, OUTPUT_SHAPE, KERNEL_SHAPE, LDS)
+#endif
+
+	uint k = dispatchThreadID.x;
+	uint x = 2 * dispatchThreadID.y;
+	uint y = 2 * dispatchThreadID.z;
+
+	//if (k >= K.channels) return;
+
+	for (uint n = 0; n < O.batch; ++n)
+	{
+
+		float4x4 acc4 = 0.0;
+		for (uint c = 0; c < X.channels; c += CACHEBLOCK)
+		{
+			#if USELDS
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 0 + 0)] = X.SafeGet(n, uint2(x, y) + uint2(0, 0), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 0 + 1)] = X.SafeGet(n, uint2(x, y) + uint2(1, 0), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 0 + 2)] = X.SafeGet(n, uint2(x, y) + uint2(2, 0), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 0 + 3)] = X.SafeGet(n, uint2(x, y) + uint2(3, 0), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 1 + 0)] = X.SafeGet(n, uint2(x, y) + uint2(0, 1), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 1 + 1)] = X.SafeGet(n, uint2(x, y) + uint2(1, 1), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 1 + 2)] = X.SafeGet(n, uint2(x, y) + uint2(2, 1), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 1 + 3)] = X.SafeGet(n, uint2(x, y) + uint2(3, 1), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 2 + 0)] = X.SafeGet(n, uint2(x, y) + uint2(0, 2), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 2 + 1)] = X.SafeGet(n, uint2(x, y) + uint2(1, 2), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 2 + 2)] = X.SafeGet(n, uint2(x, y) + uint2(2, 2), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 2 + 3)] = X.SafeGet(n, uint2(x, y) + uint2(3, 2), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 3 + 0)] = X.SafeGet(n, uint2(x, y) + uint2(0, 3), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 3 + 1)] = X.SafeGet(n, uint2(x, y) + uint2(1, 3), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 3 + 2)] = X.SafeGet(n, uint2(x, y) + uint2(2, 3), c + (groupThreadID.x), _Pad.xy);
+				LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + (groupThreadID.x) * 17 + (4 * 3 + 3)] = X.SafeGet(n, uint2(x, y) + uint2(3, 3), c + (groupThreadID.x), _Pad.xy);
+
+				GroupMemoryBarrierWithGroupSync();
+			#endif
+
+			for (uint cc = 0; cc < CACHEBLOCK; cc++)
+			{
+
+#if KERNEL_SHAPE == 3
+				// 16 loads per thread
+				float4x4 d;
+				#if USELDS
+					d[0][0] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 0 + 0)];
+					d[0][1] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 0 + 1)];
+					d[0][2] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 0 + 2)];
+					d[0][3] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 0 + 3)];
+					d[1][0] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 1 + 0)];
+					d[1][1] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 1 + 1)];
+					d[1][2] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 1 + 2)];
+					d[1][3] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 1 + 3)];
+					d[2][0] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 2 + 0)];
+					d[2][1] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 2 + 1)];
+					d[2][2] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 2 + 2)];
+					d[2][3] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 2 + 3)];
+					d[3][0] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 3 + 0)];
+					d[3][1] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 3 + 1)];
+					d[3][2] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 3 + 2)];
+					d[3][3] = LDS_[17*32*(groupThreadID.y*2+groupThreadID.z) + 17*cc + (4 * 3 + 3)];
+				#else
+					d[0][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 0), c + cc, _Pad.xy);
+					d[0][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 0), c + cc, _Pad.xy);
+					d[0][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 0), c + cc, _Pad.xy);
+					d[0][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 0), c + cc, _Pad.xy);
+					d[1][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 1), c + cc, _Pad.xy);
+					d[1][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 1), c + cc, _Pad.xy);
+					d[1][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 1), c + cc, _Pad.xy);
+					d[1][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 1), c + cc, _Pad.xy);
+					d[2][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 2), c + cc, _Pad.xy);
+					d[2][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 2), c + cc, _Pad.xy);
+					d[2][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 2), c + cc, _Pad.xy);
+					d[2][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 2), c + cc, _Pad.xy);
+					d[3][0] = X.SafeGet(n, uint2(x, y) + uint2(0, 3), c + cc, _Pad.xy);
+					d[3][1] = X.SafeGet(n, uint2(x, y) + uint2(1, 3), c + cc, _Pad.xy);
+					d[3][2] = X.SafeGet(n, uint2(x, y) + uint2(2, 3), c + cc, _Pad.xy);
+					d[3][3] = X.SafeGet(n, uint2(x, y) + uint2(3, 3), c + cc, _Pad.xy);
+				#endif
+
+				float4x4 v;
+				v[0][0] = K.Get(0, 0, c + cc, min(k, K.channels-1));
+				v[0][1] = K.Get(0, 1, c + cc, min(k, K.channels-1));
+				v[0][2] = K.Get(0, 2, c + cc, min(k, K.channels-1));
+				v[0][3] = K.Get(0, 3, c + cc, min(k, K.channels-1));
+				v[1][0] = K.Get(1, 0, c + cc, min(k, K.channels-1));
+				v[1][1] = K.Get(1, 1, c + cc, min(k, K.channels-1));
+				v[1][2] = K.Get(1, 2, c + cc, min(k, K.channels-1));
+				v[1][3] = K.Get(1, 3, c + cc, min(k, K.channels-1));
+				v[2][0] = K.Get(2, 0, c + cc, min(k, K.channels-1));
+				v[2][1] = K.Get(2, 1, c + cc, min(k, K.channels-1));
+				v[2][2] = K.Get(2, 2, c + cc, min(k, K.channels-1));
+				v[2][3] = K.Get(2, 3, c + cc, min(k, K.channels-1));
+				v[3][0] = K.Get(3, 0, c + cc, min(k, K.channels-1));
+				v[3][1] = K.Get(3, 1, c + cc, min(k, K.channels-1));
+				v[3][2] = K.Get(3, 2, c + cc, min(k, K.channels-1));
+				v[3][3] = K.Get(3, 3, c + cc, min(k, K.channels-1));
+
+
+				float4x4 u = ApplyWinnogradB(d);
+
+				acc4 += v * u;
+#endif
+			}
+		}
+
+		float2x2 acc = (k < K.channels) ? B.FastGet(k) : 0.0f;
+#if KERNEL_SHAPE == 3
+		acc += ApplyWinnogradA(acc4);
+#endif
+
+		if (y + 0 < O.height && x + 0 < O.width && k < K.channels)
+			O.SetWithActivation(n, y + 0, x + 0, k, acc[0][0]);
+		if (y + 0 < O.height && x + 1 < O.width && k < K.channels)
+			O.SetWithActivation(n, y + 0, x + 1, k, acc[0][1]);
+		if (y + 1 < O.height && x + 0 < O.width && k < K.channels)
+			O.SetWithActivation(n, y + 1, x + 0, k, acc[1][0]);
+		if (y + 1 < O.height && x + 1 < O.width && k < K.channels)
+			O.SetWithActivation(n, y + 1, x + 1, k, acc[1][1]);
+	}
+}
+
+#undef CACHEBLOCK
+#undef FUNC_NAME_CALL
+#undef FUNC_NAME
+
+#define FUNC_NAME_CALL(KERNEL, KERNEL_SHAPE) KERNEL##_##KERNEL_SHAPE##x##KERNEL_SHAPE
+#define FUNC_NAME(KERNEL, KERNEL_SHAPE) FUNC_NAME_CALL(KERNEL, KERNEL_SHAPE)
+
+#if KERNEL_SHAPE == 5
+void ApplyWinnogradG(float g[5][5], out float V[6][6])
+{
+	// mul(Winograd_G, mul(g, Winograd_GT));
+	//static const float5x6 Winograd_G = 1/24 * {{6, 0, 0, 0, 0}, {-4, -4, -4, -4, -4}, {-4, 4, -4, 4, -4⎥}, {1, 2, 4, 8, 16}, {1, -2, 4, -8, 16}, {0, 0, 0, 0, 24}}
+	//static const float6x5 Winograd_GT = 1/24 * {{6, -4, -4, 1, 1, 0}, {0, -4, 4, 2, -2, 0}, {0, -4, -4, 4, 4, 0}, {0, -4, 4, 8, -8, 0}, {0, -4, -4, 16, 16, 24}}
+
+	float a00 = 6 * g[0][0] / 24;
+	float a10 = 6 * g[1][0] / 24;
+	float a20 = 6 * g[2][0] / 24;
+	float a30 = 6 * g[3][0] / 24;
+	float a40 = 6 * g[4][0] / 24;
+
+	float a01 = (-4 * g[0][0] - 4 * g[0][1] - 4 * g[0][2] - 4 * g[0][3] - 4 * g[0][4]) / 24;
+	float a11 = (-4 * g[1][0] - 4 * g[1][1] - 4 * g[1][2] - 4 * g[1][3] - 4 * g[1][4]) / 24;
+	float a21 = (-4 * g[2][0] - 4 * g[2][1] - 4 * g[2][2] - 4 * g[2][3] - 4 * g[2][4]) / 24;
+	float a31 = (-4 * g[3][0] - 4 * g[3][1] - 4 * g[3][2] - 4 * g[3][3] - 4 * g[3][4]) / 24;
+	float a41 = (-4 * g[4][0] - 4 * g[4][1] - 4 * g[4][2] - 4 * g[4][3] - 4 * g[4][4]) / 24;
+
+	float a02 = (-4 * g[0][0] + 4 * g[0][1] - 4 * g[0][2] + 4 * g[0][3] - 4 * g[0][4]) / 24;
+	float a12 = (-4 * g[1][0] + 4 * g[1][1] - 4 * g[1][2] + 4 * g[1][3] - 4 * g[1][4]) / 24;
+	float a22 = (-4 * g[2][0] + 4 * g[2][1] - 4 * g[2][2] + 4 * g[2][3] - 4 * g[2][4]) / 24;
+	float a32 = (-4 * g[3][0] + 4 * g[3][1] - 4 * g[3][2] + 4 * g[3][3] - 4 * g[3][4]) / 24;
+	float a42 = (-4 * g[4][0] + 4 * g[4][1] - 4 * g[4][2] + 4 * g[4][3] - 4 * g[4][4]) / 24;
+
+	float a03 = (g[0][0] + 2 * g[0][1] + 4 * g[0][2] + 8 * g[0][3] + 16 * g[0][4]) / 24;
+	float a13 = (g[1][0] + 2 * g[1][1] + 4 * g[1][2] + 8 * g[1][3] + 16 * g[1][4]) / 24;
+	float a23 = (g[2][0] + 2 * g[2][1] + 4 * g[2][2] + 8 * g[2][3] + 16 * g[2][4]) / 24;
+	float a33 = (g[3][0] + 2 * g[3][1] + 4 * g[3][2] + 8 * g[3][3] + 16 * g[3][4]) / 24;
+	float a43 = (g[4][0] + 2 * g[4][1] + 4 * g[4][2] + 8 * g[4][3] + 16 * g[4][4]) / 24;
+
+	float a04 = (g[0][0] - 2 * g[0][1] + 4 * g[0][2] - 8 * g[0][3] + 16 * g[0][4]) / 24;
+	float a14 = (g[1][0] - 2 * g[1][1] + 4 * g[1][2] - 8 * g[1][3] + 16 * g[1][4]) / 24;
+	float a24 = (g[2][0] - 2 * g[2][1] + 4 * g[2][2] - 8 * g[2][3] + 16 * g[2][4]) / 24;
+	float a34 = (g[3][0] - 2 * g[3][1] + 4 * g[3][2] - 8 * g[3][3] + 16 * g[3][4]) / 24;
+	float a44 = (g[4][0] - 2 * g[4][1] + 4 * g[4][2] - 8 * g[4][3] + 16 * g[4][4]) / 24;
+
+	float a05 = g[0][4];
+	float a15 = g[1][4];
+	float a25 = g[2][4];
+	float a35 = g[3][4];
+	float a45 = g[4][4];
+
+	V[0][0] = 6 * a00 / 24;
+	V[0][1] = 6 * a01 / 24;
+	V[0][2] = 6 * a02 / 24;
+	V[0][3] = 6 * a03 / 24;
+	V[0][4] = 6 * a04 / 24;
+	V[0][5] = 6 * a05 / 24;
+
+	V[1][0] = (-4 * a00 - 4 * a10 - 4 * a20 - 4 * a30 - 4 * a40) / 24;
+	V[1][1] = (-4 * a01 - 4 * a11 - 4 * a21 - 4 * a31 - 4 * a41) / 24;
+	V[1][2] = (-4 * a02 - 4 * a12 - 4 * a22 - 4 * a32 - 4 * a42) / 24;
+	V[1][3] = (-4 * a03 - 4 * a13 - 4 * a23 - 4 * a33 - 4 * a43) / 24;
+	V[1][4] = (-4 * a04 - 4 * a14 - 4 * a24 - 4 * a34 - 4 * a44) / 24;
+	V[1][5] = (-4 * a05 - 4 * a15 - 4 * a25 - 4 * a35 - 4 * a45) / 24;
+
+	V[2][0] = (-4 * a00 + 4 * a10 - 4 * a20 + 4 * a30 - 4 * a40) / 24;
+	V[2][1] = (-4 * a01 + 4 * a11 - 4 * a21 + 4 * a31 - 4 * a41) / 24;
+	V[2][2] = (-4 * a02 + 4 * a12 - 4 * a22 + 4 * a32 - 4 * a42) / 24;
+	V[2][3] = (-4 * a03 + 4 * a13 - 4 * a23 + 4 * a33 - 4 * a43) / 24;
+	V[2][4] = (-4 * a04 + 4 * a14 - 4 * a24 + 4 * a34 - 4 * a44) / 24;
+	V[2][5] = (-4 * a05 + 4 * a15 - 4 * a25 + 4 * a35 - 4 * a45) / 24;
+
+	V[3][0] = (a00 + 2 * a10 + 4 * a20 + 8 * a30 + 16 * a40) / 24;
+	V[3][1] = (a01 + 2 * a11 + 4 * a21 + 8 * a31 + 16 * a41) / 24;
+	V[3][2] = (a02 + 2 * a12 + 4 * a22 + 8 * a32 + 16 * a42) / 24;
+	V[3][3] = (a03 + 2 * a13 + 4 * a23 + 8 * a33 + 16 * a43) / 24;
+	V[3][4] = (a04 + 2 * a14 + 4 * a24 + 8 * a34 + 16 * a44) / 24;
+	V[3][5] = (a05 + 2 * a15 + 4 * a25 + 8 * a35 + 16 * a45) / 24;
+
+	V[4][0] = (a00 - 2 * a10 + 4 * a20 - 8 * a30 + 16 * a40) / 24;
+	V[4][1] = (a01 - 2 * a11 + 4 * a21 - 8 * a31 + 16 * a41) / 24;
+	V[4][2] = (a02 - 2 * a12 + 4 * a22 - 8 * a32 + 16 * a42) / 24;
+	V[4][3] = (a03 - 2 * a13 + 4 * a23 - 8 * a33 + 16 * a43) / 24;
+	V[4][4] = (a04 - 2 * a14 + 4 * a24 - 8 * a34 + 16 * a44) / 24;
+	V[4][5] = (a05 - 2 * a15 + 4 * a25 - 8 * a35 + 16 * a45) / 24;
+
+	V[5][0] = a40;
+	V[5][1] = a41;
+	V[5][2] = a42;
+	V[5][3] = a43;
+	V[5][4] = a44;
+	V[5][5] = a45;
+}
+#endif
+
+[numthreads(4, 4, 4)]
+void FUNC_NAME(KernelWinograd, KERNEL_SHAPE)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	TENSOR_SHARED_MODEL(K, WBK); TENSOR_SHARED_MODEL(B, WBK); TENSOR_ARG_RW(O)
+
+	uint k = dispatchThreadID.x;
+	uint c = dispatchThreadID.y;
+	uint i = dispatchThreadID.z;
+
+	if (c >= K.GetKernelDepth()) return;
+	if (k >= K.GetKernelCount()) return;
+
+	#if KERNEL_SHAPE == 5
+	float g[5][5];
+	g[0][0] = K.Get(0, 0, 0, k);
+	g[0][1] = K.Get(0, 1, 0, k);
+	g[0][2] = K.Get(0, 2, 0, k);
+	g[0][3] = K.Get(0, 3, 0, k);
+	g[0][4] = K.Get(0, 4, 0, k);
+
+	g[1][0] = K.Get(1, 0, 0, k);
+	g[1][1] = K.Get(1, 1, 0, k);
+	g[1][2] = K.Get(1, 2, 0, k);
+	g[1][3] = K.Get(1, 3, 0, k);
+	g[1][4] = K.Get(1, 4, 0, k);
+
+	g[2][0] = K.Get(2, 0, 0, k);
+	g[2][1] = K.Get(2, 1, 0, k);
+	g[2][2] = K.Get(2, 2, 0, k);
+	g[2][3] = K.Get(2, 3, 0, k);
+	g[2][4] = K.Get(2, 4, 0, k);
+
+	g[3][0] = K.Get(3, 0, 0, k);
+	g[3][1] = K.Get(3, 1, 0, k);
+	g[3][2] = K.Get(3, 2, 0, k);
+	g[3][3] = K.Get(3, 3, 0, k);
+	g[3][4] = K.Get(3, 4, 0, k);
+
+	g[4][0] = K.Get(4, 0, 0, k);
+	g[4][1] = K.Get(4, 1, 0, k);
+	g[4][2] = K.Get(4, 2, 0, k);
+	g[4][3] = K.Get(4, 3, 0, k);
+	g[4][4] = K.Get(4, 4, 0, k);
+
+	float v[6][6];
+	ApplyWinnogradG(g, v);
+
+	O.Set(0, 0, c, k, v[0][0]);
+	O.Set(1, 0, c, k, v[1][0]);
+	O.Set(2, 0, c, k, v[2][0]);
+	O.Set(3, 0, c, k, v[3][0]);
+	O.Set(4, 0, c, k, v[4][0]);
+	O.Set(5, 0, c, k, v[5][0]);
+
+	O.Set(0, 1, c, k, v[0][1]);
+	O.Set(1, 1, c, k, v[1][1]);
+	O.Set(2, 1, c, k, v[2][1]);
+	O.Set(3, 1, c, k, v[3][1]);
+	O.Set(4, 1, c, k, v[4][1]);
+	O.Set(5, 1, c, k, v[5][1]);
+
+	O.Set(0, 2, c, k, v[0][2]);
+	O.Set(1, 2, c, k, v[1][2]);
+	O.Set(2, 2, c, k, v[2][2]);
+	O.Set(3, 2, c, k, v[3][2]);
+	O.Set(4, 2, c, k, v[4][2]);
+	O.Set(5, 2, c, k, v[5][2]);
+
+	O.Set(0, 3, c, k, v[0][3]);
+	O.Set(1, 3, c, k, v[1][3]);
+	O.Set(2, 3, c, k, v[2][3]);
+	O.Set(3, 3, c, k, v[3][3]);
+	O.Set(4, 3, c, k, v[4][3]);
+	O.Set(5, 3, c, k, v[5][3]);
+
+	O.Set(0, 4, c, k, v[0][4]);
+	O.Set(1, 4, c, k, v[1][4]);
+	O.Set(2, 4, c, k, v[2][4]);
+	O.Set(3, 4, c, k, v[3][4]);
+	O.Set(4, 4, c, k, v[4][4]);
+	O.Set(5, 4, c, k, v[5][4]);
+
+	O.Set(0, 5, c, k, v[0][5]);
+	O.Set(1, 5, c, k, v[1][5]);
+	O.Set(2, 5, c, k, v[2][5]);
+	O.Set(3, 5, c, k, v[3][5]);
+	O.Set(4, 5, c, k, v[4][5]);
+	O.Set(5, 5, c, k, v[5][5]);
+	#endif
+
+	uint kLength = (K.GetKernelHeight() + 1) * (K.GetKernelWidth() + 1) * K.GetKernelDepth() * K.GetKernelCount();
+	if (i < B.GetLength())
+		O.FastSet(kLength + i, B.FastGet(i));
+}
+
+#undef FUNC_NAME_CALL
+#undef FUNC_NAME
+
+#if CHANNELS_FIRST
+	#define FUNC_NAME_CALL(KERNEL, KERNEL_SHAPE, IBLOCK, KBLOCK, JBLOCK) KERNEL##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE##_##IBLOCK##x##KBLOCK##x##JBLOCK##_NCHW
+#else
+	#define FUNC_NAME_CALL(KERNEL, KERNEL_SHAPE, IBLOCK, KBLOCK, JBLOCK) KERNEL##_Kernel##KERNEL_SHAPE##x##KERNEL_SHAPE##_##IBLOCK##x##KBLOCK##x##JBLOCK##_NHWC
+#endif
+#define FUNC_NAME(KERNEL, KERNEL_SHAPE, IBLOCK, KBLOCK, JBLOCK) FUNC_NAME_CALL(KERNEL, KERNEL_SHAPE, IBLOCK, KBLOCK, JBLOCK)
+
+// GPU_Pro_5_Advanced_Rendering_Techniques
+// Cache-blocked implementation: 1x4x4 gemm with ^K_cache = 32
+
+#define CACHEBLOCK 2
+
+[numthreads(16, 4, 4)]
+void FUNC_NAME(Conv2D, KERNEL_SHAPE, IBLOCK, KBLOCK, JBLOCK)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+	//DISPATCH ARGS(K.kernelCount, O.width, O.height);
+	TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+	uint width = O.width;
+	uint height = O.height;
+	uint batches = O.batch;
+	uint channels = (X.channels + 4 - 1) / 4;
+	   
+	uint k = dispatchThreadID.x;
+	uint x = dispatchThreadID.y;
+	uint y = dispatchThreadID.z;
+
+	for (uint n = 0; n < O.batch; ++n)
+	{
+		float4 acc = float4(B.FastGet(min(4 * k + 0, K.channels - 1)), B.FastGet(min(4 * k + 1, K.channels - 1)), B.FastGet(min(4 * k + 2, K.channels - 1)), B.FastGet(min(4 * k + 3, K.channels - 1)));
+
+		for (uint c = 0; c < channels; c += CACHEBLOCK)
+		{
+			for (uint cc = 0; cc < CACHEBLOCK; ++cc)
+			{
+				float w00 = K.Get(0, 0, 4 * (c + cc) + 0, min(4 * k + 0, K.channels - 1));
+				float w01 = K.Get(0, 0, 4 * (c + cc) + 1, min(4 * k + 0, K.channels - 1));
+				float w02 = K.Get(0, 0, 4 * (c + cc) + 2, min(4 * k + 0, K.channels - 1));
+				float w03 = K.Get(0, 0, 4 * (c + cc) + 3, min(4 * k + 0, K.channels - 1));
+
+				float w10 = K.Get(0, 0, 4 * (c + cc) + 0, min(4 * k + 1, K.channels - 1));
+				float w11 = K.Get(0, 0, 4 * (c + cc) + 1, min(4 * k + 1, K.channels - 1));
+				float w12 = K.Get(0, 0, 4 * (c + cc) + 2, min(4 * k + 1, K.channels - 1));
+				float w13 = K.Get(0, 0, 4 * (c + cc) + 3, min(4 * k + 1, K.channels - 1));
+
+				float w20 = K.Get(0, 0, 4 * (c + cc) + 0, min(4 * k + 2, K.channels - 1));
+				float w21 = K.Get(0, 0, 4 * (c + cc) + 1, min(4 * k + 2, K.channels - 1));
+				float w22 = K.Get(0, 0, 4 * (c + cc) + 2, min(4 * k + 2, K.channels - 1));
+				float w23 = K.Get(0, 0, 4 * (c + cc) + 3, min(4 * k + 2, K.channels - 1));
+
+				float w30 = K.Get(0, 0, 4 * (c + cc) + 0, min(4 * k + 3, K.channels - 1));
+				float w31 = K.Get(0, 0, 4 * (c + cc) + 1, min(4 * k + 3, K.channels - 1));
+				float w32 = K.Get(0, 0, 4 * (c + cc) + 2, min(4 * k + 3, K.channels - 1));
+				float w33 = K.Get(0, 0, 4 * (c + cc) + 3, min(4 * k + 3, K.channels - 1));
+
+
+
+				float v0 = X.SafeGet(n, uint2(x, y) * _Stride.xy, 4 * (c + cc) + 0, _Pad.xy);
+				float v1 = X.SafeGet(n, uint2(x, y) * _Stride.xy, 4 * (c + cc) + 1, _Pad.xy);
+				float v2 = X.SafeGet(n, uint2(x, y) * _Stride.xy, 4 * (c + cc) + 2, _Pad.xy);
+				float v3 = X.SafeGet(n, uint2(x, y) * _Stride.xy, 4 * (c + cc) + 3, _Pad.xy);
+
+				acc.x += dot(float4(v0, v1, v2, v3), float4(w00, w01, w02, w03));
+				acc.y += dot(float4(v0, v1, v2, v3), float4(w10, w11, w12, w13));
+				acc.z += dot(float4(v0, v1, v2, v3), float4(w20, w21, w22, w23));
+				acc.w += dot(float4(v0, v1, v2, v3), float4(w30, w31, w32, w33));
+			}
+
+			DeviceMemoryBarrierWithGroupSync();
+		}
+
+		if (y < height && x < width && 4 * k + 0 < K.channels)
+			O.SetWithActivation(n, y, x, 4 * k + 0, acc.x);
+		if (y < height && x < width && 4 * k + 1 < K.channels)
+			O.SetWithActivation(n, y, x, 4 * k + 1, acc.y);
+		if (y < height && x < width && 4 * k + 2 < K.channels)
+			O.SetWithActivation(n, y, x, 4 * k + 2, acc.z);
+		if (y < height && x < width && 4 * k + 3 < K.channels)
+			O.SetWithActivation(n, y, x, 4 * k + 3, acc.w);
+	}
+}
+
+#if BLOCK_SIZE == 4
+
+#undef FUNC_NAME_CALL
+#undef CACHE_NAME_CALL
+#undef FUNC_NAME
+#undef CACHE_NAME
+
+#define KERNEL_NAME Conv2D
+
+#if CHANNELS_FIRST
+	#define FUNC_NAME_CALL(KERNEL, SUFFIX, SIZE) KERNEL##_##SUFFIX##SIZE##x##SIZE##_NCHW
+    #define CACHE_NAME_CALL(KERNEL, SUFFIX, SIZE, TENSOR)  KERNEL##_##SUFFIX##SIZE##x##SIZE##_Cache_##TENSOR##_NCHW
+#else
+    #define FUNC_NAME_CALL(KERNEL, SUFFIX, SIZE)  KERNEL##_##SUFFIX##SIZE##x##SIZE##_NHWC
+    #define CACHE_NAME_CALL(KERNEL, SUFFIX, SIZE, TENSOR)  KERNEL##_##SUFFIX##SIZE##x##SIZE##_Cache_##TENSOR##_NHWC
+#endif
+#define FUNC_NAME(KERNEL, SUFFIX, SIZE) FUNC_NAME_CALL(KERNEL, SUFFIX, SIZE)
+#define CACHE_NAME(KERNEL, SUFFIX, SIZE, TENSOR) CACHE_NAME_CALL(KERNEL, SUFFIX, SIZE, TENSOR)
+
+#if KERNEL_PER_TG == 256
+#define CACHE_DEPTH 16 // This kernel code supports only CACHE_DEPTH=16, this value can not be changed
+#if CHANNELS_FIRST
+groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS)[CACHE_DEPTH * 16 * BLOCK_SIZE + CACHE_DEPTH * 64];
+#else
+groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS)[CACHE_DEPTH * 16 * BLOCK_SIZE + CACHE_DEPTH * 66];
+#endif
+[numthreads(16, 16, 1)]
+void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex, uint3 groupID : SV_GroupID)
+{
+	//DISPATCH ARGS(K.kernelCount, O.width * O.height, O.batch);     // in NCHW
+
+	TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+	// [W*H, Ky*Kx*In] * [Ky*Kx*In, Out] => [W*H, Out]
+#define LDS_ CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS)
+#define X_OFFSET 0
+#if CHANNELS_FIRST
+#define W_OFFSET CACHE_DEPTH*64
+#else
+#define W_OFFSET CACHE_DEPTH*66
+#endif
+
+	uint x = dispatchThreadID.x * BLOCK_SIZE; // output_channels
+	uint y = dispatchThreadID.y * BLOCK_SIZE; // batch*width*height (width*height in HWC)
+	uint tx = groupThreadID.x;
+	uint ty = groupThreadID.y;
+	uint bx = (16 * groupID.x) * BLOCK_SIZE;
+	uint by = (16 * groupID.y) * BLOCK_SIZE;
+	uint ti = threadIndex;
+	uint w = O.width;
+	uint h = O.height;
+	uint batches = X.batch;
+	uint channels = X.channels;
+	uint widthX = X.width;
+	uint heightX = X.height;
+	uint strideX = X.channels;
+	uint strideK = K.channels;
+	uint strideO = O.channels;
+	uint batchReadOffset = dispatchThreadID.z * channels * heightX * widthX;
+	uint batchWriteOffset = dispatchThreadID.z * strideO * h * w;
+#if CHANNELS_FIRST
+	uint kernelBaseId = groupID.x * 64;
+	uint outputPixelBaseId = groupID.y * 64;
+	uint numOuputPixels = w * h;
+#endif
+
+
+	float4 dstA0;
+	float4 dstA1;
+	float4 dstA2;
+	float4 dstA3;
+
+	uint maxBiasIndex = O.channels - 1;
+	dstA0.x = B.FastGet(min(maxBiasIndex, x + 0)); dstA0.y = B.FastGet(min(maxBiasIndex, x + 1)); dstA0.z = B.FastGet(min(maxBiasIndex, x + 2)); dstA0.w = B.FastGet(min(maxBiasIndex, x + 3));
+	dstA1 = dstA0;
+	dstA2 = dstA0;
+	dstA3 = dstA0;
+
+
+	uint readK = strideK * (ti >> 6) + (bx | (ti & 63));
+	bool maskK = (bx + (ti & 63)) < strideK;
+
+#if CHANNELS_FIRST
+	uint centroidId = by | (ti & 63);
+#if KERNEL_1x1
+	uint topY = (centroidId / w % h) * _Stride.y;
+	uint leftX = (centroidId % w) * _Stride.x;
+#else
+	uint topY = (centroidId / w % h) * _Stride.y - _Pad.y;
+	uint leftX = (centroidId % w) * _Stride.x - _Pad.x;
+#endif
+	uint cornerId = topY * widthX + leftX;
+	uint readX = heightX * widthX * (ti >> 6) + cornerId + batchReadOffset;
+	bool mask;
+#else
+	uint4 centroidId = uint4(
+		(by | 16 * 0 | (ti >> 4)),
+		(by | 16 * 1 | (ti >> 4)),
+		(by | 16 * 2 | (ti >> 4)),
+		(by | 16 * 3 | (ti >> 4)));
+
+#if KERNEL_1x1
+	uint4 topY = (centroidId / w % h) * _Stride.y;
+	uint4 leftX = (centroidId % w) * _Stride.x;
+#else
+	uint4 topY = (centroidId / w % h) * _Stride.y - _Pad.y;
+	uint4 leftX = (centroidId % w) * _Stride.x - _Pad.x;
+#endif
+	uint4 cornerId = topY * widthX + leftX;
+	uint4 readX = strideX * cornerId + (ti & 15) + batchReadOffset;
+	bool4 mask;
+#endif
+
+#if KERNEL_1x1
+	uint kernelOffsetX = 0;
+	mask = (centroidId / w % h) * _Stride.y < heightX &&
+		   (centroidId % w) * _Stride.x < widthX;
+#else
+	for (uint dy = 0; dy < K.GetKernelHeight(); dy++)
+	{
+		for (uint dx = 0; dx < K.GetKernelWidth(); dx++)
+		{
+			#if CHANNELS_FIRST
+            uint kernelOffsetX = (dy * widthX + dx);
+            #else
+            uint kernelOffsetX = (dy * widthX + dx) * strideX;
+            #endif
+
+			mask =
+				((centroidId / w % h) * _Stride.y + dy) >= _Pad.y &&
+				((centroidId / w % h) * _Stride.y + dy) < (heightX + _Pad.y) &&
+				((centroidId % w) * _Stride.x + dx) >= _Pad.x &&
+				((centroidId % w) * _Stride.x + dx) < (widthX + _Pad.x);
+#endif
+			for (uint i = 0; i < channels; i += CACHE_DEPTH)
+			{
+				bool4 maskChannelsK = ti + 64 * (i + uint4(0, 1, 2, 3) * 4) < 64 * channels;
+
+				#if CHANNELS_FIRST
+				bool4 maskChannelsX = maskChannelsK;
+				#else
+				bool maskChannelsX = (ti % 16) + i < channels;
+				#endif
+
+
+				LDS_[W_OFFSET + (0 << 8) + (ti & 0x1C0) + ((ti & 3) << 4) | ((ti & 63) >> 2)] = K.MaskedGet(maskK & maskChannelsK.x, readK);
+				readK += strideK * (channels <= (i + 0 * 4) ? 0 : min(channels - (i + 0 * 4), 4));
+				LDS_[W_OFFSET + (1 << 8) + (ti & 0x1C0) + ((ti & 3) << 4) | ((ti & 63) >> 2)] = K.MaskedGet(maskK & maskChannelsK.y, readK);
+				readK += strideK * (channels <= (i + 1 * 4) ? 0 : min(channels - (i + 1 * 4), 4));
+				LDS_[W_OFFSET + (2 << 8) + (ti & 0x1C0) + ((ti & 3) << 4) | ((ti & 63) >> 2)] = K.MaskedGet(maskK & maskChannelsK.z, readK);
+				readK += strideK * (channels <= (i + 2 * 4) ? 0 : min(channels - (i + 2 * 4), 4));
+				LDS_[W_OFFSET + (3 << 8) + (ti & 0x1C0) + ((ti & 3) << 4) | ((ti & 63) >> 2)] = K.MaskedGet(maskK & maskChannelsK.w, readK);
+				readK += strideK * (channels <= (i + 3 * 4) ? 0 : min(channels - (i + 3 * 4), 4));
+
+
+				#if CHANNELS_FIRST
+					LDS_[X_OFFSET + ti + 256 * 0] = X.MaskedGet(mask && maskChannelsX.x, readX + heightX * widthX * (i + 0 * 4) + kernelOffsetX);
+					LDS_[X_OFFSET + ti + 256 * 1] = X.MaskedGet(mask && maskChannelsX.y, readX + heightX * widthX * (i + 1 * 4) + kernelOffsetX);
+					LDS_[X_OFFSET + ti + 256 * 2] = X.MaskedGet(mask && maskChannelsX.z, readX + heightX * widthX * (i + 2 * 4) + kernelOffsetX);
+					LDS_[X_OFFSET + ti + 256 * 3] = X.MaskedGet(mask && maskChannelsX.w, readX + heightX * widthX * (i + 3 * 4) + kernelOffsetX);
+				#else
+					LDS_[X_OFFSET + 66 * (ti & 15) + (16 * 0 | (ti >> 4))] = X.MaskedGet(mask.x && maskChannelsX, readX.x + i + kernelOffsetX);
+					LDS_[X_OFFSET + 66 * (ti & 15) + (16 * 1 | (ti >> 4))] = X.MaskedGet(mask.y && maskChannelsX, readX.y + i + kernelOffsetX);
+					LDS_[X_OFFSET + 66 * (ti & 15) + (16 * 2 | (ti >> 4))] = X.MaskedGet(mask.z && maskChannelsX, readX.z + i + kernelOffsetX);
+					LDS_[X_OFFSET + 66 * (ti & 15) + (16 * 3 | (ti >> 4))] = X.MaskedGet(mask.w && maskChannelsX, readX.w + i + kernelOffsetX);
+				#endif
+				GroupMemoryBarrierWithGroupSync();
+
+
+				for (uint di = 0; di < CACHE_DEPTH; di++)
+				{
+					// [0..15]*64 + [0..3]*16 + [0..15]
+					float4 srcW = float4(
+						LDS_[W_OFFSET + di * 64 + (0 * 16 | tx)],
+						LDS_[W_OFFSET + di * 64 + (1 * 16 | tx)],
+						LDS_[W_OFFSET + di * 64 + (2 * 16 | tx)],
+						LDS_[W_OFFSET + di * 64 + (3 * 16 | tx)]
+						);
+
+					#if CHANNELS_FIRST
+					// [0..15]*64 + [0..15]*4 + [0..3]
+					float4 srcX = float4(
+						LDS_[X_OFFSET + di * 64 + ((ty << 2) | 0)],
+						LDS_[X_OFFSET + di * 64 + ((ty << 2) | 1)],
+						LDS_[X_OFFSET + di * 64 + ((ty << 2) | 2)],
+						LDS_[X_OFFSET + di * 64 + ((ty << 2) | 3)]);
+					#else
+					// [0..15]*64 + [0..15]*4 + [0..3]
+					float4 srcX = float4(
+						LDS_[X_OFFSET + di * 66 + ((ty << 2) | 0)],
+						LDS_[X_OFFSET + di * 66 + ((ty << 2) | 1)],
+						LDS_[X_OFFSET + di * 66 + ((ty << 2) | 2)],
+						LDS_[X_OFFSET + di * 66 + ((ty << 2) | 3)]);
+					#endif
+
+					dstA0 += srcX.x * srcW;
+					dstA1 += srcX.y * srcW;
+					dstA2 += srcX.z * srcW;
+					dstA3 += srcX.w * srcW;
+				}
+
+				GroupMemoryBarrierWithGroupSync();
+			}
+#if KERNEL_1x1
+#else
+		}
+	}
+#endif
+
+#if CHANNELS_FIRST
+	if (((y + 0) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 0)*h*w + batchWriteOffset, dstA0.x);
+	if (((y + 0) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 1)*h*w + batchWriteOffset, dstA0.y);
+	if (((y + 0) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 2)*h*w + batchWriteOffset, dstA0.z);
+	if (((y + 0) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 3)*h*w + batchWriteOffset, dstA0.w);
+
+	if (((y + 1) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation( (y + 1) + (x + 0)*h*w + batchWriteOffset, dstA1.x);
+	if (((y + 1) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation( (y + 1) + (x + 1)*h*w + batchWriteOffset, dstA1.y);
+	if (((y + 1) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation( (y + 1) + (x + 2)*h*w + batchWriteOffset, dstA1.z);
+	if (((y + 1) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation( (y + 1) + (x + 3)*h*w + batchWriteOffset, dstA1.w);
+
+	if (((y + 2) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 0)*h*w + batchWriteOffset, dstA2.x);
+	if (((y + 2) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 1)*h*w + batchWriteOffset, dstA2.y);
+	if (((y + 2) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 2)*h*w + batchWriteOffset, dstA2.z);
+	if (((y + 2) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 3)*h*w + batchWriteOffset, dstA2.w);
+
+	if (((y + 3) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 0)*h*w + batchWriteOffset, dstA3.x);
+	if (((y + 3) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 1)*h*w + batchWriteOffset, dstA3.y);
+	if (((y + 3) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 2)*h*w + batchWriteOffset, dstA3.z);
+	if (((y + 3) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 3)*h*w + batchWriteOffset, dstA3.w);
+#else
+	if (((y + 0) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 0, dstA0.x);
+	if (((y + 0) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 1, dstA0.y);
+	if (((y + 0) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 2, dstA0.z);
+	if (((y + 0) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 3, dstA0.w);
+
+	if (((y + 1) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 0, dstA1.x);
+	if (((y + 1) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 1, dstA1.y);
+	if (((y + 1) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 2, dstA1.z);
+	if (((y + 1) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 3, dstA1.w);
+
+	if (((y + 2) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 0, dstA2.x);
+	if (((y + 2) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 1, dstA2.y);
+	if (((y + 2) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 2, dstA2.z);
+	if (((y + 2) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 3, dstA2.w);
+
+	if (((y + 3) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 0, dstA3.x);
+	if (((y + 3) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 1, dstA3.y);
+	if (((y + 3) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 2, dstA3.z);
+	if (((y + 3) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 3, dstA3.w);
+#endif
+
+
+#undef X_
+#undef W_
+#undef LDS_
+#undef X_OFFSET
+#undef W_OFFSET
+}
+#undef CACHE_DEPTH
+#undef BUF_OFFSET
+#elif KERNEL_PER_TG == 64
+#define CACHE_DEPTH 8
+groupshared float CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS)[2 * CACHE_DEPTH * 8 * BLOCK_SIZE];
+[numthreads(8, 8, 1)]
+void FUNC_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE)(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV_GroupThreadID, uint threadIndex : SV_GroupIndex, uint3 groupID : SV_GroupID)
+{
+	//DISPATCH ARGS(K.kernelCount, O.width * O.height * O.batch, 1); // in NHWC
+	//DISPATCH ARGS(K.kernelCount, O.width * O.height, O.batch);     // in NCHW
+
+	TENSOR_SHARED2_ARGS4(X, K, B, WBK, O);
+
+	// [W*H, Ky*Kx*In] * [Ky*Kx*In, Out] => [W*H, Out]
+#define LDS_ CACHE_NAME(KERNEL_NAME, SUFFIX, BLOCK_SIZE, LDS)
+#define X_OFFSET 0
+#define W_OFFSET CACHE_DEPTH*32
+
+	uint x = dispatchThreadID.x * BLOCK_SIZE; // output_channels
+	uint y = dispatchThreadID.y * BLOCK_SIZE; // batch*width*height (width*height in HWC)
+	uint tx = groupThreadID.x;
+	uint ty = groupThreadID.y;
+	uint bx = (8 * groupID.x) * BLOCK_SIZE;
+	uint by = (8 * groupID.y) * BLOCK_SIZE;
+	uint ti = threadIndex;
+	uint w = O.width;
+	uint h = O.height;
+	uint batches = X.batch;
+	uint channels = X.channels;
+	uint widthX = X.width;
+	uint heightX = X.height;
+	uint strideX = X.channels;
+	uint strideK = K.channels;
+	uint strideO = O.channels;
+	uint batchReadOffset = dispatchThreadID.z * channels * heightX * widthX;
+	uint batchWriteOffset = dispatchThreadID.z * strideO * h * w;
+#if CHANNELS_FIRST
+	uint kernelBaseId = groupID.x * 32;
+	uint outputPixelBaseId = groupID.y * 32;
+	uint numOuputPixels = w * h;
+#endif
+
+	float4 dstA0;
+	float4 dstA1;
+	float4 dstA2;
+	float4 dstA3;
+
+	uint maxBiasIndex = O.channels - 1;
+	dstA0.x = B.FastGet(min(maxBiasIndex, x + 0)); dstA0.y = B.FastGet(min(maxBiasIndex, x + 1)); dstA0.z = B.FastGet(min(maxBiasIndex, x + 2)); dstA0.w = B.FastGet(min(maxBiasIndex, x + 3));
+	dstA1 = dstA0;
+	dstA2 = dstA0;
+	dstA3 = dstA0;
+
+	uint readK = strideK * (ti >> 5) + (bx | (ti & 31));
+	bool maskK = (bx | (ti & 31)) < strideK;
+
+
+#if CHANNELS_FIRST
+	uint centroidId = by | (ti & 31);
+#if KERNEL_1x1
+	uint topY = (centroidId / w % h) * _Stride.y;
+	uint leftX = (centroidId % w) * _Stride.x;
+#else
+	uint topY = (centroidId / w % h) * _Stride.y - _Pad.y;
+	uint leftX = (centroidId % w) * _Stride.x - _Pad.x;
+#endif
+	uint cornerId = topY * widthX + leftX;
+	uint readX = heightX * widthX * (ti >> 5) + cornerId + batchReadOffset;
+	bool mask;
+#else
+	uint4 centroidId = uint4(
+		(by | (ti >> 3) | 0 * 8),
+		(by | (ti >> 3) | 1 * 8),
+		(by | (ti >> 3) | 2 * 8),
+		(by | (ti >> 3) | 3 * 8));
+
+#if KERNEL_1x1
+	uint4 topY = (centroidId / w % h) * _Stride.y;
+	uint4 leftX = (centroidId % w) * _Stride.x;
+
+#else
+	uint4 topY = (centroidId / w % h) * _Stride.y - _Pad.y;
+	uint4 leftX = (centroidId % w) * _Stride.x - _Pad.x;
+#endif
+	uint4 cornerId = topY * widthX + leftX;
+	uint4 readX = batchReadOffset + strideX * cornerId + (ti & 7);
+	bool4 mask;
+#endif
+
+#if KERNEL_1x1
+	uint kernelOffsetX = 0;
+	mask = (centroidId / w % h) * _Stride.y < heightX &&
+		   (centroidId % w) * _Stride.x < widthX;
+#else
+	for (uint dy = 0; dy < K.GetKernelHeight(); dy++)
+	{
+		for (uint dx = 0; dx < K.GetKernelWidth(); dx++)
+		{
+			#if CHANNELS_FIRST
+            uint kernelOffsetX = (dy * widthX + dx);
+            #else
+			uint kernelOffsetX = (dy * widthX + dx) * strideX;
+            #endif
+			mask =
+				((centroidId / w % h) * _Stride.y + dy) >= _Pad.y &&
+				((centroidId / w % h) * _Stride.y + dy) < (heightX + _Pad.y) &&
+				((centroidId % w) * _Stride.x + dx) >= _Pad.x &&
+				((centroidId % w) * _Stride.x + dx) < (widthX + _Pad.x);
+#endif
+			for (uint i = 0; i < channels; i += CACHE_DEPTH)
+			{
+				bool4 maskChannelsK = (ti/32) + (i + uint4(0, 1, 2, 3) * 2) < channels;
+
+				#if CHANNELS_FIRST
+				bool4 maskChannelsX = maskChannelsK;
+				#else
+				bool maskChannelsX = (ti % 8) + i < channels;
+				#endif
+
+				LDS_[(0 * 64 + W_OFFSET) | (8 * (ti & 3) + (ti & 0x20)) | ((ti & 31) >> 2)] = K.MaskedGet(maskK & maskChannelsK.x, readK);
+				readK += strideK * (channels <= (i + 0 * 2) ? 0 : min(channels - (i + 0 * 2), 2));
+				LDS_[(1 * 64 + W_OFFSET) | (8 * (ti & 3) + (ti & 0x20)) | ((ti & 31) >> 2)] = K.MaskedGet(maskK & maskChannelsK.y, readK);
+				readK += strideK * (channels <= (i + 1 * 2) ? 0 : min(channels - (i + 1 * 2), 2));
+				LDS_[(2 * 64 + W_OFFSET) | (8 * (ti & 3) + (ti & 0x20)) | ((ti & 31) >> 2)] = K.MaskedGet(maskK & maskChannelsK.z, readK);
+				readK += strideK * (channels <= (i + 2 * 2) ? 0 : min(channels - (i + 2 * 2), 2));
+				LDS_[(3 * 64 + W_OFFSET) | (8 * (ti & 3) + (ti & 0x20)) | ((ti & 31) >> 2)] = K.MaskedGet(maskK & maskChannelsK.w, readK);
+				readK += strideK * (channels <= (i + 3 * 2) ? 0 : min(channels - (i + 3 * 2), 2));
+
+
+				#if CHANNELS_FIRST
+					LDS_[X_OFFSET + ti + 64 * 0] = X.MaskedGet(mask && maskChannelsX.x, readX + heightX * widthX * (i + 0 * 2) + kernelOffsetX);
+					LDS_[X_OFFSET + ti + 64 * 1] = X.MaskedGet(mask && maskChannelsX.y, readX + heightX * widthX * (i + 1 * 2) + kernelOffsetX);
+					LDS_[X_OFFSET + ti + 64 * 2] = X.MaskedGet(mask && maskChannelsX.z, readX + heightX * widthX * (i + 2 * 2) + kernelOffsetX);
+					LDS_[X_OFFSET + ti + 64 * 3] = X.MaskedGet(mask && maskChannelsX.w, readX + heightX * widthX * (i + 3 * 2) + kernelOffsetX);
+				#else
+					LDS_[(32 * (ti & 7) + (ti >> 3)) | (8 * 0 + X_OFFSET)] = X.MaskedGet(mask.x && maskChannelsX, readX.x + i + kernelOffsetX);
+					LDS_[(32 * (ti & 7) + (ti >> 3)) | (8 * 1 + X_OFFSET)] = X.MaskedGet(mask.y && maskChannelsX, readX.y + i + kernelOffsetX);
+					LDS_[(32 * (ti & 7) + (ti >> 3)) | (8 * 2 + X_OFFSET)] = X.MaskedGet(mask.z && maskChannelsX, readX.z + i + kernelOffsetX);
+					LDS_[(32 * (ti & 7) + (ti >> 3)) | (8 * 3 + X_OFFSET)] = X.MaskedGet(mask.w && maskChannelsX, readX.w + i + kernelOffsetX);
+				#endif
+
+				GroupMemoryBarrierWithGroupSync();
+
+				for (uint di = 0; di < CACHE_DEPTH; di++)
+				{
+					float4 srcX = float4(
+						LDS_[X_OFFSET + di * 32 + ty * 4 + 0],
+						LDS_[X_OFFSET + di * 32 + ty * 4 + 1],
+						LDS_[X_OFFSET + di * 32 + ty * 4 + 2],
+						LDS_[X_OFFSET + di * 32 + ty * 4 + 3]);
+					float4 srcW = float4(
+						LDS_[W_OFFSET + di * 32 + 0 * 8 + tx],
+						LDS_[W_OFFSET + di * 32 + 1 * 8 + tx],
+						LDS_[W_OFFSET + di * 32 + 2 * 8 + tx],
+						LDS_[W_OFFSET + di * 32 + 3 * 8 + tx]);
+
+					dstA0 += srcX.x * srcW;
+					dstA1 += srcX.y * srcW;
+					dstA2 += srcX.z * srcW;
+					dstA3 += srcX.w * srcW;
+				}
+
+				GroupMemoryBarrierWithGroupSync();
+			}
+#if KERNEL_1x1
+#else
+		}
+	}
+#endif
+
+#if CHANNELS_FIRST
+	if (((y + 0) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 0)*h*w + batchWriteOffset, dstA0.x);
+	if (((y + 0) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 1)*h*w + batchWriteOffset, dstA0.y);
+	if (((y + 0) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 2)*h*w + batchWriteOffset, dstA0.z);
+	if (((y + 0) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 0) + (x + 3)*h*w + batchWriteOffset, dstA0.w);
+
+	if (((y + 1) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 1) + (x + 0)*h*w + batchWriteOffset, dstA1.x);
+	if (((y + 1) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 1) + (x + 1)*h*w + batchWriteOffset, dstA1.y);
+	if (((y + 1) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 1) + (x + 2)*h*w + batchWriteOffset, dstA1.z);
+	if (((y + 1) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 1) + (x + 3)*h*w + batchWriteOffset, dstA1.w);
+
+	if (((y + 2) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 0)*h*w + batchWriteOffset, dstA2.x);
+	if (((y + 2) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 1)*h*w + batchWriteOffset, dstA2.y);
+	if (((y + 2) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 2)*h*w + batchWriteOffset, dstA2.z);
+	if (((y + 2) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 2) + (x + 3)*h*w + batchWriteOffset, dstA2.w);
+
+	if (((y + 3) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 0)*h*w + batchWriteOffset, dstA3.x);
+	if (((y + 3) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 1)*h*w + batchWriteOffset, dstA3.y);
+	if (((y + 3) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 2)*h*w + batchWriteOffset, dstA3.z);
+	if (((y + 3) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation((y + 3) + (x + 3)*h*w + batchWriteOffset, dstA3.w);
+#else
+	if (((y + 0) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 0, dstA0.x);
+	if (((y + 0) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 1, dstA0.y);
+	if (((y + 0) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 2, dstA0.z);
+	if (((y + 0) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 0) + x + 3, dstA0.w);
+
+	if (((y + 1) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 0, dstA1.x);
+	if (((y + 1) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 1, dstA1.y);
+	if (((y + 1) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 2, dstA1.z);
+	if (((y + 1) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 1) + x + 3, dstA1.w);
+
+	if (((y + 2) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 0, dstA2.x);
+	if (((y + 2) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 1, dstA2.y);
+	if (((y + 2) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 2, dstA2.z);
+	if (((y + 2) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 2) + x + 3, dstA2.w);
+
+	if (((y + 3) < w * h) && ((x + 0) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 0, dstA3.x);
+	if (((y + 3) < w * h) && ((x + 1) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 1, dstA3.y);
+	if (((y + 3) < w * h) && ((x + 2) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 2, dstA3.z);
+	if (((y + 3) < w * h) && ((x + 3) < strideO))
+		O.FastSetWithActivation(batchWriteOffset + strideO * (y + 3) + x + 3, dstA3.w);
+#endif
+
+#undef X_
+#undef W_
+#undef LDS_
+#undef X_OFFSET
+#undef W_OFFSET
+}
+#undef CACHE_DEPTH
+#endif
+#endif
+#undef KERNEL_NAME

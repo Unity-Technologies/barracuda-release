@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Linq; // Enumerable.Range(), Enumerable.SequenceEqual()
+using System.Linq;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe; // Enumerable.Range(), Enumerable.SequenceEqual()
 
 using UnityEngine;
 using UnityEngine.Assertions;
@@ -34,6 +36,15 @@ public static class TensorExtensions
         n = Math.Min(n, X.length);
         for (int i = 0; i < n; ++i)
             X[i] = Mathf.Cos(i + offset);
+    }
+
+    static internal void TestInitRandom(this Tensor X, int n = -1)
+    {
+        if (n < 0)
+            n = X.length;
+        n = Math.Min(n, X.length);
+        for (int i = 0; i < n; ++i)
+            X[i] = UnityEngine.Random.value;
     }
 
     static internal void TestInitValue(this Tensor X, float value=0.1f, int n = -1)
@@ -845,6 +856,32 @@ public static class TensorExtensions
         return new int[] {0, 1, batchOldAxis, 3, 4, heighOldAxis, widthOldIndex, channeOldIndex };
     }
 
+    static internal NativeArray<int> Get8DPermutationsForNHWCPermutationsAndShape(this TensorShape shape, NativeArray<int> inPermutations)
+    {
+        if (inPermutations.Length == TensorShape.MaxRank)
+            return inPermutations;
+
+        Assert.AreEqual(4, inPermutations.Length);
+        if (!shape.Is4D()) Assert.IsTrue(false, $"4D Permutation {inPermutations.ToString()} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        int batchOldAxis = Convert4DTo8DAxis(inPermutations[0]);
+        int heighOldAxis = Convert4DTo8DAxis(inPermutations[1]);
+        int widthOldIndex = Convert4DTo8DAxis(inPermutations[2]);
+        int channeOldIndex = Convert4DTo8DAxis(inPermutations[3]);
+
+        // Valid only for single frame
+        NativeArray<int> outPermutations = new NativeArray<int>(8, Allocator.Temp);
+        outPermutations[0] = 0;
+        outPermutations[1] = 1;
+        outPermutations[2] = batchOldAxis;
+        outPermutations[3] = 3;
+        outPermutations[4] = 4;
+        outPermutations[5] = heighOldAxis;
+        outPermutations[6] = widthOldIndex;
+        outPermutations[7] = channeOldIndex;
+
+        return outPermutations;
+    }
+
     static internal int[] Get8DPermutationsForNCHWPermutationsAndShape(this TensorShape shape, int[] permutations)
     {
         if (permutations.Length == TensorShape.MaxRank)
@@ -857,6 +894,32 @@ public static class TensorExtensions
         int heightOldIndex = Convert4DTo8DAxis(permutations[2]);
         int widthOldIndex = Convert4DTo8DAxis(permutations[3]);
         return new int[] {0, 1, batchOldAxis, 3, 4, channelOldIndex, heightOldIndex, widthOldIndex };
+    }
+
+    static internal NativeArray<int> Get8DPermutationsForNCHWPermutationsAndShape(this TensorShape shape, NativeArray<int> inPermutations)
+    {
+        if (inPermutations.Length == TensorShape.MaxRank)
+            return inPermutations;
+
+        Assert.AreEqual(4, inPermutations.Length);
+        if (!shape.Is4D()) Assert.IsTrue(false, $"4D Permutation {inPermutations.ToString()} can't be used with a tensor of shape {shape} as it contains other dimensions, please use an 8D permutation for this shape.");
+        int batchOldAxis = Convert4DTo8DAxis(inPermutations[0]);
+        int channelOldIndex = Convert4DTo8DAxis(inPermutations[1]);
+        int heightOldIndex = Convert4DTo8DAxis(inPermutations[2]);
+        int widthOldIndex = Convert4DTo8DAxis(inPermutations[3]);
+
+        // Valid only for single frame
+        NativeArray<int> outPermutations = new NativeArray<int>(8, Allocator.Temp);
+        outPermutations[0] = 0;
+        outPermutations[1] = 1;
+        outPermutations[2] = batchOldAxis;
+        outPermutations[3] = 3;
+        outPermutations[4] = 4;
+        outPermutations[5] = channelOldIndex;
+        outPermutations[6] = heightOldIndex;
+        outPermutations[7] = widthOldIndex;
+
+        return outPermutations;
     }
 
     static internal unsafe TensorShape ApplyStridedSlice8DUnsafeNoAlloc(this TensorShape shape, int* starts, int* ends,
@@ -940,6 +1003,19 @@ public static class TensorExtensions
     {
         if (permutations.Length == 4)
         permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+
+        var output = new TensorShape();
+        for (var i = 0; i < permutations.Length; ++i)
+            output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+        return output;
+    }
+
+    static internal TensorShape Permute(this TensorShape shape, NativeArray<int> permutations)
+    {
+        if (permutations.Length == 4)
+        {
+            permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+        }
 
         var output = new TensorShape();
         for (var i = 0; i < permutations.Length; ++i)

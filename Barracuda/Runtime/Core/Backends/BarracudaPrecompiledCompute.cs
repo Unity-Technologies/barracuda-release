@@ -3,6 +3,7 @@ using UnityEngine.Assertions;
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using Unity.Collections;
 
 
 namespace Unity.Barracuda {
@@ -62,19 +63,67 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     private Dictionary<Layer, CompiledLayer> m_CompiledLayers = new Dictionary<Layer, CompiledLayer>();
     private CompiledLayer m_Compiled;
 
-    private Dictionary<string, ComputeBuffer> m_CachedModelBuffers = new Dictionary<string, ComputeBuffer>();
+    private class GPUTempMemoryBlock
+    {
+#if ENABLE_BARRACUDA_STATS
+        public TempMemoryStatistics stats { get; private set; }
+#endif //ENABLE_BARRACUDA_STATS
+        public ComputeBuffer computeBuffer { get; private set; }
+
+        public GPUTempMemoryBlock(string name, int count, int stride)
+        {
+            computeBuffer = new ComputeBuffer(count, stride);
+#if ENABLE_BARRACUDA_STATS
+            stats = new TempMemoryStatistics(UniqueResourceId.GetUniqueId(), computeBuffer.count * computeBuffer.stride, true, name);
+#endif //ENABLE_BARRACUDA_STATS
+        }
+
+        public void SetComputeBuffer(ComputeBuffer buffer)
+        {
+            computeBuffer = buffer;
+#if ENABLE_BARRACUDA_STATS
+                stats = new TempMemoryStatistics(UniqueResourceId.GetUniqueId(), buffer.count * buffer.stride, true, stats.name);
+#endif //ENABLE_BARRACUDA_STATS
+        }
+    }
+
+    private Dictionary<string, GPUTempMemoryBlock> m_CachedModelBuffers = new Dictionary<string, GPUTempMemoryBlock>();
 
     private ComputeBuffer NewComputeBuffer(string name, int count, int stride)
     {
         if(!m_CachedModelBuffers.ContainsKey(name))
-            m_CachedModelBuffers[name] = new ComputeBuffer(count, stride);
-        if(m_CachedModelBuffers[name].count != count || m_CachedModelBuffers[name].stride != stride)
+            m_CachedModelBuffers[name] = new GPUTempMemoryBlock(name, count, stride);
+        if(m_CachedModelBuffers[name].computeBuffer.count != count || m_CachedModelBuffers[name].computeBuffer.stride != stride)
         {
-            m_CachedModelBuffers[name].Dispose();
-            m_CachedModelBuffers[name] = new ComputeBuffer(count, stride);
+            m_CachedModelBuffers[name].computeBuffer.Dispose();
+            m_CachedModelBuffers[name].SetComputeBuffer(new ComputeBuffer(count, stride));
         }
 
-        return m_CachedModelBuffers[name];
+        return m_CachedModelBuffers[name].computeBuffer;
+    }
+
+#if ENABLE_BARRACUDA_STATS
+    public override IEnumerable<TempMemoryStatistics> GetTempMemoryStatistics()
+    {
+        return m_CachedModelBuffers.Values.Select(x => x.stats);
+    }
+#endif //ENABLE_BARRACUDA_STATS
+
+    private void ClearCachedModelBuffers()
+    {
+        foreach (var buf in m_CachedModelBuffers)
+            buf.Value.computeBuffer.Dispose();
+        m_CachedModelBuffers.Clear();
+
+        foreach (var l in m_CompiledLayers)
+        foreach (var i in l.Value.instructions)
+        {
+            if (i.tensors == null)
+                continue;
+            foreach (var t in i.tensors)
+                t.Dispose();
+        }
+        m_CompiledLayers.Clear();
     }
 
     /// <inheritdoc/>
@@ -82,19 +131,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     {
         if (!keepCachedMemory)
         {
-            foreach (var buf in m_CachedModelBuffers)
-                buf.Value.Dispose();
-            m_CachedModelBuffers.Clear();
-
-            foreach (var l in m_CompiledLayers)
-                foreach (var i in l.Value.instructions)
-                {
-                    if (i.tensors == null)
-                        continue;
-                    foreach (var t in i.tensors)
-                        t.Dispose();
-                }
-            m_CompiledLayers.Clear();
+            ClearCachedModelBuffers();
         }
 
         base.ResetAllocator(keepCachedMemory);
@@ -111,7 +148,29 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return hash;
     }
 
-    private Tensor[] PrepareConv2dWinograd(Model model, Layer l)
+    private void GetKBWeightsForLayer(Layer l, IVars vars,
+        out BarracudaArray kData, out int kOffset,
+        out BarracudaArray bData, out int bOffset)
+    {
+        if (l.weights != null)
+        {
+            //data still available on CPU mem, directly use it
+            kData = l.weights;
+            bData = l.weights;
+            kOffset = (int)l.datasets[0].offset;
+            bOffset = (int)l.datasets[1].offset;
+        }
+        else
+        {
+            //model memory ownership have been transfer to vars and wiped from CPU mem
+            //need to get data from Tensor to prepare model
+            var inputs = vars.PeekConstants(l.name);
+            kData = inputs[0].data.SharedAccess(out kOffset);
+            bData = inputs[1].data.SharedAccess(out bOffset);
+        }
+    }
+
+    private Tensor[] PrepareConv2dWinograd2x2_3x3(Model model, Layer l, IVars vars)
     {
         var K = l.datasets[0];
         var Kshape = new TensorShape(K.shape.batch + 1, K.shape.height + 1, K.shape.width, K.shape.channels);
@@ -119,20 +178,24 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var B = l.datasets[1];
         var Bshape = B.shape;
 
-        var weights = new float[Kshape.length + Bshape.length];
+        var weights = new BarracudaArray(Kshape.length + Bshape.length);//TODO fp16?
+
+        GetKBWeightsForLayer(l, vars,
+            out var kData, out var kOffset,
+            out var bData, out var bOffset);
 
         for (int c = 0; c < Kshape.kernelDepth; ++c)
             for (int k = 0; k < Kshape.kernelCount; ++k)
             {
-                float g00 = l.weights[K.offset + K.shape.Index(0, 0, c, k)];
-                float g01 = l.weights[K.offset + K.shape.Index(0, 1, c, k)];
-                float g02 = l.weights[K.offset + K.shape.Index(0, 2, c, k)];
-                float g10 = l.weights[K.offset + K.shape.Index(1, 0, c, k)];
-                float g11 = l.weights[K.offset + K.shape.Index(1, 1, c, k)];
-                float g12 = l.weights[K.offset + K.shape.Index(1, 2, c, k)];
-                float g20 = l.weights[K.offset + K.shape.Index(2, 0, c, k)];
-                float g21 = l.weights[K.offset + K.shape.Index(2, 1, c, k)];
-                float g22 = l.weights[K.offset + K.shape.Index(2, 2, c, k)];
+                float g00 = kData[kOffset + K.shape.Index(0, 0, c, k)];
+                float g01 = kData[kOffset + K.shape.Index(0, 1, c, k)];
+                float g02 = kData[kOffset + K.shape.Index(0, 2, c, k)];
+                float g10 = kData[kOffset + K.shape.Index(1, 0, c, k)];
+                float g11 = kData[kOffset + K.shape.Index(1, 1, c, k)];
+                float g12 = kData[kOffset + K.shape.Index(1, 2, c, k)];
+                float g20 = kData[kOffset + K.shape.Index(2, 0, c, k)];
+                float g21 = kData[kOffset + K.shape.Index(2, 1, c, k)];
+                float g22 = kData[kOffset + K.shape.Index(2, 2, c, k)];
 
                 // float4x3 Winograd_G = float4x3(float3(1, 0, 0), float3(0.5, 0.5, 0.5), float3(0.5, -0.5, 0.5), float3(0, 0, 1));
                 // float3x4 Winograd_GT = transpose(Winograd_G);
@@ -190,36 +253,179 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                 weights[Kshape.Index(3, 3, c, k)] = v33;
             }
 
-        Buffer.BlockCopy(l.weights, (int)B.offset * sizeof(float), weights, Kshape.length * sizeof(float), B.length * sizeof(float));
+        BarracudaArray.Copy(bData, (int)bOffset, weights, Kshape.length, B.length);
 
-        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", Kshape.length + Bshape.length, sizeof(float));
-        buffer.SetData(weights);
+        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", Kshape.length + Bshape.length, sizeof(float));//TODO fp16?
+        weights.UploadToComputeBuffer(buffer);
+        var Kw = new Tensor(Kshape, new SharedComputeTensorData(buffer, Kshape, 0));
+        var Bw = new Tensor(Bshape, new SharedComputeTensorData(buffer, Bshape, Kshape.length));
+
+        return new Tensor[] { Kw, Bw };
+    }
+    private Tensor[] PrepareConv2dWinograd2x2_5x5(Model model, Layer l, IVars vars)
+    {
+        var K = l.datasets[0];
+        var Kshape = new TensorShape(K.shape.batch + 1, K.shape.height + 1, K.shape.width, K.shape.channels);
+
+        var B = l.datasets[1];
+        var Bshape = B.shape;
+
+        var weights = new BarracudaArray(Kshape.length + Bshape.length);//TODO fp16?
+
+        GetKBWeightsForLayer(l, vars,
+            out var kData, out var kOffset,
+            out var bData, out var bOffset);
+
+        for (int c = 0; c < Kshape.kernelDepth; ++c)
+            for (int k = 0; k < Kshape.kernelCount; ++k)
+            {
+                float g00 = kData[kOffset + K.shape.Index(0, 0, c, k)];
+                float g01 = kData[kOffset + K.shape.Index(0, 1, c, k)];
+                float g02 = kData[kOffset + K.shape.Index(0, 2, c, k)];
+                float g03 = kData[kOffset + K.shape.Index(0, 3, c, k)];
+                float g04 = kData[kOffset + K.shape.Index(0, 4, c, k)];
+
+                float g10 = kData[kOffset + K.shape.Index(1, 0, c, k)];
+                float g11 = kData[kOffset + K.shape.Index(1, 1, c, k)];
+                float g12 = kData[kOffset + K.shape.Index(1, 2, c, k)];
+                float g13 = kData[kOffset + K.shape.Index(1, 3, c, k)];
+                float g14 = kData[kOffset + K.shape.Index(1, 4, c, k)];
+
+                float g20 = kData[kOffset + K.shape.Index(2, 0, c, k)];
+                float g21 = kData[kOffset + K.shape.Index(2, 1, c, k)];
+                float g22 = kData[kOffset + K.shape.Index(2, 2, c, k)];
+                float g23 = kData[kOffset + K.shape.Index(2, 3, c, k)];
+                float g24 = kData[kOffset + K.shape.Index(2, 4, c, k)];
+
+                float g30 = kData[kOffset + K.shape.Index(3, 0, c, k)];
+                float g31 = kData[kOffset + K.shape.Index(3, 1, c, k)];
+                float g32 = kData[kOffset + K.shape.Index(3, 2, c, k)];
+                float g33 = kData[kOffset + K.shape.Index(3, 3, c, k)];
+                float g34 = kData[kOffset + K.shape.Index(3, 4, c, k)];
+
+                float g40 = kData[kOffset + K.shape.Index(4, 0, c, k)];
+                float g41 = kData[kOffset + K.shape.Index(4, 1, c, k)];
+                float g42 = kData[kOffset + K.shape.Index(4, 2, c, k)];
+                float g43 = kData[kOffset + K.shape.Index(4, 3, c, k)];
+                float g44 = kData[kOffset + K.shape.Index(4, 4, c, k)];
+
+	            // mul(Winograd_G, mul(g, Winograd_GT));
+	            //static const float5x6 Winograd_G = 1/24 * {{6, 0, 0, 0, 0}, {-4, -4, -4, -4, -4}, {-4, 4, -4, 4, -4⎥}, {1, 2, 4, 8, 16}, {1, -2, 4, -8, 16}, {0, 0, 0, 0, 24}}
+	            //static const float6x5 Winograd_GT = 1/24 * {{6, -4, -4, 1, 1, 0}, {0, -4, 4, 2, -2, 0}, {0, -4, -4, 4, 4, 0}, {0, -4, 4, 8, -8, 0}, {0, -4, -4, 16, 16, 24}}
+
+                float a00 = 6 * g00 / 24;
+                float a10 = 6 * g10 / 24;
+                float a20 = 6 * g20 / 24;
+                float a30 = 6 * g30 / 24;
+                float a40 = 6 * g40 / 24;
+
+                float a01 = (-4 * g00 - 4 * g01 - 4 * g02 - 4 * g03 - 4 * g04) / 24;
+                float a11 = (-4 * g10 - 4 * g11 - 4 * g12 - 4 * g13 - 4 * g14) / 24;
+                float a21 = (-4 * g20 - 4 * g21 - 4 * g22 - 4 * g23 - 4 * g24) / 24;
+                float a31 = (-4 * g30 - 4 * g31 - 4 * g32 - 4 * g33 - 4 * g34) / 24;
+                float a41 = (-4 * g40 - 4 * g41 - 4 * g42 - 4 * g43 - 4 * g44) / 24;
+
+                float a02 = (-4 * g00 + 4 * g01 - 4 * g02 + 4 * g03 - 4 * g04) / 24;
+                float a12 = (-4 * g10 + 4 * g11 - 4 * g12 + 4 * g13 - 4 * g14) / 24;
+                float a22 = (-4 * g20 + 4 * g21 - 4 * g22 + 4 * g23 - 4 * g24) / 24;
+                float a32 = (-4 * g30 + 4 * g31 - 4 * g32 + 4 * g33 - 4 * g34) / 24;
+                float a42 = (-4 * g40 + 4 * g41 - 4 * g42 + 4 * g43 - 4 * g44) / 24;
+
+                float a03 = (g00 + 2 * g01 + 4 * g02 + 8 * g03 + 16 * g04) / 24;
+                float a13 = (g10 + 2 * g11 + 4 * g12 + 8 * g13 + 16 * g14) / 24;
+                float a23 = (g20 + 2 * g21 + 4 * g22 + 8 * g23 + 16 * g24) / 24;
+                float a33 = (g30 + 2 * g31 + 4 * g32 + 8 * g33 + 16 * g34) / 24;
+                float a43 = (g40 + 2 * g41 + 4 * g42 + 8 * g43 + 16 * g44) / 24;
+
+                float a04 = (g00 - 2 * g01 + 4 * g02 - 8 * g03 + 16 * g04) / 24;
+                float a14 = (g10 - 2 * g11 + 4 * g12 - 8 * g13 + 16 * g14) / 24;
+                float a24 = (g20 - 2 * g21 + 4 * g22 - 8 * g23 + 16 * g24) / 24;
+                float a34 = (g30 - 2 * g31 + 4 * g32 - 8 * g33 + 16 * g34) / 24;
+                float a44 = (g40 - 2 * g41 + 4 * g42 - 8 * g43 + 16 * g44) / 24;
+
+                float a05 = g04;
+                float a15 = g14;
+                float a25 = g24;
+                float a35 = g34;
+                float a45 = g44;
+
+                weights[Kshape.Index(0, 0, c, k)] = 6 * a00 / 24;
+                weights[Kshape.Index(0, 1, c, k)] = 6 * a01 / 24;
+                weights[Kshape.Index(0, 2, c, k)] = 6 * a02 / 24;
+                weights[Kshape.Index(0, 3, c, k)] = 6 * a03 / 24;
+                weights[Kshape.Index(0, 4, c, k)] = 6 * a04 / 24;
+                weights[Kshape.Index(0, 5, c, k)] = 6 * a05 / 24;
+
+                weights[Kshape.Index(1, 0, c, k)] = (-4 * a00 - 4 * a10 - 4 * a20 - 4 * a30 - 4 * a40) / 24;
+                weights[Kshape.Index(1, 1, c, k)] = (-4 * a01 - 4 * a11 - 4 * a21 - 4 * a31 - 4 * a41) / 24;
+                weights[Kshape.Index(1, 2, c, k)] = (-4 * a02 - 4 * a12 - 4 * a22 - 4 * a32 - 4 * a42) / 24;
+                weights[Kshape.Index(1, 3, c, k)] = (-4 * a03 - 4 * a13 - 4 * a23 - 4 * a33 - 4 * a43) / 24;
+                weights[Kshape.Index(1, 4, c, k)] = (-4 * a04 - 4 * a14 - 4 * a24 - 4 * a34 - 4 * a44) / 24;
+                weights[Kshape.Index(1, 5, c, k)] = (-4 * a05 - 4 * a15 - 4 * a25 - 4 * a35 - 4 * a45) / 24;
+
+                weights[Kshape.Index(2, 0, c, k)] = (-4 * a00 + 4 * a10 -4 * a20 + 4 * a30 -4 * a40) / 24;
+                weights[Kshape.Index(2, 1, c, k)] = (-4 * a01 + 4 * a11 -4 * a21 + 4 * a31 -4 * a41) / 24;
+                weights[Kshape.Index(2, 2, c, k)] = (-4 * a02 + 4 * a12 -4 * a22 + 4 * a32 -4 * a42) / 24;
+                weights[Kshape.Index(2, 3, c, k)] = (-4 * a03 + 4 * a13 -4 * a23 + 4 * a33 -4 * a43) / 24;
+                weights[Kshape.Index(2, 4, c, k)] = (-4 * a04 + 4 * a14 -4 * a24 + 4 * a34 -4 * a44) / 24;
+                weights[Kshape.Index(2, 5, c, k)] = (-4 * a05 + 4 * a15 -4 * a25 + 4 * a35 -4 * a45) / 24;
+
+                weights[Kshape.Index(3, 0, c, k)] = (a00 + 2 * a10 + 4 * a20 + 8 * a30 + 16 * a40) / 24;
+                weights[Kshape.Index(3, 1, c, k)] = (a01 + 2 * a11 + 4 * a21 + 8 * a31 + 16 * a41) / 24;
+                weights[Kshape.Index(3, 2, c, k)] = (a02 + 2 * a12 + 4 * a22 + 8 * a32 + 16 * a42) / 24;
+                weights[Kshape.Index(3, 3, c, k)] = (a03 + 2 * a13 + 4 * a23 + 8 * a33 + 16 * a43) / 24;
+                weights[Kshape.Index(3, 4, c, k)] = (a04 + 2 * a14 + 4 * a24 + 8 * a34 + 16 * a44) / 24;
+                weights[Kshape.Index(3, 5, c, k)] = (a05 + 2 * a15 + 4 * a25 + 8 * a35 + 16 * a45) / 24;
+
+                weights[Kshape.Index(4, 0, c, k)] = (a00 - 2 * a10 + 4 * a20 - 8 * a30 + 16 * a40) / 24;
+                weights[Kshape.Index(4, 1, c, k)] = (a01 - 2 * a11 + 4 * a21 - 8 * a31 + 16 * a41) / 24;
+                weights[Kshape.Index(4, 2, c, k)] = (a02 - 2 * a12 + 4 * a22 - 8 * a32 + 16 * a42) / 24;
+                weights[Kshape.Index(4, 3, c, k)] = (a03 - 2 * a13 + 4 * a23 - 8 * a33 + 16 * a43) / 24;
+                weights[Kshape.Index(4, 4, c, k)] = (a04 - 2 * a14 + 4 * a24 - 8 * a34 + 16 * a44) / 24;
+                weights[Kshape.Index(4, 5, c, k)] = (a05 - 2 * a15 + 4 * a25 - 8 * a35 + 16 * a45) / 24;
+
+                weights[Kshape.Index(5, 0, c, k)] = a40;
+                weights[Kshape.Index(5, 1, c, k)] = a41;
+                weights[Kshape.Index(5, 2, c, k)] = a42;
+                weights[Kshape.Index(5, 3, c, k)] = a43;
+                weights[Kshape.Index(5, 4, c, k)] = a44;
+                weights[Kshape.Index(5, 5, c, k)] = a45;
+            }
+
+        BarracudaArray.Copy(bData, (int)bOffset, weights, Kshape.length, B.length);
+
+        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", Kshape.length + Bshape.length, sizeof(float));//TODO fp16?
+        weights.UploadToComputeBuffer(buffer);
         var Kw = new Tensor(Kshape, new SharedComputeTensorData(buffer, Kshape, 0));
         var Bw = new Tensor(Bshape, new SharedComputeTensorData(buffer, Bshape, Kshape.length));
 
         return new Tensor[] { Kw, Bw };
     }
 
-    private Tensor[] PrepareConv2DTrans(Model model, Layer l)
+    private Tensor[] PrepareConv2DTrans(Model model, Layer l, IVars vars)
     {
         var K = l.datasets[0];
         var B = l.datasets[1];
 
-        var weights = new float[K.length + B.length];
+        var weights = new BarracudaArray(K.length + B.length);//TODO fp16?
+
+        GetKBWeightsForLayer(l, vars,
+            out var kData, out var kOffset,
+            out var bData, out var bOffset);
 
         for (int y = 0; y < K.shape.kernelHeight; ++y)
             for (int x = 0; x < K.shape.kernelWidth; ++x)
                 for (int c = 0; c < K.shape.kernelDepth; ++c)
                     for (int k = 0; k < K.shape.kernelCount; ++k)
                         {
-                            float v = l.weights[K.offset + K.shape.Index(K.shape.kernelHeight - 1 - y, K.shape.kernelWidth - 1 - x, c, k)];
+                            float v = kData[kOffset + K.shape.Index(K.shape.kernelHeight - 1 - y, K.shape.kernelWidth - 1 - x, c, k)];
                             weights[K.shape.Index(y, x, c, k)] = v;
                         }
 
-        Buffer.BlockCopy(l.weights, (int)B.offset * sizeof(float), weights, K.length * sizeof(float), B.length * sizeof(float));
+        BarracudaArray.Copy(bData, bOffset, weights, K.length, B.length);
 
-        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", K.length + B.length, sizeof(float));
-        buffer.SetData(weights);
+        ComputeBuffer buffer = NewComputeBuffer(l.name + "_precompiled", K.length + B.length, sizeof(float));//TODO fp16?
+        weights.UploadToComputeBuffer(buffer);
         var Kw = new Tensor(K.shape, new SharedComputeTensorData(buffer, K.shape, 0));
         var Bw = new Tensor(B.shape, new SharedComputeTensorData(buffer, B.shape, K.length));
 
@@ -227,14 +433,15 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes)
+    public virtual void PrepareModel(Model model, IDictionary<string, TensorShape> inputShapes, IVars vars)
     {
         var modelHash = CalcModelWithInputsHashCode(model, inputShapes);
         if (modelHash == m_CachedModelHash)
             return;
         m_CachedModelHash = modelHash;
 
-        ResetAllocator(false);
+        //Clear temporary buffers from previous model preparations
+        ClearCachedModelBuffers();
 
         IDictionary<string, TensorShape?> shapesByName;
         ModelAnalyzer.ListTemporaryTensorShapes(model, inputShapes, out shapesByName);
@@ -300,9 +507,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 // Conv2D
                 var kernelConv = BestKernel(ComputeKernelLibrary.Conv2D(X, l.datasets[0].shape, O, l.stride, l.pad));
-                bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd"));
+                bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd")) || (kernelConv.func.kernelName.StartsWith("Conv2D_Winograd"));
 
-                instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd(model, l) : null });
+                instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = isConvWinograd ? PrepareConv2dWinograd2x2_3x3(model, l, vars) : null });
 
                 // FusedActivation
                 var fusedActivation = (Layer.FusedActivation) l.activation;
@@ -320,10 +527,18 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             {
                 var instructions = new List<CompiledInstruction>();
 
+                var K = l.datasets[0].shape;
+
                 // DepthwiseConv2D
-                var kernelDepthwiseConv = BestKernel(
-                    ComputeKernelLibrary.DepthwiseConv2D(X, l.datasets[0].shape, O));
-                instructions.Add(new CompiledInstruction { kernel = kernelDepthwiseConv, shape = O });
+                var kernelDepthwiseConv = BestKernel(ComputeKernelLibrary.DepthwiseConv2D(X, K, O, l.stride));
+                bool isConvWinograd = (kernelDepthwiseConv.func.kernelName.StartsWith("DepthwiseConv2D_Winograd"));
+
+                if(!isConvWinograd)
+                    instructions.Add(new CompiledInstruction { kernel = kernelDepthwiseConv, shape = O, tensors = null });
+                else
+                {
+                    instructions.Add(new CompiledInstruction { kernel = kernelDepthwiseConv, shape = O, tensors = (K.batch == 3 && K.height == 3) ? PrepareConv2dWinograd2x2_3x3(model, l, vars)  : PrepareConv2dWinograd2x2_5x5(model, l, vars) });
+                }
 
                 // FusedActivation
                 var fusedActivation = (Layer.FusedActivation) l.activation;
@@ -358,9 +573,9 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                     var kernelConv = BestKernel(
                         ComputeKernelLibrary.Conv2D(XpaddedShape, K, O, new int[] { 1, 1 }, pad));
-                    bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd"));
+                    bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd")) || (kernelConv.func.kernelName.StartsWith("Conv2D_Winograd"));
 
-                    var KBTensors = PrepareConv2DTrans(model, l);
+                    var KBTensors = PrepareConv2DTrans(model, l, vars);
 
                     instructions.Add(new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape });
                     instructions.Add(new CompiledInstruction { shape = K, tensors = KBTensors });
@@ -391,15 +606,14 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                         layer.datasets[1].shape = Bd.shape;
                         layer.datasets[1].itemSizeInBytes = 4;
                         layer.datasets[1].length = Bd.length;
-                        layer.datasets[1].offset = 0;
-                        layer.datasets[1].offset = Bd.length;
+                        layer.datasets[1].offset = Kd.length;
 
-                        layer.weights = new float[Kd.length + Bd.length];
+                        layer.weights = new BarracudaArray(Kd.length + Bd.length);
 
-                        Array.Copy(Kd.ToReadOnlyArray(), 0, layer.weights, 0, Kd.length);
-                        Array.Copy(Bd.ToReadOnlyArray(), 0, layer.weights, Kd.length, Bd.length);
+                        BarracudaArray.Copy(Kd.ToReadOnlyArray(), 0, layer.weights, 0, Kd.length);
+                        BarracudaArray.Copy(Bd.ToReadOnlyArray(), 0, layer.weights, Kd.length, Bd.length);
 
-                        instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = PrepareConv2dWinograd(model, layer) });
+                        instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = PrepareConv2dWinograd2x2_3x3(model, layer, vars) });
                     }
                     else
                         instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = null });
@@ -444,7 +658,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 var instructions = new List<CompiledInstruction>();
                 var Xr = X;
-                while (Xr.height * Xr.width >= 8*8*2*2)
+                while (Xr.height > 8*2 || Xr.width > 8*2)
                 {
                     var lastLength = Xr.length;
                     var pool = new[] { 8, 8 };
@@ -486,7 +700,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                 var instructions = new List<CompiledInstruction>();
                 var Xr = X;
-                while (Xr.height * Xr.width >= 8*8*2)
+                while (Xr.height > 8*2 || Xr.width > 8*2)
                 {
                     var lastLength = Xr.length;
                     var pool = new[] { 8, 8 };
@@ -631,13 +845,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                     //8D activation are not supported on compute path atm, will fallback.
                     continue;
 
-                // Softmax implemented with ReduceSum/Max: TODO pre-allocate shaders
-                if (l.activation == Layer.Activation.LogSoftmax)
-                {
-                    kernel = BestKernel(
-                        ComputeKernelLibrary.LogSoftmax(X, O));
-                }
-                else if (l.activation == Layer.Activation.PRelu)
+                // LogSoftmax/Softmax implemented with ReduceSum/Max: TODO pre-allocate shaders
+                if (l.activation == Layer.Activation.PRelu)
                 {
                     kernel = BestKernel(
                         ComputeKernelLibrary.PRelu(X, O));
@@ -681,7 +890,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             Assert.IsNotNull(instructionActivation.kernel.shader);
 
             var fnActivation = instructionActivation.kernel;
-            var Oactivation = NewTensor(O.shape);
+            var Oactivation = NewOutputTensor(O.shape);
 
             fnActivation.SetTensor("X", O.shape, Pin(O).buffer);
             fnActivation.SetTensor("O", Oactivation.shape, Pin(Oactivation, uploadCache: false).buffer);
@@ -709,7 +918,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (ShouldFlattenInputForDenseLayer(X.shape))
         {
             Assert.IsNotNull(m_Compiled.instructions[1].kernel.shader);
-            var flattenedX = NewTensor(m_Compiled.instructions[1].shape);
+            var flattenedX = NewTempTensor(m_Compiled.instructions[1].shape);
             var flattenFn = m_Compiled.instructions[1].kernel;
 
             flattenFn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -720,7 +929,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         }
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -736,6 +945,16 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
+    protected Tensor NewOutputTensor(TensorShape s, string name = "")
+    {
+        return NewTensor(s, AllocScope.LayerOutput, name);
+    }
+
+    protected Tensor NewTempTensor(TensorShape s, string name = "")
+    {
+        return NewTensor(s, AllocScope.InternalToLayer, name);
+    }
+
     /// <inheritdoc/>
     public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
@@ -743,7 +962,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             return base.Dense3(X, W, B);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -756,6 +975,14 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         fn.Dispatch();
 
         return O;
+    }
+
+    private Tensor NewTensorForFusedActivation(TensorShape shape, Layer.FusedActivation fusedActivation)
+    {
+        var allocationHint = IsFusedActivationSupported(fusedActivation)
+            ? AllocScope.LayerOutput
+            : AllocScope.InternalToLayer;
+        return NewTensor(m_Compiled.shape, allocationHint);
     }
 
     /// <inheritdoc/>
@@ -771,8 +998,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
+
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -813,11 +1040,18 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(pad.Length, 4);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
         fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
+
+        if (m_Compiled.instructions[0].tensors?.Length == 2)
+        {
+            K = m_Compiled.instructions[0].tensors[0];
+            B = m_Compiled.instructions[0].tensors[1];
+        }
+
         fn.SetTensorDecl(_DeclK, K.shape, Pin(K).offset);
         fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
         Assert.AreEqual(Pin(K).buffer, Pin(B).buffer);
@@ -853,7 +1087,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.IsNotNull(instruction0PadX.kernel.shader);
 
         var XpaddedShape = instruction0PadX.shape;
-        var Xpadded = NewTensor(XpaddedShape);
+        var Xpadded = NewTempTensor(XpaddedShape);
         var fn0PadX = instruction0PadX.kernel;
 
         fn0PadX.SetTensor("X", X.shape, Pin(X).buffer);
@@ -887,7 +1121,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
         Assert.IsNotNull(fnConv.shader);
 
-        var O = NewTensor(instructionConv.shape);
+        var O = NewTensorForFusedActivation(instructionConv.shape, fusedActivation);
 
         fnConv.SetTensor("X", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
         fnConv.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
@@ -924,7 +1158,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(scale.Length, 2);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -946,7 +1180,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(stride.Length, 2);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -970,7 +1204,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -999,7 +1233,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             CompiledInstruction instructionPool = m_Compiled.instructions[i];
             Assert.IsNotNull(instructionPool.kernel.shader);
 
-            var Or = NewTensor(instructionPool.shape);
+            var Or = NewTempTensor(instructionPool.shape);
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1016,7 +1250,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         CompiledInstruction instructionGlobalPool = m_Compiled.instructions[m_Compiled.instructions.Length - 1];
         Assert.IsNotNull(instructionGlobalPool.kernel.shader);
 
-        var O = NewTensor(instructionGlobalPool.shape);
+        var O = NewOutputTensor(instructionGlobalPool.shape);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1080,8 +1314,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             CompiledInstruction instructionPool = m_Compiled.instructions[i];
             Assert.IsNotNull(instructionPool.kernel.shader);
 
-            var Or = NewTensor(instructionPool.shape);
-            var O2r = NewTensor(instructionPool.shape);
+            var Or = NewTempTensor(instructionPool.shape);
+            var O2r = NewTempTensor(instructionPool.shape);
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", Xr.shape, Pin(Xr).buffer);
@@ -1104,7 +1338,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         CompiledInstruction instructionGlobalPool = m_Compiled.instructions[m_Compiled.instructions.Length - 3];
         Assert.IsNotNull(instructionGlobalPool.kernel.shader);
 
-        var meanVariance = NewTensor(instructionGlobalPool.shape);
+        var meanVariance = NewTempTensor(instructionGlobalPool.shape);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", Xr.shape, Pin(Xr).buffer);
@@ -1120,7 +1354,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
-        var O = NewTensor(X.shape);
+        var O = NewTensorForFusedActivation(X.shape, fusedActivation);
         var fnNormalize = instructionNormalize.kernel;
         fnNormalize.SetTensor("X", X.shape, Pin(X).buffer);
         fnNormalize.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
@@ -1162,7 +1396,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
             unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-            var Or = NewTensor(instructionPool.shape);
+            var Or = NewTempTensor(instructionPool.shape);
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1190,7 +1424,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(instructionGlobalPool.shape);
+        var O = NewOutputTensor(instructionGlobalPool.shape);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1212,7 +1446,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             return base.Activation(kernelName, X, alpha, beta);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1234,31 +1468,12 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
         fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
         fn.SetTensor(_DeclW, _DataW, S.shape, Pin(S).buffer);
-
-        fn.Dispatch();
-        return O;
-    }
-
-    //  TODO
-    //  public override Tensor Softmax(Tensor X, int axis)
-    /// <inheritdoc/>
-    public override Tensor LogSoftmax(Tensor X)
-    {
-        if (m_Compiled.kernel.shader == null)
-            return base.LogSoftmax(X);
-
-        Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensor(m_Compiled.shape);
-        var fn = m_Compiled.kernel;
-
-        fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
-        fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
 
         fn.Dispatch();
         return O;
@@ -1276,17 +1491,21 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.IsTrue(tensors.Length > 0);
         var X = tensors[0];
 
-        Tensor outputTensor1 = NewTensor(TensorExtensions.MaxShape(tensors));
-        Tensor outputTensor2 = null;
+        Tensor outputTensor = NewOutputTensor(TensorExtensions.MaxShape(tensors));
+        Tensor tempTensor = null;
         if (tensors.Length > 2)
-            outputTensor2 = NewTensor(TensorExtensions.MaxShape(tensors));
+        {
+            tempTensor = NewTempTensor(TensorExtensions.MaxShape(tensors));
+        }
+        Tensor outputTensorOddIndex  = (tensors.Length % 2 == 0) ? outputTensor : tempTensor;
+        Tensor outputTensorEvenIndex = (tensors.Length % 2 == 0) ? tempTensor   : outputTensor;
 
         Tensor O = null;
         bool isFirstDispatch = true;
         for (int t = 1; t < tensors.Length; ++t)
         {
             var B = tensors[t];
-            O = (t % 2 == 1) ? outputTensor1 : outputTensor2;
+            O = (t % 2 == 1) ? outputTensorOddIndex : outputTensorEvenIndex;
 
             fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
             fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
@@ -1302,8 +1521,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             isFirstDispatch = false;
         }
 
-        if (O != outputTensor1) outputTensor1.Dispose();
-        if (O != outputTensor2) outputTensor2?.Dispose();
+        tempTensor?.Dispose();
+        Assert.AreEqual(outputTensor, O);
         return O;
     }
 
@@ -1330,7 +1549,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (!canUsePrecompiledBackend)
             return base.Concat(tensors, axis);
 
-        var O = NewTensor(m_Compiled.shape);
+        var O = NewOutputTensor(m_Compiled.shape);
 
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);

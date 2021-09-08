@@ -48,10 +48,6 @@ namespace Unity.Barracuda.Compiler.Passes
             removeUnusedPass.Run(ref model);
             var removeNoOpPass = new Cleanup.RemoveNoOpsPass();
             removeNoOpPass.Run(ref model);
-
-            // optimizations
-            var concatenateTransposesPass = new Optimization.ConcatenateTransposesPass();
-            concatenateTransposesPass.Run(ref model);
         }
 
         void Rewrite(ref Model model)

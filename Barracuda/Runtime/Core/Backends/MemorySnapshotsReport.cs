@@ -1,3 +1,5 @@
+#if ENABLE_BARRACUDA_STATS
+
 using System.Collections.Generic;
 using System.Text;
 
@@ -21,6 +23,27 @@ public class TensorDataMemoryInfo
     public override string ToString()
     {
         return $"TensorData of maxBytes {MaxBytes}, inUse:{InUse}, onGPU:{IsGPUMem}, uniqueId:{UniqueId}";
+    }
+}
+
+public class TempMemoryInfo
+{
+    public int UniqueId { get; }
+    public string Name { get; }
+    public long TotalBytes { get; }
+    public bool IsGPUMem  { get; }
+
+    internal TempMemoryInfo(TempMemoryStatistics tempMemoryStatistics)
+    {
+        UniqueId = tempMemoryStatistics.uniqueId;
+        Name = tempMemoryStatistics.name;
+        TotalBytes = tempMemoryStatistics.size;
+        IsGPUMem = tempMemoryStatistics.isGPUMem;
+    }
+
+    public override string ToString()
+    {
+        return $"Temp memory '{Name}' of totalBytes {TotalBytes}";
     }
 }
 
@@ -60,7 +83,6 @@ public class AllocatorMemoryInfo
     {
         return $"Allocator '{Name}' of totalBytes {TotalBytes}, usedBytes:{UsedBytes}, lostToFragmentation:{BytesLostToFragmentation}, free:{FreeBytes}";
     }
-
 }
 
 public class TensorMemoryInfo
@@ -94,9 +116,10 @@ public class MemorySnapshotReport
     public string ContextType { get; }
     public string ContextName  { get; }
     public List<TensorMemoryInfo> TensorsMemoryInfo  { get; }
-    public List<AllocatorMemoryInfo> AllocatorMemoryInfo  { get; }
+    public List<AllocatorMemoryInfo> AllocatorsMemoryInfo  { get; }
+    public List<TempMemoryInfo> TempMemoriesInfo  { get; }
 
-    internal MemorySnapshotReport(IVarsStatistics vars, string context, Layer layer)
+    internal MemorySnapshotReport(IOps ops, IVarsStatistics vars, string context, Layer layer)
     {
         ContextType = context;
         ContextName = "";
@@ -107,16 +130,22 @@ public class MemorySnapshotReport
         }
 
         TensorsMemoryInfo = new List<TensorMemoryInfo>();
-        AllocatorMemoryInfo = new List<AllocatorMemoryInfo>();
+        AllocatorsMemoryInfo = new List<AllocatorMemoryInfo>();
+        TempMemoriesInfo = new List<TempMemoryInfo>();
 
         foreach (var allocatorsStatistic in vars.GetAllocatorsStatistics())
         {
-            AllocatorMemoryInfo.Add(new AllocatorMemoryInfo(allocatorsStatistic));
+            AllocatorsMemoryInfo.Add(new AllocatorMemoryInfo(allocatorsStatistic));
         }
 
         foreach (var tensorStatistic in vars.GetTensorsStatistics())
         {
             TensorsMemoryInfo.Add(new TensorMemoryInfo(tensorStatistic));
+        }
+
+        foreach (var tempMemoryStatistic in ops.GetTempMemoryStatistics())
+        {
+            TempMemoriesInfo.Add(new TempMemoryInfo(tempMemoryStatistic));
         }
     }
 }
@@ -135,22 +164,23 @@ public class MemorySnapshotsReport
         MemorySnapshotsReports = new List<MemorySnapshotReport>();
     }
 
-    public void TakeMemorySnapshot(IVars vars, string context, Layer layer)
+    public void TakeMemorySnapshot(IOps ops, IVars vars, string context, Layer layer)
     {
         var varsWithStatistics = vars as IVarsStatistics;
         if (varsWithStatistics == null)
             return;
 
-        MemorySnapshotsReports.Add(new MemorySnapshotReport(varsWithStatistics, context, layer));
+        MemorySnapshotsReports.Add(new MemorySnapshotReport(ops, varsWithStatistics, context, layer));
     }
 
-    public void GenerateStringReport(StringBuilder stringBuilder, bool spreadSheetFormat)
+    public MemoryPeakSummary GenerateStringReport(StringBuilder stringBuilder, bool spreadSheetFormat)
     {
         stringBuilder.Append("**************** MEMORY SNAPSHOTS REPORTS - START ****************\n");
         stringBuilder.Append($"Number of snapshots : {MemorySnapshotsReports.Count}\n\n");
 
-        MemoryAndExecutionReportHelper.GenerateStringReport(stringBuilder, MemorySnapshotsReports, spreadSheetFormat);
+        var memoryPeakSummary = MemoryAndExecutionReportHelper.GenerateStringReport(stringBuilder, MemorySnapshotsReports, spreadSheetFormat);
         stringBuilder.Append("**************** MEMORY SNAPSHOTS REPORTS - STOP ****************\n");
+        return memoryPeakSummary;
     }
 
     public override string ToString()
@@ -162,3 +192,5 @@ public class MemorySnapshotsReport
 }
 
 } // namespace Unity.Barracuda
+
+#endif //ENABLE_BARRACUDA_STATS

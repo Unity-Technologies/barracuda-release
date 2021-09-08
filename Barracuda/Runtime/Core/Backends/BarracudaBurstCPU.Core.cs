@@ -97,7 +97,7 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     /// <param name="count">count</param>
     public override void Reserve(int count)
     {
-        if (count > m_Array.Length)
+        if (count > maxCapacity)
         {
             // going to reallocate memory in base.Reserve()
             // thus need to finish current work
@@ -135,9 +135,8 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     /// <summary>
     /// Return shared array from internal storage
     /// </summary>
-    /// <param name="offset">offset in returned data array</param>
     /// <returns>shared array from internal storage</returns>
-    public override float[] SharedAccess(out int offset)
+    public override BarracudaArray SharedAccess(out int offset)
     {
         // SharedAccess() by design gives direct access to the interna
         // thus need to prepare internal buffer for potential writes
@@ -179,8 +178,6 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
 /// </summary>
 public partial class BurstCPUOps : UnsafeArrayCPUOps
 {
-    private bool m_UseBlas;
-
     /// <summary>
     /// Create `BurstCPUOps`
     /// </summary>
@@ -188,7 +185,8 @@ public partial class BurstCPUOps : UnsafeArrayCPUOps
     public BurstCPUOps(ITensorAllocator allocator = null)
     : base(allocator)
     {
-        m_UseBlas = blas.IsNative();
+        if (PreferBLAS == BLAS.Native && !blas.IsNative())
+            PreferBLAS = BLAS.Disabled;
     }
 
     /// <summary>

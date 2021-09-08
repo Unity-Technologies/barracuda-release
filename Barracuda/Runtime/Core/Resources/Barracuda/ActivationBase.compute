@@ -75,6 +75,9 @@
 #pragma kernel Tan_Flat
 #pragma kernel Tan_FlatStrict
 #pragma kernel Tan_Loop
+#pragma kernel Erf_Flat
+#pragma kernel Erf_FlatStrict
+#pragma kernel Erf_Loop
 
 #pragma kernel Relu_NHWC CHANNELS_FIRST=0
 #pragma kernel Relu_NCHW CHANNELS_FIRST=1
@@ -122,6 +125,12 @@
 //#pragma kernel Sigmoid_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
 #pragma kernel Sigmoid_Nyxc_NHWC CHANNELS_FIRST=0
 //#pragma kernel Sigmoid_Nyxc_NCHW CHANNELS_FIRST=1
+#pragma kernel HardSigmoid_NHWC CHANNELS_FIRST=0
+#pragma kernel HardSigmoid_NCHW CHANNELS_FIRST=1
+#pragma kernel HardSigmoid_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel HardSigmoid_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel HardSigmoid_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel HardSigmoid_Nyxc_NCHW CHANNELS_FIRST=1
 #pragma kernel Elu_NHWC CHANNELS_FIRST=0
 #pragma kernel Elu_NCHW CHANNELS_FIRST=1
 #pragma kernel Elu_CNyx_NHWC CHANNELS_FIRST=0
@@ -158,10 +167,6 @@
 //#pragma kernel Pow_CNyx_NCHW CHANNELS_FIRST=1 //This kernel require NHWC by design
 #pragma kernel Pow_Nyxc_NHWC CHANNELS_FIRST=0
 //#pragma kernel Pow_Nyxc_NCHW CHANNELS_FIRST=1
-#pragma kernel Softmax_NHWC CHANNELS_FIRST=0
-#pragma kernel Softmax_NCHW CHANNELS_FIRST=1
-#pragma kernel LogSoftmax_NHWC CHANNELS_FIRST=0
-#pragma kernel LogSoftmax_NCHW CHANNELS_FIRST=1
 #pragma kernel Clip_NHWC CHANNELS_FIRST=0
 #pragma kernel Clip_NCHW CHANNELS_FIRST=1
 #pragma kernel Clip_CNyx_NHWC CHANNELS_FIRST=0
@@ -234,5 +239,11 @@
 //#pragma kernel Tan_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
 #pragma kernel Tan_Nyxc_NHWC CHANNELS_FIRST=0
 //#pragma kernel Tan_Nyxc_NHWC CHANNELS_FIRST=1
+#pragma kernel Erf_NHWC CHANNELS_FIRST=0
+#pragma kernel Erf_NCHW CHANNELS_FIRST=1
+#pragma kernel Erf_CNyx_NHWC CHANNELS_FIRST=0
+//#pragma kernel Erf_CNyx_NHWC CHANNELS_FIRST=1 //This kernel require NHWC by design
+#pragma kernel Erf_Nyxc_NHWC CHANNELS_FIRST=0
+//#pragma kernel Erf_Nyxc_NHWC CHANNELS_FIRST=1
 
 #include "Activation.cginc"

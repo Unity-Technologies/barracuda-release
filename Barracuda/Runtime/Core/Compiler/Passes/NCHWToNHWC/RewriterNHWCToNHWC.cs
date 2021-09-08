@@ -167,12 +167,36 @@ namespace Unity.Barracuda.Compiler.Passes
             });
             rewritersNHWC.Add(Layer.Type.Squeeze, (layer, net) =>
             {
-                layer.type = Layer.Type.Nop;
+                int input0Rank = 4;
+                if (m_RanksByName.ContainsKey(layer.inputs[0]) && m_RanksByName[layer.inputs[0]] != null)
+                    input0Rank = m_RanksByName[layer.inputs[0]].Value;
+
+                var axis = layer.pool[0];
+                if (axis < 0)
+                    axis = input0Rank + 1 - axis;
+
+                var transpose = SqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(input0Rank, axis);
+
+                layer.type = Layer.Type.Transpose;
+                layer.pool = transpose;
+
                 return true;
             });
             rewritersNHWC.Add(Layer.Type.Unsqueeze, (layer, net) =>
             {
-                layer.type = Layer.Type.Nop;
+                int input0Rank = 4;
+                if (m_RanksByName.ContainsKey(layer.inputs[0]) && m_RanksByName[layer.inputs[0]] != null)
+                    input0Rank = m_RanksByName[layer.inputs[0]].Value;
+
+                var axis = layer.pool[0];
+                if (axis < 0)
+                    axis = input0Rank + 1 - axis;
+
+                var transpose = UnSqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(input0Rank, axis);
+
+                layer.type = Layer.Type.Transpose;
+                layer.pool = transpose;
+
                 return true;
             });
             rewritersNHWC.Add(Layer.Type.Load, (layer, net) =>
@@ -241,7 +265,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
         bool ConvertAxisNHWC(Layer layer, ModelBuilder net)
         {
-            if (layer.type == Layer.Type.Activation && layer.activation != Layer.Activation.Softmax)
+            if (layer.type == Layer.Type.Activation && layer.activation != Layer.Activation.Softmax && layer.activation != Layer.Activation.LogSoftmax)
                 return true;
 
             string input0 = layer.inputs[0];
@@ -291,6 +315,83 @@ namespace Unity.Barracuda.Compiler.Passes
             layer.pool = new[] { input0Rank.Value, input1Rank.Value };
 
             return ConvertAxisNHWC(layer, net);
+        }
+
+        static int[] SqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(int onnxRank, int onnxAxis)
+        {
+            var identity = new[] { 0, 1, 2, 3 };
+
+            if (onnxRank == 4)
+            {
+                // N,H,W,C -> _,H,W,C => H,_,W,C
+                //         -> N,_,W,C ok
+                //         -> N,H,_,C => N,_,H,C
+                //         -> N,H,W,_ => N,_,H,W
+                if (onnxAxis == 0)
+                    identity = new[] { 1, 0, 2, 3 };
+                else if (onnxAxis == 2)
+                    identity = new[] { 0, 2, 1, 3 };
+                else if (onnxAxis == 3)
+                    identity = new[] { 0, 3, 1, 2 };
+            }
+            else if (onnxRank == 3)
+            {
+
+                // N,_,W,C -> _,_,W,C => W,_,_,C
+                //         -> N,_,_,C ok
+                //         -> N,_,W,_ => N,_,_,W
+                if (onnxAxis == 0)
+                    identity = new[] { 2, 0, 1, 3 };
+                else if (onnxAxis == 2)
+                    identity = new[] { 0, 1, 3, 2 };
+            }
+            else if (onnxRank == 2)
+            {
+                // N,_,_,C -> N,_,_,_ ok
+                //         -> _,_,_,C => N,_,_,_
+                if (onnxAxis == 1)
+                    identity = new[] { 3, 0, 1, 2 };
+            }
+
+            return identity;
+        }
+
+        static int[] UnSqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(int onnxRank, int onnxAxis)
+        {
+            var identity = new[] { 0, 1, 2, 3 };
+
+            if (onnxRank == 3)
+            {
+                // N,_,W,C -> 1,N,W,C
+                //         -> N,1,W,C => ok
+                //         -> N,W,1,C
+                //         -> N,W,C,1
+                if (onnxAxis == 0)
+                    identity = new[] { 1, 0, 2, 3 };
+                else if (onnxAxis == 2)
+                    identity = new[] { 0, 2, 1, 3 };
+                else if (onnxAxis == 3)
+                    identity = new[] { 0, 2, 3, 1 };
+            }
+            else if (onnxRank == 2)
+            {
+                // N,_,_,C -> 1,_,N,C
+                //         -> N,_,1,C => ok
+                //         -> N,_,C,1
+                if (onnxAxis == 0)
+                    identity = new[] { 1, 2, 0, 3 };
+                else if (onnxAxis == 2)
+                    identity = new[] { 0, 1, 3, 2 };
+            }
+            else if (onnxRank == 1)
+            {
+                // N,_,_,_ -> 1,_,_,N
+                //         -> N,_,_,1 => ok
+                if (onnxAxis == 0)
+                    identity = new[] { 1, 2, 3, 0 };
+            }
+
+            return identity;
         }
 
     }

@@ -168,12 +168,12 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXSBO(pinX, pinS, pinB, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrS = &pinS.array[pinS.offset],
-            ptrB = &pinB.array[pinB.offset],
-            ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrS = pinS.array.AddressAt(pinS.offset);
+            float* ptrB = pinB.array.AddressAt(pinB.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
+
             jobFence = ScheduleXSBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrS, ptrB, ptrO, arrayLength, innerloopBatchCount);
         }
 
@@ -197,10 +197,9 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXSBO(pinX, pinS, pinB, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             var ptrS = pinS.data;
             var ptrB = pinB.data;
             jobFence = ScheduleXSBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrS, ptrB, ptrO, arrayLength, innerloopBatchCount);
@@ -225,11 +224,10 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXBO(pinX, pinB, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrB = &pinB.array[pinB.offset],
-            ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrB = pinB.array.AddressAt(pinB.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             jobFence = ScheduleXBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrB, ptrO, arrayLength, innerloopBatchCount);
         }
 
@@ -252,9 +250,8 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXBO(pinX, pinB, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
             var ptrB = pinB.data;
             var ptrO = pinO.data;
             jobFence = ScheduleXBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrB, ptrO, arrayLength, innerloopBatchCount);
@@ -299,8 +296,8 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = pinO.reuse;
 
         JobHandle jobFence;
-        fixed (float* ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             jobFence = ScheduleOInternal(jobData, fenceBeforeJobStart, ptrO);
         }
 
@@ -322,8 +319,8 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = pinO.reuse;
 
         JobHandle jobFence;
-        fixed (float* ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             jobFence = ScheduleOInternal(jobData, fenceBeforeJobStart, ptrO+offsetO, arrayLength, innerloopBatchCount);
         }
 
@@ -346,10 +343,9 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX+offsetX, ptrO+offsetO);
         }
 
@@ -371,10 +367,9 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO, arrayLength, innerloopBatchCount);
         }
 
@@ -416,10 +411,9 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset],
-            ptrO = &pinO.array[pinO.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
+            float* ptrO = pinO.array.AddressAt(pinO.offset);
             jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO);
         }
 
@@ -441,9 +435,8 @@ internal static class BurstSchedulingHelper
         var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
 
         JobHandle jobFence;
-        fixed (float*
-            ptrX = &pinX.array[pinX.offset])
         {
+            float* ptrX = pinX.array.AddressAt(pinX.offset);
             var ptrO = pinO.data;
             jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO, arrayLength, innerloopBatchCount);
         }

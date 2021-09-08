@@ -9,6 +9,7 @@ using UnityEditor.Experimental.AssetImporters;
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
+using Unity.Barracuda.Editor;
 using Unity.Barracuda.ONNX;
 
 [assembly: InternalsVisibleToAttribute("Barracuda.EditorTests")]
@@ -20,7 +21,7 @@ namespace Unity.Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(32, new[] { "onnx" })]
+    [ScriptedImporter(33, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
@@ -53,6 +54,7 @@ namespace Unity.Barracuda
         /// <param name="ctx">Asset import context</param>
         public override void OnImportAsset(AssetImportContext ctx)
         {
+            ONNXModelConverter.ModelImported += BarracudaAnalytics.SendBarracudaImportEvent;
             var converter = new ONNXModelConverter(optimizeModel, treatErrorsAsWarnings, forceArbitraryBatchSize, importMode);
 
             var model = converter.Convert(ctx.assetPath);

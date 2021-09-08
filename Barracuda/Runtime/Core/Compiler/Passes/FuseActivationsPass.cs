@@ -85,6 +85,7 @@ namespace Unity.Barracuda.Compiler.Passes.Optimization
                 case Layer.FusedActivation.Sin:
                 case Layer.FusedActivation.Sinh:
                 case Layer.FusedActivation.Tan:
+                case Layer.FusedActivation.Erf:
                     return true;
                 default:
                     return false;

@@ -288,10 +288,14 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                         return null;
 
                     TensorShape X = inputShapes[0];
-                    X = new TensorShape(X.batch, X.width, X.channels, X.height);
+                    bool wasImportedAsNCHW = (layer.axes == null);//see FuseInputsIntoLayer()
+                    if (wasImportedAsNCHW)
+                        X = new TensorShape(X.batch, X.width, X.channels, X.height);
                     Assert.IsNotNull(layer.pad);
                     var O = X.ApplyBorder(layer.pad);
-                    return new TensorShape(O.batch, O.channels, O.height, O.width);
+                    if (wasImportedAsNCHW)
+                        O = new TensorShape(O.batch, O.channels, O.height, O.width);
+                    return O;
                 }
                 case Layer.Type.Upsample2D:
                 {
@@ -372,9 +376,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.LogicalAnd:
                 case Layer.Type.LogicalXor:
                 {
-                    int rankO = 0;
-                    for (int i = 0; i < inputRanks.Length; i++)
-                        rankO = Mathf.Max(inputRanks[i], rankO);
+                    int rankO = inputRanks.Max();
+
                     var O = new List<int>();
                     for (int i = 0; i < rankO; i++)
                         O.Add(1);
@@ -601,14 +604,16 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Concat:
                 {
-                    var shape = ShapeToOnnxLayout(inputShapes[0], inputRanks[0]);
+                    int maxRank = inputRanks.Max();
+
+                    var shape = ShapeToOnnxLayout(inputShapes[0], maxRank);
                     var axis = layer.axis;
                     if (axis < 0)
-                        axis += inputRanks[0];
+                        axis += maxRank;
 
                     for (int i = 1; i < inputShapes.Length; i++)
                     {
-                        var shapei = ShapeToOnnxLayout(inputShapes[i], inputRanks[i]);
+                        var shapei = ShapeToOnnxLayout(inputShapes[i], maxRank);
                         shape[axis] += shapei[axis];
                     }
 
@@ -630,6 +635,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                         axis += rank0;
 
                     shape.InsertRange(axis, indicies);
+                    shape.RemoveAt(axis + indicies.Count);
 
                     return OnnxLayoutToTensorShape(shape.ToArray());
                 }

@@ -4,9 +4,30 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2021-09-01
+### Added
+- Added Burst implementation for Random layers, improves scheduling of the whole network computation
+- Added scale and bias options for `TensorFromTexture`
+- Added `Erf` layer support
+- Added `LogSoftmax` axis support
+
+### Changed
+- Improved MatMul performance on `CSharpBurst` backend on Desktop platforms
+- Improved temp Tensor allocation handling, should reduce GC pressure
+- Improved Tensor storage handling for PrecompiledCompute backend, should reduce overall memory pressure when used.
+- Exposed flag for GPU worker to take ownership of weights, reduces memory pressure on CPU side, but limits `Model` object re-use.
+- Improved convolution performance on Mobiles
+- Improved 1x1 convolution performance
+- Minimal supported Unity version updated to 2019.4.29f1
+- Improved Barracuda installation instructions 
+
+### Fixed
+- Fixed broadcasting between rank 4 and rank 2 operands 
+- Fixed GPU `Flatten` when channel order is NHWC
+
 ## [2.1.0] - 2021-05-17
 ### Added
-- ONNX: Added support for the `metadata_props` field, which is exposed as a <string,string> dictionary with `Model.Metadata`
+- ONNX: Added support for the `metadata_props` field, which is exposed as a <string,string> dictionary via `Model.Metadata`
 
 ### Changed
 - Improved `Slice` range handling
