@@ -503,6 +503,7 @@ public class GenericWorker : IWorker
                     shape = new TensorShape(l.pool);
 
                 int seed = (l.pad.Length > 0) ? l.pad[0] : 1337;
+                    seed = seed == 0 ? 1337 : seed;
                 float scale = l.alpha, mean = l.beta;
                 X = m_Ops.RandomNormal(shape, mean, scale, seed);
             }
@@ -518,6 +519,7 @@ public class GenericWorker : IWorker
                     shape = new TensorShape(l.pool);
 
                 int seed = (l.pad.Length > 0) ? l.pad[0] : 1337;
+                    seed = seed == 0 ? 1337 : seed;
                 float scale = l.alpha, mean = l.beta;
                 X = m_Ops.RandomUniform(shape, mean, scale, seed);
             }
@@ -530,6 +532,7 @@ public class GenericWorker : IWorker
 
                 int count = l.pool[0];
                 int seed = (l.pad.Length > 0) ? l.pad[0] : 1337;
+                    seed = seed == 0 ? 1337 : seed;
                 X = m_Ops.Multinomial(X, count, seed);
             }
             else if (l.type == Layer.Type.OneHot)

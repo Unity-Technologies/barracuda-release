@@ -4,6 +4,10 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2021-09-14
+### Fixed
+- Fixed `CSharpBurst` Random layer failure when model is loaded from an old .nn file
+
 ## [2.2.0] - 2021-09-01
 ### Added
 - Added Burst implementation for Random layers, improves scheduling of the whole network computation

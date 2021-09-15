@@ -1924,6 +1924,9 @@ public partial class BurstCPUOps
         return O;
     }
 
+    internal uint jobCountCall = 0;
+
+    /// <inheritdoc/>
     public override Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
     {
         var O = NewTensor(s);
@@ -1931,7 +1934,8 @@ public partial class BurstCPUOps
         var pinO = Pin(O, uploadCache: false);
 
         var job = new RandomNormalJob();
-        job.rng = new Unity.Mathematics.Random((uint)seed);
+        // seed is combined with jobCountCall to keep rng persistent over frame
+        job.rng = new Unity.Mathematics.Random((uint)(seed ^ (++jobCountCall)));
         job.mean = mean;
         job.scale = scale;
         job.ScheduleO(pinO, 0, O.length, 1024);
@@ -1939,6 +1943,7 @@ public partial class BurstCPUOps
         return O;
     }
 
+    /// <inheritdoc/>
     public override Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
     {
         var O = NewTensor(s);
@@ -1946,7 +1951,9 @@ public partial class BurstCPUOps
         var pinO = Pin(O, uploadCache: false);
 
         var job = new RandomUniformJob();
-        job.rng = new Unity.Mathematics.Random((uint)seed);
+
+        // seed is combined with jobCountCall to keep rng persistent over frame
+        job.rng = new Unity.Mathematics.Random((uint)(seed ^ (++jobCountCall)));
         job.mean = mean;
         job.scale = scale;
         job.ScheduleO(pinO, 0, O.length, 1024);

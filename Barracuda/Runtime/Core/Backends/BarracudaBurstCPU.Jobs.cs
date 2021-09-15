@@ -1854,7 +1854,6 @@ public partial class BurstCPUOps
 
         public void Execute(int i)
         {
-            rng = Unity.Mathematics.Random.CreateFromIndex((uint)(i));
             O.ptr[i] = Gaussian(mean, scale);
         }
     }
@@ -1870,7 +1869,6 @@ public partial class BurstCPUOps
 
         public void Execute(int i)
         {
-            rng = Unity.Mathematics.Random.CreateFromIndex((uint)(i));
             O.ptr[i] = mean + scale * rng.NextFloat();
         }
     }
