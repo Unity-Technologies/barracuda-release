@@ -271,35 +271,25 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 
                     return OnnxLayoutToTensorShape(oShape.ToArray());
                 }
-                case Layer.Type.Border3D:
-                {
-                    TensorShape X = inputShapes[0];
-                    X = new TensorShape(X.batch, X.height, X.width, X.channels, X.depth);
-                    Assert.IsNotNull(layer.pad);
-                    var O = X.ApplyBorder(layer.pad);
-                    return new TensorShape(O.batch, O.channels, O.depth, O.height, O.width);
-                }
-                case Layer.Type.Border2D:
-                case Layer.Type.Pad2DReflect:
-                case Layer.Type.Pad2DSymmetric:
-                case Layer.Type.Pad2DEdge:
+                case Layer.Type.Pad:
                 {
                     if (inputShapes.Length > 1)
                         return null;
 
                     TensorShape X = inputShapes[0];
-                    bool wasImportedAsNCHW = (layer.axes == null);//see FuseInputsIntoLayer()
-                    if (wasImportedAsNCHW)
-                        X = new TensorShape(X.batch, X.width, X.channels, X.height);
-                    Assert.IsNotNull(layer.pad);
-                    var O = X.ApplyBorder(layer.pad);
-                    if (wasImportedAsNCHW)
-                        O = new TensorShape(O.batch, O.channels, O.height, O.width);
-                    return O;
+                    int rankX = inputRanks[0];
+                    List<int> xShape = ShapeToOnnxLayout(X, rankX);
+
+
+                    for (int i = 0; i < xShape.Count; i++)
+                    {
+                        xShape[i] += layer.pad[i] + layer.pad[rankX + i];
+                    }
+
+                    return OnnxLayoutToTensorShape(xShape.ToArray());
                 }
                 case Layer.Type.Upsample2D:
                 {
-
                     if (inputShapes.Length > 1)
                         return null;
 
@@ -514,6 +504,13 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 
                     return new TensorShape(nchwShape[0], nchwShape[1], nchwShape[2], nchwShape[3]);
                 }
+                case Layer.Type.RoiAlign:
+                {
+                    TensorShape X = inputShapes[0];
+                    TensorShape rois = inputShapes[0];
+
+                    return new TensorShape(rois.batch, X.height, layer.pool[0], layer.pool[1]);
+                }
                 case Layer.Type.LSTM:
                 {
                     TensorShape X = inputShapes[0];
@@ -639,6 +636,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 
                     return OnnxLayoutToTensorShape(shape.ToArray());
                 }
+                case Layer.Type.ScatterND:
+                    return inputShapes[0];
                 // elementwise operations
                 case Layer.Type.Nop:
                 case Layer.Type.ScaleBias:
@@ -687,6 +686,9 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     TensorShape X = inputShapes[0];
                     int rank = inputRanks[0];
 
+                    if (inputShapes.Length > 1)
+                        return null;
+
                     var nchwShape = ShapeToOnnxLayout(X, rank);
 
                     var squeezedShape = new List<int>();
@@ -702,6 +704,9 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     TensorShape X = inputShapes[0];
                     int rank = inputRanks[0];
+
+                    if (inputShapes.Length > 1)
+                        return null;
 
                     if (rank < 0)
                         return null;

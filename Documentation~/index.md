@@ -22,7 +22,7 @@ var output = engine.Execute(input).PeekOutput();
 ```
 The Barracuda neural network import pipeline is built on the [ONNX](https://onnx.ai/) (Open Neural Network Exchange) format, which lets you bring in neural network models from a variety of external frameworks, including Pytorch, TensorFlow, and Keras.
 
-The [Getting started](GettingStarted.md) guide takes you through a short, complete tutorial on how to run your network in Unity with Barracuda. 
+The [Getting started](GettingStarted.md) guide takes you through a short, complete tutorial on how to run your network in Unity with Barracuda. [Barracuda Starter Kit](https://github.com/Unity-Technologies/barracuda-starter-kit) contains Barracuda usage examples.
 
 The [FAQ](FAQ.md) provides answers about the design, implementation, and usage of Barracuda.
 
@@ -48,5 +48,5 @@ If you have issues running Barracuda in your Unity project, please report them o
 ## Requirements
 The current version of Barracuda is compatible with the following versions of the Unity Editor:
 
-* 2019.4.x and later
+* 2019.4.29f1 and later
 

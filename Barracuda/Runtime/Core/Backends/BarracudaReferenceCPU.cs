@@ -329,6 +329,65 @@ public class ReferenceCPUOps : IOps
         m_Allocator = allocator;
     }
 
+    #region Tensor creation helpers (for reference implementation only)
+    /// <summary>
+    /// Allocate new `Tensor` via allocator using LayerOutput allocation scope.
+    /// Should only be used on reference backend, production backends should use explicit
+    /// allocation scope for better peak mem usage.
+    /// </summary>
+    /// <param name="s">shape</param>
+    /// <param name="scope">tensor lifetime scope</param>
+    /// <param name="name">name</param>
+    /// <returns>new `Tensor`</returns>
+    private Tensor NewTensor(TensorShape s)
+    {
+        return NewTensor(s, AllocScope.LayerOutput);
+    }
+
+    /// <summary>
+    /// Allocate new `Tensor` via allocator using LayerOutput allocation scope.
+    /// Should only be used on reference backend, production backends should use explicit
+    /// allocation scope for better peak mem usage.
+    /// </summary>
+    /// <param name="t">`Tensor`</param>
+    /// <returns>new `Tensor`</returns>
+    private Tensor NewTensorLike(Tensor t)
+    {
+        return NewTensorLike(t, AllocScope.LayerOutput);
+    }
+
+    /// <summary>
+    /// Allocate new `Tensor` via allocator using LayerOutput allocation scope.
+    /// Should only be used on reference backend, production backends should use explicit
+    /// allocation scope for better peak mem usage.
+    /// </summary>
+    /// <param name="b">batch</param>
+    /// <param name="ch">channels</param>
+    /// <param name="name">name</param>
+    /// <returns>new `Tensor`</returns>
+    private Tensor NewTensor(int b, int ch, string name = "")
+    {
+        return NewTensor(new TensorShape(b, ch), AllocScope.LayerOutput, name);
+    }
+
+    /// <summary>
+    /// Allocate new `Tensor` via allocator using LayerOutput allocation scope.
+    /// Should only be used on reference backend, production backends should use explicit
+    /// allocation scope for better peak mem usage.
+    /// </summary>
+    /// <param name="b">batch</param>
+    /// <param name="h">height</param>
+    /// <param name="w">width</param>
+    /// <param name="ch">channels</param>
+    /// <param name="name">name</param>
+    /// <returns>new `Tensor`</returns>
+    private Tensor NewTensor(int b, int h, int w, int ch, string name = "")
+    {
+        return NewTensor(new TensorShape(b, h, w, ch), AllocScope.LayerOutput, name);
+    }
+
+    #endregion
+
     /// <summary>
     /// Allocate new `Tensor` via allocator
     /// </summary>
@@ -336,10 +395,14 @@ public class ReferenceCPUOps : IOps
     /// <param name="scope">tensor lifetime scope</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(TensorShape s, AllocScope scope = AllocScope.LayerOutput, string name = "")
+    protected Tensor NewTensor(TensorShape s, AllocScope scope, string name = "")
     {
+        if (name == "")
+            name = (scope == AllocScope.LayerOutput ? "LayerOutput" : "InternalToLayer");
+
         var tensor = m_Allocator.Alloc(s, scope);
         tensor.name = name;
+
         return tensor;
     }
 
@@ -349,7 +412,7 @@ public class ReferenceCPUOps : IOps
     /// <param name="t">`Tensor`</param>
     /// <param name="scope">tensor lifetime scope</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensorLike(Tensor t, AllocScope scope = AllocScope.LayerOutput)
+    protected Tensor NewTensorLike(Tensor t, AllocScope scope)
     {
         return NewTensor(t.shape, scope);
     }
@@ -360,7 +423,7 @@ public class ReferenceCPUOps : IOps
     /// <param name="tensors">tensors</param>
     /// <param name="scope">tensor lifetime scope</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensorLike(Tensor[] tensors, AllocScope scope = AllocScope.LayerOutput)
+    protected Tensor NewTensorLike(Tensor[] tensors, AllocScope scope)
     {
         Assert.IsTrue(tensors.Length > 0);
 
@@ -377,31 +440,56 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <summary>
-    /// Allocate new `Tensor` via allocator
+    /// Check if `fusedActivation` is supported in-place
     /// </summary>
-    /// <param name="b">batch</param>
-    /// <param name="ch">channels</param>
-    /// <param name="scope">tensor lifetime scope</param>
-    /// <param name="name">name</param>
-    /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(int b, int ch, AllocScope scope = AllocScope.LayerOutput, string name = "")
+    /// <param name="fusedActivation">fused activation type</param>
+    /// <returns>`true` if supported in-place</returns>
+    protected virtual bool IsFusedActivationSupported(Layer.FusedActivation fusedActivation)
     {
-        return NewTensor(new TensorShape(b, ch), scope, name);
+        switch (fusedActivation)
+        {
+            case Layer.FusedActivation.None:
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>
     /// Allocate new `Tensor` via allocator
+    /// tensor lifetime will be OutputLayer if activation is supported in place, InternalToLayer otherwise.
     /// </summary>
-    /// <param name="b">batch</param>
-    /// <param name="h">height</param>
-    /// <param name="w">width</param>
-    /// <param name="ch">channels</param>
-    /// <param name="scope">tensor lifetime scope</param>
-    /// <param name="name">name</param>
+    /// <param name="shape">shape of the tensor to be created</param>
+    /// <param name="fusedActivation">fused activation type</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(int b, int h, int w, int ch, AllocScope scope = AllocScope.LayerOutput, string name = "")
+    protected Tensor NewTensorForFusedActivation(TensorShape shape, Layer.FusedActivation fusedActivation)
     {
-        return NewTensor(new TensorShape(b, h, w, ch), scope, name);
+        if (IsFusedActivationSupported(fusedActivation))
+            return NewOutputTensor(shape);
+        else
+            return NewTempTensor(shape);
+    }
+
+    /// <summary>
+    /// Allocate new `Tensor` via allocator using AllocScope.LayerOutput scope
+    /// </summary>
+    /// <param name="s">shape of the tensor to be created</param>
+    /// <param name="name">tensor name</param>
+    /// <returns>new `Tensor`</returns>
+    protected Tensor NewOutputTensor(TensorShape s, string name = "")
+    {
+        return NewTensor(s, AllocScope.LayerOutput, name);
+    }
+
+    /// <summary>
+    /// Allocate new `Tensor` via allocator using AllocScope.InternalToLayer scope
+    /// </summary>
+    /// <param name="s">shape of the tensor to be created</param>
+    /// <param name="name">tensor name</param>
+    /// <returns>new `Tensor`</returns>
+    protected Tensor NewTempTensor(TensorShape s, string name = "")
+    {
+        return NewTensor(s, AllocScope.InternalToLayer, name);
     }
 
 #if ENABLE_BARRACUDA_STATS
@@ -1357,44 +1445,49 @@ public class ReferenceCPUOps : IOps
     private Tensor ApplyPadding(Tensor X, int[] pad, Func<Tensor, int, int, int, int, int, float> paddingOp)
     {
         Assert.IsTrue(X.shape.IsNDHWC());
-        Assert.IsTrue(pad.Length == 4 || pad.Length == 6);
+        Assert.IsTrue(pad.Length == 6 || pad.Length == 8);
 
         var O = NewTensor(X.shape.ApplyBorder(pad));
 
         int prePadW  = pad[0];
         int prePadH  = pad[1];
-        int prePadD  = pad.Length == 4 ? 0      : pad[2];
-        int postPadW = pad.Length == 4 ? pad[2] : pad[3];
-        int postPadH = pad.Length == 4 ? pad[3] : pad[4];
-        int postPadD = pad.Length == 4 ? 0      : pad[5];
+        int prePadD  = pad.Length == 6 ? 0      : pad[2];
+        int prePadC  = pad.Length == 6 ? pad[2] : pad[3];
+
+        int postPadW = pad.Length == 6 ? pad[3] : pad[4];
+        int postPadH = pad.Length == 6 ? pad[4] : pad[5];
+        int postPadD = pad.Length == 6 ? 0      : pad[6];
+        int postPadC = pad.Length == 6 ? pad[5] : pad[7];
 
         // NOTE: negative "pad" variable will crop X tensor
         int croppedWidth  = X.width  - Math.Max(0, -postPadW);
         int croppedHeight = X.height - Math.Max(0, -postPadH);
         int croppedDepth  = X.depth  - Math.Max(0, -postPadD);
+        int croppedChannels = X.channels - Math.Max(0, -postPadC);
 
         for (int b = 0; b < O.batch; ++b)
             for (int d = 0; d < O.depth; ++d)
                 for (int h = 0; h < O.height; ++h)
                     for (int w = 0; w < O.width; ++w)
-                    {
-                        int readW = w - prePadW;
-                        int readH = h - prePadH;
-                        int readD = d - prePadD;
+                        for (int c = 0; c < O.channels; ++c)
+                        {
+                            int readW = w - prePadW;
+                            int readH = h - prePadH;
+                            int readD = d - prePadD;
+                            int readC = c - prePadC;
 
-                        if (readW < 0 || readW >= croppedWidth ||
-                            readH < 0 || readH >= croppedHeight ||
-                            readD < 0 || readD >= croppedDepth)
-                        {
-                            for (int c = 0; c < O.channels; ++c)
-                                O[b, d, h, w, c] = paddingOp(X, b, readD, readH, readW, c);
+                            if (readW < 0 || readW >= croppedWidth ||
+                                readH < 0 || readH >= croppedHeight ||
+                                readD < 0 || readD >= croppedDepth ||
+                                readC < 0 || readC >= croppedChannels)
+                            {
+                                O[b, d, h, w, c] = paddingOp(X, b, readD, readH, readW, readC);
+                            }
+                            else
+                            {
+                                O[b, d, h, w, c] = X[b, readD, readH, readW, readC];
+                            }
                         }
-                        else
-                        {
-                            for (int c = 0; c < O.channels; ++c)
-                                O[b, d, h, w, c] = X[b, readD, readH, readW, c];
-                        }
-                    }
         return O;
     }
 
@@ -1412,22 +1505,25 @@ public class ReferenceCPUOps : IOps
         return ApplyPadding(X, pad, padOp);
     }
 
-    private static void ClampHWToTensorShape(TensorShape shape, ref int height, ref int width)
+    private static void ClampHWCToTensorShape(TensorShape shape, ref int height, ref int width, ref int channels)
     {
         width = Math.Max(width, 0);
         height = Math.Max(height, 0);
+        channels = Math.Max(channels, 0);
         width = Math.Min(width, shape.width - 1);
         height = Math.Min(height, shape.height - 1);
+        channels = Math.Min(channels, shape.channels - 1);
     }
 
     /// <inheritdoc/>
     public virtual Tensor Pad2DReflect(Tensor X, int[] pad)
     {
-        float GetReflectPadding(Tensor tensorX, int b, int readD, int readY, int readX, int c)
+        float GetReflectPadding(Tensor tensorX, int b, int readD, int readY, int readX, int readC)
         {
             //TODO when implementing Pad3DReflect change to function and support depth
             int lastXIndex = tensorX.shape.width - 1;
             int lastYIndex = tensorX.shape.height - 1;
+            int lastCIndex = tensorX.shape.channels - 1;
 
             if (readX < 0)
                 readX = -readX;
@@ -1439,8 +1535,13 @@ public class ReferenceCPUOps : IOps
             else if (readY > lastYIndex)
                 readY = lastYIndex - (readY - lastYIndex);
 
-            ClampHWToTensorShape(tensorX.shape, ref readY, ref readX);
-            return tensorX[b,readY, readX,c];
+            if (readC < 0)
+                readC = -readC;
+            else if (readC > lastCIndex)
+                readC = lastCIndex - (readC - lastCIndex);
+
+            ClampHWCToTensorShape(tensorX.shape, ref readY, ref readX, ref readC);
+            return tensorX[b, readY, readX, readC];
         }
 
         return ApplyPadding(X, pad, GetReflectPadding);
@@ -1449,11 +1550,12 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Pad2DSymmetric(Tensor X, int[] pad)
     {
-        float GetSymmetricPadding(Tensor tensorX, int b, int readD, int readY, int readX, int c)
+        float GetSymmetricPadding(Tensor tensorX, int b, int readD, int readY, int readX, int readC)
         {
             //TODO when implementing Pad3DSymmetric change to function and support depth
             int lastXIndex = tensorX.shape.width - 1;
             int lastYIndex = tensorX.shape.height - 1;
+            int lastCIndex = tensorX.shape.channels - 1;
 
             if (readX < 0)
                 readX = -readX - 1;
@@ -1465,8 +1567,13 @@ public class ReferenceCPUOps : IOps
             else if (readY > lastYIndex)
                 readY = lastYIndex - (readY - lastYIndex) + 1;
 
-            ClampHWToTensorShape(tensorX.shape, ref readY, ref readX);
-            return tensorX[b,readY, readX,c];
+            if (readC < 0)
+                readC = -readC - 1;
+            else if (readC > lastCIndex)
+                readC = lastCIndex - (readC - lastCIndex) + 1;
+
+            ClampHWCToTensorShape(tensorX.shape, ref readY, ref readX, ref readC);
+            return tensorX[b, readY, readX, readC];
         }
 
         return ApplyPadding(X, pad, GetSymmetricPadding);
@@ -1475,11 +1582,11 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Pad2DEdge(Tensor X, int[] pad)
     {
-        float GetEdgePadding(Tensor tensorX, int b, int readD, int readY, int readX, int c)
+        float GetEdgePadding(Tensor tensorX, int b, int readD, int readY, int readX, int readC)
         {
             //TODO when implementing Pad3DEdge change to function and support depth
-            ClampHWToTensorShape(tensorX.shape, ref readY, ref readX);
-            return tensorX[b,readY, readX,c];
+            ClampHWCToTensorShape(tensorX.shape, ref readY, ref readX, ref readC);
+            return tensorX[b, readY, readX, readC];
         }
 
         return ApplyPadding(X, pad, GetEdgePadding);
@@ -1785,6 +1892,101 @@ public class ReferenceCPUOps : IOps
         }
         return O;
     }
+
+    private float NearestNeighbourBilinearInterpolation(Tensor X, int n, float y, float x, int c, bool snapToBorder = false)
+    {
+        if (snapToBorder)
+        {
+            y = Mathf.Clamp(y, 0, X.height - 1);
+            x = Mathf.Clamp(x, 0, X.width - 1);
+        }
+
+        int y_low = (int)Mathf.Floor(y);
+        int x_low = (int)Mathf.Floor(x);
+        int y_high = y_low + 1;
+        int x_high = x_low + 1;
+
+        float wy_h = y - y_low;
+        float wx_h = x - x_low;
+        float wy_l = 1.0f - wy_h;
+        float wx_l = 1.0f - wx_h;
+
+        float v = 0.0f;
+        if(y_low >= 0 && y_low < X.height && x_low >= 0 && x_low < X.width)
+            v += wx_l * wy_l * X[n, y_low, x_low, c];
+        if (y_low >= 0 && y_low < X.height && x_high >= 0 && x_high < X.width)
+            v += wx_h * wy_l * X[n, y_low, x_high, c];
+        if (y_high >= 0 && y_high < X.height && x_low >= 0 && x_low < X.width)
+            v += wx_l * wy_h * X[n, y_high, x_low, c];
+        if (y_high >= 0 && y_high < X.height && x_high >= 0 && x_high < X.width)
+            v += wx_h * wy_h * X[n, y_high, x_high, c];
+
+        return v;
+    }
+
+    /// <inheritdoc/>
+
+    public virtual Tensor RoiAlign(Tensor X, Tensor Rois, Tensor Indices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale)
+    {
+        // https://arxiv.org/abs/1703.06870
+        // https://github.com/pytorch/vision/blob/cdb6fba52f461b276d9b4d0a817b62e69344021c/test/test_ops.py
+        Assert.IsTrue(X.shape.Is4D());
+        Assert.AreEqual(Rois.flatHeight, Indices.batch);
+        Assert.AreEqual(Rois.flatWidth, 4);
+
+        Tensor O = NewTensor(Rois.flatHeight, outputHeight, outputWidth, X.channels);
+
+        bool aligned = false;
+        float offset = aligned ? 0.5f : 0.0f;
+
+        for (int n = 0; n < Rois.flatHeight; n++)
+        {
+            float j_begin = Rois[n, 0] * spatialScale - offset;
+            float i_begin = Rois[n, 1] * spatialScale - offset;
+            float j_end = Rois[n, 2] * spatialScale - offset;
+            float i_end = Rois[n, 3] * spatialScale - offset;
+
+            float roi_h = i_end - i_begin;
+            float roi_w = j_end - j_begin;
+            float bin_h = roi_h / ((float)outputHeight);
+            float bin_w = roi_w / ((float)outputWidth);
+
+            int batchIdx = (int)Indices[n];
+
+            for (int i = 0; i < outputHeight; i++)
+                for (int j = 0; j < outputWidth; j++)
+                {
+                    float start_h = i_begin + i * bin_h;
+                    float grid_h = samplingRatio > 0 ? samplingRatio : Mathf.Ceil(bin_h);
+                    float start_w = j_begin + j * bin_w;
+                    float grid_w = samplingRatio > 0 ? samplingRatio : Mathf.Ceil(bin_w);
+
+                    for (int c = 0; c < X.channels; c++)
+                    {
+                        float v = 0.0f;
+                        for (int iy = 0; iy < (int)grid_h; iy++)
+                            for (int ix = 0; ix < (int)grid_w; ix++)
+                            {
+                                float y = start_h + (iy + 0.5f) * bin_h / grid_h;
+                                float x = start_w + (ix + 0.5f) * bin_w / grid_w;
+
+                                if(x >= X.width || x < 0 || y >= X.height || y < 0)
+                                    v += 0.0f;
+                                else
+                                    v += NearestNeighbourBilinearInterpolation(X, batchIdx, y, x, c, true);
+                            }
+
+                            v /= grid_h * grid_w;
+
+
+                        O[n, i, j, c] = v;
+                    }
+                }
+        }
+
+        return O;
+    }
+
 
     // TODO: Revisit flattened approach (see previous attempt in source history), which had two of the four axis cases working
     //    but couldn't get the strides just right for the outer loop, so opted for this straightforward approach
@@ -2790,7 +2992,7 @@ public class ReferenceCPUOps : IOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float, float, float> operation)
     {
-        var O = NewTensorLike(tensors);
+        var O = NewTensorLike(tensors, AllocScope.LayerOutput);
         var A = tensors[0];
         for (int t = 1; t < tensors.Length; ++t)
         {
@@ -3019,7 +3221,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     private Tensor ApplyLogicalOperator(Tensor tensorA, Tensor tensorB, Func<float, float, float> logicOp)
     {
-        var O = NewTensorLike(new Tensor[] { tensorA, tensorB });
+        var O = NewTensorLike(new Tensor[] { tensorA, tensorB }, AllocScope.LayerOutput);
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
             var A = tensorA[tensorA.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
@@ -3109,7 +3311,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        var O = NewTensorLike(new [] { C, A, B });
+        var O = NewTensorLike(new [] { C, A, B }, AllocScope.LayerOutput);
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
             var x = A[A.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
@@ -3234,6 +3436,50 @@ public class ReferenceCPUOps : IOps
             int d7 = (axis == 7) ? (int) indices[it.d7] : it.d7;
             O[it.index] = X[d0, d1, d2, d3, d4, d5, d6, d7];
         }
+        return O;
+    }
+
+    public virtual Tensor ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
+    {
+        // only support for scattering on C for now
+        Assert.IsTrue(indices.batch == X.batch);
+        Assert.IsTrue(updates.width == X.width && updates.height == X.height);
+        var outputShape = X.shape;
+
+        var O = NewTensor(outputShape);
+
+        for (var n = 0; n < O.batch; ++n)
+        for (var h = 0; h < O.height; ++h)
+        for (var w = 0; w < O.width; ++w)
+        for (var c = 0; c < O.channels; ++c)
+        {
+            float v = X[n, h, w, c];
+            O[n, h, w, c] = v;
+
+            for (int idx = 0; idx < indices.flatWidth; idx++)
+            {
+                int indexRemap = (int)(indices[idx]);
+                if (c != indexRemap)
+                    continue;
+
+                float vw = updates[n % updates.batch, h % updates.height, w % updates.width, idx % updates.channels];
+                
+                int indexWrite = O.Index(n, h, w, indexRemap);
+                if (reduction == Layer.ScatterNDReductionMode.None)
+                {
+                    O[indexWrite] = vw;
+                }
+                else if (reduction == Layer.ScatterNDReductionMode.Add)
+                {
+                    O[indexWrite] += vw;
+                }
+                else if (reduction == Layer.ScatterNDReductionMode.Mul)
+                {
+                    O[indexWrite] *= vw;
+                }
+            }
+        }
+
         return O;
     }
 

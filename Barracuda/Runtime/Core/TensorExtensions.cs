@@ -1,10 +1,7 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe; // Enumerable.Range(), Enumerable.SequenceEqual()
-
 using UnityEngine;
 using UnityEngine.Assertions;
 
@@ -280,7 +277,13 @@ public static class TensorExtensions
     static public TensorShape Gather(TensorShape[] shapes, int axis)
     {
         TensorShape shape = shapes[0];
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         TensorShape indices = shapes[1];
+        if (!indices.hasNamedDimensions)
+            indices = indices.AsNamed();
+
         shape[axis] = indices.length;
 
         return shape;
@@ -298,13 +301,19 @@ public static class TensorExtensions
         if (tensors.Length == 0)
             return new TensorShape();
 
+        var a = tensors[0].shape;
+        if (!a.hasNamedDimensions)
+            a = a.AsNamed();
+        var aAxis = a.Axis(axis);
+
         // validate that off axis dimensions are equal
         for (var i = 1; i < tensors.Length; ++i)
         {
-            var a = tensors[0].shape;
             var b = tensors[i].shape;
-            var aAxis = tensors[0].shape.Axis(axis);
-            var bAxis = tensors[i].shape.Axis(axis);
+            if (!b.hasNamedDimensions)
+                b = b.AsNamed();
+
+            var bAxis = b.Axis(axis);
             a[aAxis] = 0; b[bAxis] = 0;
             if (a != b)
             {
@@ -315,9 +324,19 @@ public static class TensorExtensions
         }
 
         var shape = tensors[0].shape;
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         var dstAxis = tensors[0].shape.Axis(axis);
         for (var i = 1; i < tensors.Length; ++i)
-            shape[dstAxis] += tensors[i].shape[axis];
+        {
+            var otherShape = tensors[i].shape;
+            if (!otherShape.hasNamedDimensions)
+                otherShape = otherShape.AsNamed();
+
+            shape[dstAxis] += otherShape[axis];
+        }
+
         return shape;
     }
 
@@ -333,13 +352,20 @@ public static class TensorExtensions
         if (shapes.Length == 0)
             return new TensorShape();
 
+        var a = shapes[0];
+        if (!a.hasNamedDimensions)
+            a = a.AsNamed();
+        var aAxis = a.Axis(axis);
+
         // validate that off axis dimensions are equal
         for (var i = 1; i < shapes.Length; ++i)
         {
-            var a = shapes[0];
+
             var b = shapes[i];
-            var aAxis = shapes[0].Axis(axis);
-            var bAxis = shapes[i].Axis(axis);
+            if (!b.hasNamedDimensions)
+                b = b.AsNamed();
+
+            var bAxis = b.Axis(axis);
             a[aAxis] = 0; b[bAxis] = 0;
             if (a != b)
             {
@@ -350,9 +376,19 @@ public static class TensorExtensions
         }
 
         var shape = shapes[0];
-        var dstAxis = shapes[0].Axis(axis);
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
+        var dstAxis = shape.Axis(axis);
         for (var i = 1; i < shapes.Length; ++i)
-            shape[dstAxis] += shapes[i][axis];
+        {
+            var otherShape = shapes[i];
+            if (!otherShape.hasNamedDimensions)
+                otherShape = otherShape.AsNamed();
+
+            shape[dstAxis] += otherShape[axis];
+        }
+
         return shape;
     }
 
@@ -366,9 +402,21 @@ public static class TensorExtensions
         Assert.IsTrue(shapes.Length > 0);
 
         var shape = shapes[0];
+
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         for (var i = 1; i < shapes.Length; ++i)
+        {
+            var otherShape = shapes[i];
+            if (!otherShape.hasNamedDimensions)
+                otherShape = otherShape.AsNamed();
+
             for (var axis = 0; axis < TensorShape.MaxRank; axis++)
-                shape[axis] = Math.Max(shape[axis], shapes[i][axis]);
+            {
+                shape[axis] = Math.Max(shape[axis], otherShape[axis]);
+            }
+        }
 
         return shape;
     }
@@ -382,9 +430,22 @@ public static class TensorExtensions
     {
         Assert.IsTrue(tensors.Length > 0);
         var shape = tensors[0].shape;
+
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         for (var i = 1; i < tensors.Length; ++i)
+        {
             for (var axis = 0; axis < TensorShape.MaxRank; axis++)
-                shape[axis] = Math.Max(shape[axis], tensors[i].shape[axis]);
+            {
+                var otherShape = tensors[i].shape;
+                if (!otherShape.hasNamedDimensions)
+                    otherShape = otherShape.AsNamed();
+
+                shape[axis] = Math.Max(shape[axis], otherShape[axis]);
+            }
+        }
+
         return shape;
     }
 
@@ -396,6 +457,9 @@ public static class TensorExtensions
     /// <returns>output shape</returns>
     static public TensorShape Scale(this TensorShape shape, TensorShape scale)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         var newShape = shape;
         for (var axis = 0; axis < TensorShape.MaxRank; axis++)
             newShape[axis] *= scale[axis];
@@ -410,6 +474,9 @@ public static class TensorExtensions
     /// <returns>output shape</returns>
     static public TensorShape Scale(this TensorShape shape, int[] scale)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         if (scale.Length == TensorShape.MaxRank)
         {
             for (var axis = 0; axis < TensorShape.MaxRank; axis++)
@@ -434,6 +501,9 @@ public static class TensorExtensions
     /// <returns>output shape</returns>
     static public TensorShape Reduce(this TensorShape shape, int axis)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         axis = shape.Axis(axis);
         var newShapeArray = shape;
         newShapeArray[axis] = 1;
@@ -450,6 +520,9 @@ public static class TensorExtensions
     /// <exception cref="ArgumentException">more than one dimension is unspecified</exception>
     static public TensorShape Reshape(this TensorShape shape, int[] size4Dor8D)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         unsafe
         {
             int* size = stackalloc int[TensorShape.MaxRank];
@@ -516,15 +589,24 @@ public static class TensorExtensions
     /// <returns>new TensorShape</returns>
     static public TensorShape ApplyBorder(this TensorShape shape, int[] border)
     {
-        Assert.IsTrue(border.Length > 0);
-        Assert.IsTrue(border.Length % 2 == 0);
-        int featureCount = border.Length / 2;
-        Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
-        for (var i = 0; i < featureCount; ++i)
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
+        Assert.IsTrue(border.Length == 6 || border.Length == 8);
+        if(border.Length == 6)
         {
-            shape[TensorShape.DataFeatures[i]] += border[i               ];
-            shape[TensorShape.DataFeatures[i]] += border[i + featureCount];
+            shape[TensorShape.H] += border[1] + border[4];
+            shape[TensorShape.W] += border[0] + border[3];
+            shape[TensorShape.C] += border[2] + border[5];
         }
+        else if (border.Length == 8)
+        {
+            shape[TensorShape.D] += border[2] + border[6];
+            shape[TensorShape.H] += border[1] + border[5];
+            shape[TensorShape.W] += border[0] + border[4];
+            shape[TensorShape.C] += border[3] + border[7];
+        }
+
         return shape;
     }
 
@@ -535,6 +617,9 @@ public static class TensorExtensions
 
     static internal int[] AdjustPadToKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         Assert.IsTrue(stride.Length==2 || stride.Length==3);
         unsafe
         {
@@ -561,6 +646,9 @@ public static class TensorExtensions
 
     static internal int[] AdjustPadToPool(this TensorShape shape, int[] pool, int[] stride, int[] pad)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         unsafe
         {
             fixed (int* pPool = pool)
@@ -572,6 +660,9 @@ public static class TensorExtensions
 
     static internal unsafe int[] AdjustPadToPool(this TensorShape shape, int* pool, int[] stride, int[] pad)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         Assert.IsTrue(stride.Length > 0);
         int featureCount = stride.Length;
         Assert.IsTrue(featureCount <= TensorShape.DataFeatures.Length);
@@ -617,6 +708,9 @@ public static class TensorExtensions
     static internal TensorShape ApplyPool(this TensorShape shape, int[] pool, int[] stride, int[] pad,
         bool ceilMode = false)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         Assert.IsTrue(stride.Length == pool.Length);
         unsafe
         {
@@ -629,6 +723,8 @@ public static class TensorExtensions
 
     static internal unsafe TensorShape ApplyPool(this TensorShape shape, int* pool, int[] stride, int[] pad, bool ceilMode = false)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
 
         Assert.IsTrue(stride.Length > 0);
 
@@ -660,6 +756,9 @@ public static class TensorExtensions
 
     static internal TensorShape ApplyKernel(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         unsafe
         {
             Assert.IsTrue(stride.Length==2 || stride.Length==3);
@@ -677,6 +776,9 @@ public static class TensorExtensions
 
     static internal TensorShape ApplyKernelInverse(this TensorShape shape, TensorShape kernel, int[] stride, int[] pad, int[] outputAdjustment)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         Assert.IsTrue(stride.Length > 0);
         Assert.IsTrue(stride.Length * 2 == pad.Length);
         Assert.IsTrue(stride.Length <= TensorShape.KernelSpatials.Length);
@@ -739,6 +841,9 @@ public static class TensorExtensions
 
     static internal bool IsNDHWC(this TensorShape shape)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         return shape.sequenceLength == 1 &&
                shape.numberOfDirections == 1 &&
                shape.extraDimension == 1;
@@ -746,6 +851,9 @@ public static class TensorExtensions
 
     static internal bool Is4D(this TensorShape shape)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         return shape.sequenceLength == 1 &&
                shape.numberOfDirections == 1 &&
                shape.extraDimension == 1 &&
@@ -769,6 +877,9 @@ public static class TensorExtensions
 
     static internal int FirstNotIdentityFeatureDimensionIndex(this TensorShape shape)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         for (int dimIndex = TensorShape.DataFeature3; dimIndex < TensorShape.MaxRank; ++dimIndex)
         {
             if (shape[dimIndex] > 1)
@@ -816,6 +927,9 @@ public static class TensorExtensions
 
     static internal unsafe void Get8DParametersNoAlloc(this TensorShape shape, int[] parameters, int* parameters8D, int defaultValue)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         if (parameters.Length == TensorShape.MaxRank)
         {
             for (int i = 0; i < TensorShape.MaxRank; ++i)
@@ -844,6 +958,9 @@ public static class TensorExtensions
     /// <returns>8D permutations</returns>
     static public int[] Get8DPermutationsForNHWCPermutationsAndShape(this TensorShape shape, int[] permutations)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         if (permutations.Length == TensorShape.MaxRank)
             return permutations;
 
@@ -858,6 +975,9 @@ public static class TensorExtensions
 
     static internal NativeArray<int> Get8DPermutationsForNHWCPermutationsAndShape(this TensorShape shape, NativeArray<int> inPermutations)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         if (inPermutations.Length == TensorShape.MaxRank)
             return inPermutations;
 
@@ -884,6 +1004,9 @@ public static class TensorExtensions
 
     static internal int[] Get8DPermutationsForNCHWPermutationsAndShape(this TensorShape shape, int[] permutations)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         if (permutations.Length == TensorShape.MaxRank)
             return permutations;
 
@@ -898,6 +1021,9 @@ public static class TensorExtensions
 
     static internal NativeArray<int> Get8DPermutationsForNCHWPermutationsAndShape(this TensorShape shape, NativeArray<int> inPermutations)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         if (inPermutations.Length == TensorShape.MaxRank)
             return inPermutations;
 
@@ -925,6 +1051,9 @@ public static class TensorExtensions
     static internal unsafe TensorShape ApplyStridedSlice8DUnsafeNoAlloc(this TensorShape shape, int* starts, int* ends,
         int* stride)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         TensorShape sliced = shape;
 
         for (int i = 0; i < shape.rank; ++i)
@@ -964,6 +1093,9 @@ public static class TensorExtensions
 
     static internal TensorShape ApplyStridedSlice(this TensorShape shape, int[] starts, int[] ends, int[] stride)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         unsafe
         {
             int* starts8Dbuffer = stackalloc int[TensorShape.MaxRank];
@@ -1001,25 +1133,33 @@ public static class TensorExtensions
     /// <returns>new TensorShape</returns>
     static public TensorShape Permute(this TensorShape shape, int[] permutations)
     {
-        if (permutations.Length == 4)
-        permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
 
-        var output = new TensorShape();
+        if (permutations.Length == 4)
+            permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+
+        var permutedShape = new int[TensorShape.MaxRank];
         for (var i = 0; i < permutations.Length; ++i)
-            output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+            permutedShape[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+
+        var output = new TensorShape(permutedShape);
         return output;
     }
 
     static internal TensorShape Permute(this TensorShape shape, NativeArray<int> permutations)
     {
-        if (permutations.Length == 4)
-        {
-            permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
-        }
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
 
-        var output = new TensorShape();
+        if (permutations.Length == 4)
+            permutations = Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+
+        var permutedShape = new int[TensorShape.MaxRank];
         for (var i = 0; i < permutations.Length; ++i)
-            output[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+            permutedShape[i] = permutations[i] >= 0 ? shape[permutations[i]] : 1;
+
+        var output = new TensorShape(permutedShape);
         return output;
     }
 

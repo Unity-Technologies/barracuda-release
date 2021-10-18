@@ -35,9 +35,7 @@ internal class BarracudaBackendsFactory
 
         if (WorkerFactory.IsType(type, WorkerFactory.Device.GPU) && !ComputeShaderSingleton.Instance.supported)
         {
-            D.LogWarning(
-                $"SystemInfo.supportsComputeShaders: {SystemInfo.supportsComputeShaders}. Falling back to {WorkerFactory.Type.CSharp}");
-            type = WorkerFactory.Type.CSharp;
+            type = WorkerFactory.Type.PixelShader;
         }
 
         return type;
@@ -55,6 +53,9 @@ internal class BarracudaBackendsFactory
 
         case WorkerFactory.Type.ComputeRef:
             return new ReferenceComputeOps(allocator);
+
+        case WorkerFactory.Type.PixelShader:
+            return new PixelShaderOps(allocator);
 
         case WorkerFactory.Type.CSharpBurst:
             return new BurstCPUOps(allocator);
@@ -78,18 +79,25 @@ internal class BarracudaBackendsFactory
 
         if (WorkerFactory.IsType(type, WorkerFactory.Device.GPU) && !SystemInfo.supportsComputeShaders && !Application.isEditor)
         {
-            D.LogWarning("Compute shaders are not supported on current platform. Falling back to CSharpFast.");
-            type = WorkerFactory.Type.CSharpBurst;
+            type = WorkerFactory.Type.PixelShader;
         }
 
         IVars vars;
-        if (WorkerFactory.IsType(type, WorkerFactory.Device.GPU) || WorkerFactory.IsType(compareAgainstType, WorkerFactory.Device.GPU))
-            vars = new ComputeVarsWithSharedModel();
+        // PixelShader worker uses Blit/Textures, cannot re-use vars unless the dispatch mechanism allows rendering to sub part of the texture
+        if ((type == WorkerFactory.Type.PixelShader) || (compareAgainstType == WorkerFactory.Type.PixelShader))
+            vars = new GenericVarsWithReuse();
         else
-            vars = new DefaultVars();
+        {
+            if (WorkerFactory.IsType(type, WorkerFactory.Device.GPU) || WorkerFactory.IsType(compareAgainstType, WorkerFactory.Device.GPU))
+                vars = new ComputeVarsWithSharedModel();
+            else
+                vars = new DefaultVars();
+        }
 
         ITensorAllocator allocator = vars.GetAllocator();
-
+        if ((type == WorkerFactory.Type.PixelShader) || (compareAgainstType == WorkerFactory.Type.PixelShader))
+            allocator = new TensorCachingByShapeAllocator();
+       
         if (workerConfiguration.verbose)
             D.Log($"Storage type: {vars.GetType()}. Allocator type: {allocator.GetType()}.");
 

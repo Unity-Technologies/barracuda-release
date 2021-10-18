@@ -561,72 +561,91 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
                     var K = l.datasets[0].shape;
                     var B = l.datasets[1].shape;
+
                     var pad = new int[]
                     {
-                            K.kernelWidth - l.pad[0] - 1, K.kernelHeight - l.pad[1] - 1,
-                            K.kernelWidth - l.pad[2] - 1, K.kernelHeight - l.pad[3] - 1
+                        K.kernelWidth - l.pad[0] - 1, K.kernelHeight - l.pad[1] - 1,
+                        K.kernelWidth - l.pad[2] - 1, K.kernelHeight - l.pad[3] - 1
                     };
 
-                    var XpaddedShape = new TensorShape(X.batch, stride[1] * (X.height - 1) + 1 + outputAdjustment[1], stride[0] * (X.width - 1) + 1 + outputAdjustment[0], X.channels);
-
-                    var kernelFill = CompileKernel(new ComputeKernelLibrary.Entry("Conv2DTransPadFill", (X.channels, X.width, X.height), 1.0f, 0));
-
-                    var kernelConv = BestKernel(
-                        ComputeKernelLibrary.Conv2D(XpaddedShape, K, O, new int[] { 1, 1 }, pad));
-                    bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd")) || (kernelConv.func.kernelName.StartsWith("Conv2D_Winograd"));
-
-                    var KBTensors = PrepareConv2DTrans(model, l, vars);
-
-                    instructions.Add(new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape });
-                    instructions.Add(new CompiledInstruction { shape = K, tensors = KBTensors });
-
-                    if (isConvWinograd)
+                    if (stride[0] * stride[1] <= 4)
                     {
-                        var layer = new Layer(l.name, l.type, l.activation);
-                        layer.pad = l.pad;
-                        layer.stride = l.stride;
+                        var XpaddedShape = new TensorShape(X.batch, stride[1] * (X.height - 1) + 1 + outputAdjustment[1], stride[0] * (X.width - 1) + 1 + outputAdjustment[0], X.channels);
 
-                        layer.pool = l.pool.ToArray();
-                        layer.axis = l.axis;
-                        layer.alpha = l.alpha;
-                        layer.beta = l.beta;
-                        layer.inputs = l.inputs.ToArray();
+                        var kernelFill = CompileKernel(new ComputeKernelLibrary.Entry("Conv2DTransPadFill", (X.channels, X.width, X.height), 1.0f, 0));
 
-                        var Kd = KBTensors[0];
-                        var Bd = KBTensors[1];
+                        var kernelConv = BestKernel(
+                            ComputeKernelLibrary.Conv2D(XpaddedShape, K, O, new int[] { 1, 1 }, pad));
+                        bool isConvWinograd = (kernelConv.func.kernelName.StartsWith("Conv2DWinograd")) || (kernelConv.func.kernelName.StartsWith("Conv2D_Winograd"));
 
-                        layer.datasets = new Layer.DataSet[2];
-                        layer.datasets[0].name = Kd.name;
-                        layer.datasets[0].shape = Kd.shape;
-                        layer.datasets[0].itemSizeInBytes = 4;
-                        layer.datasets[0].length = Kd.length;
-                        layer.datasets[0].offset = 0;
+                        var KBTensors = PrepareConv2DTrans(model, l, vars);
 
-                        layer.datasets[1].name = Bd.name;
-                        layer.datasets[1].shape = Bd.shape;
-                        layer.datasets[1].itemSizeInBytes = 4;
-                        layer.datasets[1].length = Bd.length;
-                        layer.datasets[1].offset = Kd.length;
+                        instructions.Add(new CompiledInstruction { kernel = kernelFill, shape = XpaddedShape });
+                        instructions.Add(new CompiledInstruction { shape = K, tensors = KBTensors });
 
-                        layer.weights = new BarracudaArray(Kd.length + Bd.length);
+                        if (isConvWinograd)
+                        {
+                            var layer = new Layer(l.name, l.type, l.activation);
+                            layer.pad = l.pad;
+                            layer.stride = l.stride;
 
-                        BarracudaArray.Copy(Kd.ToReadOnlyArray(), 0, layer.weights, 0, Kd.length);
-                        BarracudaArray.Copy(Bd.ToReadOnlyArray(), 0, layer.weights, Kd.length, Bd.length);
+                            layer.pool = l.pool.ToArray();
+                            layer.axis = l.axis;
+                            layer.alpha = l.alpha;
+                            layer.beta = l.beta;
+                            layer.inputs = l.inputs.ToArray();
 
-                        instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = PrepareConv2dWinograd2x2_3x3(model, layer, vars) });
+                            var Kd = KBTensors[0];
+                            var Bd = KBTensors[1];
+
+                            layer.datasets = new Layer.DataSet[2];
+                            layer.datasets[0].name = Kd.name;
+                            layer.datasets[0].shape = Kd.shape;
+                            layer.datasets[0].itemSizeInBytes = 4;
+                            layer.datasets[0].length = Kd.length;
+                            layer.datasets[0].offset = 0;
+
+                            layer.datasets[1].name = Bd.name;
+                            layer.datasets[1].shape = Bd.shape;
+                            layer.datasets[1].itemSizeInBytes = 4;
+                            layer.datasets[1].length = Bd.length;
+                            layer.datasets[1].offset = Kd.length;
+
+                            layer.weights = new BarracudaArray(Kd.length + Bd.length);
+
+                            BarracudaArray.Copy(Kd.ToReadOnlyArray(), 0, layer.weights, 0, Kd.length);
+                            BarracudaArray.Copy(Bd.ToReadOnlyArray(), 0, layer.weights, Kd.length, Bd.length);
+
+                            instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = PrepareConv2dWinograd2x2_3x3(model, layer, vars) });
+                        }
+                        else
+                            instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = null });
+
+                        // FusedActivation
+                        var fusedActivation = (Layer.FusedActivation)l.activation;
+                        if (!IsFusedActivationSupported(fusedActivation))
+                        {
+                            var activationKernel = BestKernel(ComputeKernelLibrary.Activation(X, O, fusedActivation.ToString()));
+                            instructions.Add(new CompiledInstruction { kernel = activationKernel, shape = O });
+                        }
+
+                        m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
                     }
                     else
-                        instructions.Add(new CompiledInstruction { kernel = kernelConv, shape = O, tensors = null });
-
-                    // FusedActivation
-                    var fusedActivation = (Layer.FusedActivation)l.activation;
-                    if (!IsFusedActivationSupported(fusedActivation))
                     {
-                        var activationKernel = BestKernel(ComputeKernelLibrary.Activation(X, O, fusedActivation.ToString()));
-                        instructions.Add(new CompiledInstruction { kernel = activationKernel, shape = O });
-                    }
+                        var kernelConvTrans = BestKernel(ComputeKernelLibrary.Conv2DTrans(X, K, O));
+                        instructions.Add(new CompiledInstruction { kernel = kernelConvTrans, shape = O, tensors = null });
 
-                    m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
+                        // FusedActivation
+                        var fusedActivation = (Layer.FusedActivation)l.activation;
+                        if (!IsFusedActivationSupported(fusedActivation))
+                        {
+                            var activationKernel = BestKernel(ComputeKernelLibrary.Activation(X, O, fusedActivation.ToString()));
+                            instructions.Add(new CompiledInstruction { kernel = activationKernel, shape = O });
+                        }
+
+                        m_CompiledLayers.Add(l, new CompiledLayer { instructions = instructions.ToArray(), shape = O });
+                    }
 
                     continue;
             }
@@ -945,16 +964,6 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
-    protected Tensor NewOutputTensor(TensorShape s, string name = "")
-    {
-        return NewTensor(s, AllocScope.LayerOutput, name);
-    }
-
-    protected Tensor NewTempTensor(TensorShape s, string name = "")
-    {
-        return NewTensor(s, AllocScope.InternalToLayer, name);
-    }
-
     /// <inheritdoc/>
     public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
@@ -975,14 +984,6 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         fn.Dispatch();
 
         return O;
-    }
-
-    private Tensor NewTensorForFusedActivation(TensorShape shape, Layer.FusedActivation fusedActivation)
-    {
-        var allocationHint = IsFusedActivationSupported(fusedActivation)
-            ? AllocScope.LayerOutput
-            : AllocScope.InternalToLayer;
-        return NewTensor(m_Compiled.shape, allocationHint);
     }
 
     /// <inheritdoc/>
@@ -1072,8 +1073,6 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (m_Compiled.instructions == null)
             return base.Conv2DTrans(X, K, B, stride, pad, outputAdjustment, fusedActivation);
 
-        Assert.IsTrue(m_Compiled.instructions.Length >= 3); // pad, kernel flip, conv, ? fusedActivation
-
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -1081,71 +1080,105 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        // refer to BarracudaCompute.cs for details
-        // 0-pad X
-        CompiledInstruction instruction0PadX = m_Compiled.instructions[0];
-        Assert.IsNotNull(instruction0PadX.kernel.shader);
 
-        var XpaddedShape = instruction0PadX.shape;
-        var Xpadded = NewTempTensor(XpaddedShape);
-        var fn0PadX = instruction0PadX.kernel;
-
-        fn0PadX.SetTensor("X", X.shape, Pin(X).buffer);
-        fn0PadX.SetTensor("O", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
-        fn0PadX.shader.SetInts("_Stride", stride);
-        fn0PadX.shader.SetInts("_Pad", outputAdjustment);
-        fn0PadX.Dispatch();
-
-        // kernel flip
-        CompiledInstruction instructionKernelFlip = m_Compiled.instructions[1];
-        Assert.IsTrue(instructionKernelFlip.tensors.Length >= 2);
-        var Kflipped = instructionKernelFlip.tensors[0];
-        var Bpacked = instructionKernelFlip.tensors[1];
-
-        // convolution
-        CompiledInstruction instructionConv = m_Compiled.instructions[2];
-        Assert.IsNotNull(instructionConv.kernel.shader);
-        var fnConv = instructionConv.kernel;
-
-        var padTrans = new int[]
+        if (m_Compiled.instructions.Length >= 3) // pad, kernel flip, conv, ? fusedActivation
         {
-            K.kernelWidth - pad[0] - 1, K.kernelHeight - pad[1] - 1,
-            K.kernelWidth - pad[2] - 1, K.kernelHeight - pad[3] - 1
-        };
-        var strideTrans = new int[] { 1, 1 };
+            Assert.IsTrue(stride[0] * stride[1] <= 4);
+            // refer to BarracudaCompute.cs for details
+            // 0-pad X
+            CompiledInstruction instruction0PadX = m_Compiled.instructions[0];
+            Assert.IsNotNull(instruction0PadX.kernel.shader);
 
-        if (fnConv.shader == null)
-        {
-            return base.Conv2D(Xpadded, Kflipped, Bpacked, strideTrans, padTrans, fusedActivation);
+            var XpaddedShape = instruction0PadX.shape;
+            var Xpadded = NewTempTensor(XpaddedShape);
+            var fn0PadX = instruction0PadX.kernel;
+
+            fn0PadX.SetTensor("X", X.shape, Pin(X).buffer);
+            fn0PadX.SetTensor("O", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
+            fn0PadX.shader.SetInts("_Stride", stride);
+            fn0PadX.shader.SetInts("_Pad", outputAdjustment);
+            fn0PadX.Dispatch();
+
+            // kernel flip
+            CompiledInstruction instructionKernelFlip = m_Compiled.instructions[1];
+            Assert.IsTrue(instructionKernelFlip.tensors.Length >= 2);
+            var Kflipped = instructionKernelFlip.tensors[0];
+            var Bpacked = instructionKernelFlip.tensors[1];
+
+            // convolution
+            CompiledInstruction instructionConv = m_Compiled.instructions[2];
+            Assert.IsNotNull(instructionConv.kernel.shader);
+            var fnConv = instructionConv.kernel;
+
+            var padTrans = new int[]
+            {
+                K.kernelWidth - pad[0] - 1, K.kernelHeight - pad[1] - 1,
+                K.kernelWidth - pad[2] - 1, K.kernelHeight - pad[3] - 1
+            };
+            var strideTrans = new int[] { 1, 1 };
+
+            if (fnConv.shader == null)
+            {
+                return base.Conv2D(Xpadded, Kflipped, Bpacked, strideTrans, padTrans, fusedActivation);
+            }
+
+            Assert.IsNotNull(fnConv.shader);
+
+            var O = NewTensorForFusedActivation(instructionConv.shape, fusedActivation);
+
+            fnConv.SetTensor("X", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
+            fnConv.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
+
+            if (instructionConv.tensors?.Length == 2)
+            {
+                Kflipped = instructionConv.tensors[0];
+                Bpacked = instructionConv.tensors[1];
+            }
+
+            fnConv.SetTensorDecl(_DeclK, Kflipped.shape, Pin(Kflipped).offset);
+            fnConv.SetTensorDecl(_DeclB, Bpacked.shape, Pin(Bpacked).offset);
+            Assert.AreEqual(Pin(Kflipped).buffer, Pin(Bpacked).buffer);
+            fnConv.SetTensorBuffer(_DataWBK, Pin(Kflipped).buffer);
+
+            fnConv.shader.SetInt("_ActivationMode", (int)fusedActivation);
+            fnConv.shader.SetInts(_Pad, padTrans);
+            fnConv.shader.SetInts(_Stride, strideTrans);
+
+            fnConv.Dispatch();
+
+            Xpadded.Dispose();
+
+            return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
         }
-
-        Assert.IsNotNull(fnConv.shader);
-
-        var O = NewTensorForFusedActivation(instructionConv.shape, fusedActivation);
-
-        fnConv.SetTensor("X", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
-        fnConv.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
-
-        if(instructionConv.tensors?.Length == 2)
+        else
         {
-            Kflipped = instructionConv.tensors[0];
-            Bpacked = instructionConv.tensors[1];
+            Assert.IsTrue(stride[0] * stride[1] > 4);
+            Assert.IsNotNull(m_Compiled.kernel.shader);
+            var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
+            var fn = m_Compiled.kernel;
+
+            var padTrans = new int[]
+            {
+                K.kernelWidth - pad[0] - 1, K.kernelHeight - pad[1] - 1,
+                K.kernelWidth - pad[2] - 1, K.kernelHeight - pad[3] - 1
+            };
+
+            fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
+            fn.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
+
+            fn.SetTensorDecl(_DeclK, K.shape, Pin(K).offset);
+            fn.SetTensorDecl(_DeclB, B.shape, Pin(B).offset);
+            Assert.AreEqual(Pin(K).buffer, Pin(B).buffer);
+            fn.SetTensorBuffer(_DataWBK, Pin(K).buffer);
+
+            fn.shader.SetInts(_Pad, padTrans);
+            fn.shader.SetInts(_Stride, stride);
+            fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
+
+            fn.Dispatch();
+
+            return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
         }
-
-        fnConv.SetTensorDecl(_DeclK, Kflipped.shape, Pin(Kflipped).offset);
-        fnConv.SetTensorDecl(_DeclB, Bpacked.shape, Pin(Bpacked).offset);
-        Assert.AreEqual(Pin(Kflipped).buffer, Pin(Bpacked).buffer);
-        fnConv.SetTensorBuffer(_DataWBK, Pin(Kflipped).buffer);
-
-        fnConv.shader.SetInt("_ActivationMode", (int)fusedActivation);
-        fnConv.shader.SetInts(_Pad, padTrans);
-        fnConv.shader.SetInts(_Stride, strideTrans);
-
-        fnConv.Dispatch();
-
-        Xpadded.Dispose();
-
-        return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
     /// <inheritdoc/>
@@ -1371,10 +1404,10 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         return ApplyUnsupportedFusedActivationIfNeeded(fusedActivation, O);
     }
 
-    internal override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    protected override Tensor ReduceHelper(Layer.Type kernelName, Tensor X, int axis, AllocScope outputScope)
     {
         if (m_Compiled.instructions == null)
-            return base.Reduce(kernelName, X, axis);
+            return base.ReduceHelper(kernelName, X, axis, outputScope);
 
         axis = X.shape.Axis(axis);
         int baseReducedDim = X.shape[axis];
@@ -1424,7 +1457,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewOutputTensor(instructionGlobalPool.shape);
+        var O = NewTensor(instructionGlobalPool.shape, outputScope);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);

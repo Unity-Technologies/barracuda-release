@@ -405,6 +405,16 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.RoiAlign(Tensor X, Tensor rois, Tensor indices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale)
+    {
+        var O = m_Ops.RoiAlign(X, rois, indices, outputHeight, outputWidth, samplingRatio, spatialScale);
+        m_Alu += 4 * outputHeight * outputWidth * samplingRatio * samplingRatio;
+        m_Mem += 4 * outputHeight * outputWidth * samplingRatio * samplingRatio;
+        RegisterLayerStats();
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
     {
         var O = m_Ops.TopKIndices(X, k, axis, largest, sorted);
@@ -1007,6 +1017,15 @@ public class StatsOps : IOps, IModelCompiler
     Tensor IOps.Gather(Tensor[] tensors, int axis)
     {
         var O =  m_Ops.Gather(tensors, axis);
+        Elementwise(O);
+        RegisterLayerStats();
+        return O;
+    }
+
+    // <inheritdoc/>
+    Tensor IOps.ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
+    {
+        var O =  m_Ops.ScatterND(X, indices, updates, reduction);
         Elementwise(O);
         RegisterLayerStats();
         return O;

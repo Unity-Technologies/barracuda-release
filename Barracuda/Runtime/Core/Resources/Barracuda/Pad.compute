@@ -35,27 +35,29 @@ void KERNEL_FUNC(Border2D)(uint3 dispatchThreadID : SV_DispatchThreadID)
     // NOTE: negative "pad" variable crop X tensor
     int croppedWidth = _Pool.x;
     int croppedHeight = _Pool.y;
+	int croppedChannels = _Pool.z;
+
     int readX = x - _Pad.x;
     int readY = y - _Pad.y;
-    bool paddedTexel = (readX < 0 || readX >= croppedWidth || readY < 0 || readY >= croppedHeight);
+	int readC = c - _Pad.z;
+
+    bool paddedTexel = (readX < 0 || readX >= croppedWidth || readY < 0 || readY >= croppedHeight || readC < 0 || readC >= croppedChannels);
 
     for (uint n = 0; n < O.batch; ++n)
     {
         float v = _Beta;
 
         if (!paddedTexel)
-            v = X.Get(n, readY, readX, c);
+            v = X.Get(n, readY, readX, readC);
 
         O.Set(n, y, x, c, v);
     }
 }
 
-void ClampHWToTensorShape(uint2 Xshape, inout int height, inout int width)
+void ClampHWToTensorShape(uint2 shape, inout int height, inout int width)
 {
-    width = max(width, 0);
-    height = max(height, 0);
-    width = min(width, (int)Xshape.x - 1);
-    height = min(height, (int)Xshape.y - 1);
+    width = clamp(width, 0, (int)shape.x - 1);
+    height = clamp(height, 0, (int)shape.y - 1);
 }
 
 NUMTHREADS((4, 8, 8), (4, 8, 4), (4, 4, 4))

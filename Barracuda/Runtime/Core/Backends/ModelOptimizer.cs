@@ -153,7 +153,6 @@ internal class ModelOptimizer
     static bool IsLayerNoop(Layer layer)
     {
         return layer.type == Layer.Type.Nop ||
-               layer.type == Layer.Type.Flatten ||
                (layer.type == Layer.Type.Activation && layer.activation == Layer.Activation.None) ||
                (layer.type == Layer.Type.Transpose && IsPermutationNoop(layer.pool) ||
                layer.type == Layer.Type.StridedSlice

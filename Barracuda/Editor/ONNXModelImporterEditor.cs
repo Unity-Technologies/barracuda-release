@@ -13,7 +13,9 @@ using UnityEngine;
 using System;
 using System.IO;
 using System.Reflection;
+using Unity.Barracuda.ONNX;
 using ImportMode=Unity.Barracuda.ONNX.ONNXModelConverter.ImportMode;
+using DataTypeMode=Unity.Barracuda.ONNX.ONNXModelConverter.DataTypeMode;
 
 namespace Unity.Barracuda.Editor
 {
@@ -64,6 +66,11 @@ public class ONNXModelImporterEditor : ScriptedImporterEditor
         if (debugView)
         {
             importModeProperty.intValue = (int)(ImportMode)EditorGUILayout.EnumFlagsField("Import Mode", (ImportMode)importModeProperty.intValue);
+
+            SerializedProperty weightsTypeMode = serializedObject.FindProperty(nameof(onnxModelImporter.weightsTypeMode));
+            SerializedProperty activationTypeMode = serializedObject.FindProperty(nameof(onnxModelImporter.activationTypeMode));
+            weightsTypeMode.intValue = (int)(DataTypeMode)EditorGUILayout.EnumPopup("Weights type", (DataTypeMode)weightsTypeMode.intValue);
+            activationTypeMode.intValue = (int)(DataTypeMode)EditorGUILayout.EnumPopup("Activation type", (DataTypeMode)activationTypeMode.intValue);
         }
         else
         {

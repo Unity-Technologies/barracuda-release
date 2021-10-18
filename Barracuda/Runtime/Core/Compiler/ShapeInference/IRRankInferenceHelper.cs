@@ -68,19 +68,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.Global*Pool2D inputRanks.Length"); Assert.IsTrue(inputRanks[0] == 4 || inputRanks[0] == 3, "InferOutputRank.Global*Pool2D inputRanks");
                     return inputRanks[0];
                 }
-                case Layer.Type.Border3D:
-                {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.*Pad inputRanks.Length"); Assert.AreEqual(inputRanks[0], 5, "InferOutputRank.*Pad inputRanks");
-                    return 5;
-                }
-                case Layer.Type.Border2D:
-                case Layer.Type.Pad2DReflect:
-                case Layer.Type.Pad2DSymmetric:
-                case Layer.Type.Pad2DEdge:
-                {
-                    Assert.AreEqual(inputRanks[0], 4, "InferOutputRank.*Pad inputRanks");
-                    return 4;
-                }
+                case Layer.Type.Pad:
+                    return inputRanks[0];
                 case Layer.Type.RandomNormal:
                 case Layer.Type.RandomUniform:
                 {
@@ -99,6 +88,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.OneHot inputRanks.Length");
                     return inputRanks[0] + 1;
                 }
+                case Layer.Type.RoiAlign:
+                    return 4;
                 case Layer.Type.LSTM:
                     return 4;
                 case Layer.Type.Add:
@@ -182,6 +173,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     // we don't but instead append a squeeze op after Gather if that is the case
                     return inputRanks[0] + Mathf.Max(inputRanks[1], 1) - 1;
                 }
+                case Layer.Type.ScatterND:
+                    return inputRanks[0];
                 case Layer.Type.TopKIndices:
                 case Layer.Type.TopKValues:
                     return inputRanks[0];
@@ -190,9 +183,17 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.NonZero:
                     return 2;
                 case Layer.Type.Squeeze:
+                {
+                    if (inputRanks.Length > 1)
+                        return null;
                     return inputRanks[0] - layer.pool.Length;
+                }
                 case Layer.Type.Unsqueeze:
+                {
+                    if (inputRanks.Length > 1)
+                        return null;
                     return inputRanks[0] + layer.pool.Length;
+                }
                 case Layer.Type.Concat:
                 {
                     return inputRanks.Max();

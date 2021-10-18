@@ -60,18 +60,11 @@ namespace Unity.Barracuda.Compiler.Passes
             return (inputRank == 4) && (squeezedRank <= 2);
         }
 
-        private bool IsFlattenTransposeToNHWC(Layer layer, int inputRank)
-        {
-            var flattenedRank = IRShapeInferenceHelper.RankInference.InferOutputRank(layer, new[] { inputRank });
-            return (inputRank == 4) && (flattenedRank <= 2);
-        }
-
         private bool IsLayerChangingLayoutToNHWC(Layer layer, IDictionary<string, TensorShape?> shapesByName, IDictionary<string, int?> ranksByName)
         {
             return (IsLayerTranpose(layer) && Enumerable.SequenceEqual(layer.pool, new[] { 0, 2, 3, 1 })) ||
                    (IsLayerReshape(layer) && (shapesByName[layer.inputs[0]] != null) && IsReshapeTransposeToNHWC(layer, shapesByName[layer.inputs[0]].Value)) ||
-                   (IsLayerSqueeze(layer) && (ranksByName[layer.inputs[0]] != null)  && IsSqueezeTransposeToNHWC(layer, ranksByName[layer.inputs[0]].Value)) ||
-                   (IsLayerFlatten(layer) && (ranksByName[layer.inputs[0]] != null)  && IsFlattenTransposeToNHWC(layer, ranksByName[layer.inputs[0]].Value));
+                   (IsLayerSqueeze(layer) && (ranksByName[layer.inputs[0]] != null) && IsSqueezeTransposeToNHWC(layer, ranksByName[layer.inputs[0]].Value));
         }
 
         private bool IsLayerChangingLayoutToNCHW(Layer layer, IDictionary<string, TensorShape?> shapesByName, IDictionary<string, int?> ranksByName)

@@ -104,6 +104,12 @@ namespace Unity.Barracuda {
                         D.Log("        Tensor: " + t.shape + " offset: " + t.offset + " len: " + t.length);
             }
 
+            //Version 20 introduce weights type but full model need to be in the same type. Per layer no supported yet.
+            Assert.IsTrue(model.layers.Count >= 0);
+            var weightsDataType = model.layers[0].weights.Type;
+            var sizeOfDataItem = BarracudaArray.DataItemSize(weightsDataType);
+            writer.Write((int)weightsDataType);
+
             //Pad to 4 bytes
             long writerCurrentPosition = writer.BaseStream.Position;
             long paddingForAlignment = Model.WeightsAlignment - (writerCurrentPosition % Model.WeightsAlignment);
@@ -114,9 +120,9 @@ namespace Unity.Barracuda {
             {
                 for (var d = 0; d < model.layers[l].datasets.Length; ++d)
                 {
-                    //TODO fp16
-                    byte[] dst = new byte[model.layers[l].datasets[d].length * sizeof(float)];
-                    BarracudaArray.BlockCopy(model.layers[l].weights, (int)(model.layers[l].datasets[d].offset * sizeof(float)), dst, 0, dst.Length);
+                    Assert.AreEqual(weightsDataType, model.layers[0].weights.Type);
+                    byte[] dst = new byte[model.layers[l].datasets[d].length * sizeOfDataItem];
+                    BarracudaArray.BlockCopy(model.layers[l].weights, (int)(model.layers[l].datasets[d].offset * sizeOfDataItem), dst, 0, dst.Length);
                     writer.Write(dst);
                 }
             }

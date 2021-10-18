@@ -308,6 +308,19 @@ public interface IOps : IOpsStatistics
     Tensor OneHot(Tensor x, int depth, float onValue, float offValue);
 
     /// <summary>
+    /// RoiAlign
+    /// </summary>
+    /// <param name="x">input</param>
+    /// <param name="roi">rois</param>
+    /// <param name="indices">batch indices</param>
+    /// <param name="outputHeight">outputHeight</param>
+    /// <param name="outputWidth">outputWidth</param>
+    /// <param name="samplingRatio">samplingRatio</param>
+    /// <param name="spatialScale">spatialScale</param>
+    /// <returns>output Tensor</returns>
+    Tensor RoiAlign(Tensor x, Tensor rois, Tensor indices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale);
+
+    /// <summary>
     /// Top K indices
     /// </summary>
     /// <param name="x">input</param>
@@ -868,6 +881,16 @@ public interface IOps : IOpsStatistics
     /// <param name="axis">axis</param>
     /// <returns>output Tensor</returns>
     Tensor Gather(Tensor[] tensors, int axis);
+
+    /// <summary>
+    /// ScatterND
+    /// </summary>
+    /// <param name="X">input tensor</param>
+    /// <param name="indices">indices</param>
+    /// <param name="updates">updates</param>
+    /// <param name="reduction">reduction mode</param>
+    /// <returns>output Tensor</returns>
+    Tensor ScatterND(Tensor x, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction);
 
     /// <summary>
     /// Non max suppression tensors[0] - boxes, tensors[1] - scores

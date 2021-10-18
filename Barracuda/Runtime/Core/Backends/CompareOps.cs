@@ -341,6 +341,15 @@ public class CompareOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.RoiAlign(Tensor X, Tensor rois, Tensor indices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale)
+    {
+        var Y = m_Ops1.RoiAlign(X, rois, indices, outputHeight, outputWidth, samplingRatio, spatialScale);
+        var Z = m_Ops2.RoiAlign(X, rois, indices, outputHeight, outputWidth, samplingRatio, spatialScale);
+        CheckSame(Y, Z, Layer.Type.RoiAlign);
+        return Y;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
     {
         var Y = m_Ops1.TopKIndices(X, k, axis, largest, sorted);
@@ -977,6 +986,15 @@ public class CompareOps : IOps, IModelCompiler
         var Y = m_Ops1.Gather(tensors, axis);
         var Z = m_Ops2.Gather(tensors, axis);
         CheckSame(Y, Z, Layer.Type.Gather);
+        return Y;
+    }
+
+    // <inheritdoc/>
+    Tensor IOps.ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
+    {
+        var Y = m_Ops1.ScatterND(X, indices, updates, reduction);
+        var Z = m_Ops2.ScatterND(X, indices, updates, reduction);
+        CheckSame(Y, Z, Layer.Type.ScatterND);
         return Y;
     }
 

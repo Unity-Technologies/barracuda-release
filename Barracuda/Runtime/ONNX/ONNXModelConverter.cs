@@ -31,6 +31,14 @@ namespace Unity.Barracuda.ONNX
             SkipMetadataImport = 1 << 17,
         }
 
+        [Flags]
+        internal enum DataTypeMode
+        {
+            Default       = 0,
+            ForceHalf     = 1,
+            ForceFloat    = 2
+        }
+
         // Configuration
         bool m_TreatErrorsAsWarnings;
         bool m_OptimizeModel = true;
@@ -310,13 +318,13 @@ namespace Unity.Barracuda.ONNX
                     var unsqueezed = constantTensors[node.Input0].Unsqueeze(node.Axes);
                     Const(node, unsqueezed);
                 }
+                else if (node.InputCount == 1)
+                {
+                    net.Unsqueeze(node.Name, node.Input0, node.Axes);
+                }
                 else
                 {
-                    var features = node.Input0Features;
-                    var inputRank = node.Input0Rank;
-                    var outputRank = inputRank + 1;
-                    Output(node.Name, features: features, rank: outputRank);
-                    net.Unsqueeze(node.Name, node.Input0, node.Axes);
+                    net.Unsqueeze(node.Name, node.Input0, node.Input1);
                 }
             });
             Add("Squeeze", (net, node) => {
@@ -325,13 +333,13 @@ namespace Unity.Barracuda.ONNX
                     var squeezed = constantTensors[node.Input0].Squeeze(node.Axes);
                     Const(node, squeezed);
                 }
+                else if (node.InputCount == 1)
+                {
+                    net.Squeeze(node.Name, node.Input0, node.Axes);
+                }
                 else
                 {
-                    var features = node.Input0Features;
-                    var inputRank = node.Input0Rank;
-                    var outputRank = inputRank - 1;
-                    Output(node.Name, features: features, rank: outputRank);
-                    net.Squeeze(node.Name, node.Input0, node.Axes);
+                    net.Squeeze(node.Name, node.Input0, node.Input1);
                 }
             });
             Add("Tile", (net, node) =>
@@ -452,6 +460,17 @@ namespace Unity.Barracuda.ONNX
                     Output(node.Name, rank: input1Rank + node.Input0Rank - 1);
                 }
             });
+            Add("ScatterND", (net, node) =>
+            {
+                string reduction = node.GetOptionalString("reduction", "none");
+                Layer.ScatterNDReductionMode reductionType = Layer.ScatterNDReductionMode.None;
+                if (reduction == "add")
+                    reductionType = Layer.ScatterNDReductionMode.Add;
+                else if (reduction == "mul")
+                    reductionType = Layer.ScatterNDReductionMode.Mul;
+
+                net.ScatterND(node.Name, node.Input0, node.Input1, node.Input2, reductionType);
+            });
             Add("NonMaxSuppression", (net, node) =>
             {
                 int centerPointBox = node.GetOptionalInt("center_point_box", 0);
@@ -492,6 +511,17 @@ namespace Unity.Barracuda.ONNX
                 var offon = node.Input2ConstantOptional(defaultOffOn, onnxLayout:"C", name:"values");
                 net.OneHot(node.Name, node.Input0, depth, (int)offon[1], (int)offon[0]);
                 Output(node, features:depth, rank: node.Input0Rank + 1);
+            });
+            Add("RoiAlign", (net, node) =>
+            {
+                node.UnsupportedAttribute("mode"); // TODO support
+
+                int output_height = node.GetOptionalInt("output_height", 1);
+                int output_width = node.GetOptionalInt("output_width", 1);
+                int sampling_ratio = node.GetOptionalInt("sampling_ratio", 0);
+                float spatial_scale = node.GetOptionalFloat("spatial_scale", 1.0f);
+
+                net.RoiAlign(node.Name, node.Input0, node.Input1, node.Input2, output_height, output_width, sampling_ratio, spatial_scale);
             });
             Add("TopK", (net, node) => {
                 int axis = node.AxisOptional(-1);
@@ -701,36 +731,34 @@ namespace Unity.Barracuda.ONNX
             {
                 //Note: MirrorPad is not in onnx spec, it is a custom op from tensorflow implementing there own padding (aka symmetric).
                 node.UnsupportedAttribute("mode", "symmetric");
-                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
-                if (node.InputCount > 1)
-                    net.Pad(Layer.Type.Pad2DSymmetric, node.Name, node.Input0, node.Input1, null);
-                else
-                    net.Pad(Layer.Type.Pad2DSymmetric, node.Name, node.Input0, node.Pads);
-            });
-            Add("Pad", (net, node) =>
-            {
-                var mode = node.ModeOptional("constant");
+
                 var value = node.GetOptionalFloat("value", 0.0f);
-                Layer.Type paddingLayerType = Layer.Type.Border2D;
-                switch (mode)
-                {
-                    case "constant":
-                        if (node.Pads.Length > 4)//TODO 3D padding for ops set 11 and up where pads is from a tensor
-                            paddingLayerType = Layer.Type.Border3D;
-                        break;
-                    case "reflect":
-                        paddingLayerType = Layer.Type.Pad2DReflect;
-                        break;
-                    case "edge":
-                        paddingLayerType = Layer.Type.Pad2DEdge;
-                        break;
-                }
+                var autoPad = node.AutoPadMode();
 
                 // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
                 if (node.InputCount == 1)
-                    net.Pad(paddingLayerType, node.Name, node.Input0, node.Pads, value);
+                {
+                    var pads = node.GetRequiredIntArray("pads");
+                    net.Pad(node.Name, node.Input0, pads, value, Layer.PadMode.Symetric, Layer.AutoPad.NotSet);
+                }
                 else
-                    net.Pad(paddingLayerType, node.Name, node.Input0, node.Input1, node.Input2Optional);
+                    net.Pad(node.Name, node.Input0, node.Input1, node.Input2Optional, Layer.PadMode.Symetric, Layer.AutoPad.NotSet);
+
+            });
+            Add("Pad", (net, node) =>
+            {
+                var value = node.GetOptionalFloat("value", 0.0f);
+                var modeType = node.PadMode();
+                var autoPadType = node.AutoPadMode();
+
+                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
+                if (node.InputCount == 1)
+                {
+                    var pads = node.GetRequiredIntArray("pads");
+                    net.Pad(node.Name, node.Input0, pads, value, modeType, autoPadType);
+                }
+                else
+                    net.Pad(node.Name, node.Input0, node.Input1, node.Input2Optional, modeType, autoPadType);
             });
 
             // Pooling ops
@@ -841,14 +869,52 @@ namespace Unity.Barracuda.ONNX
             Add("Gemm", (net, node)     => {
                 node.UnsupportedAttribute("alpha", 1.0f);
                 node.UnsupportedAttribute("beta", 1.0f);
-                node.UnsupportedAttribute("transA", 0);
 
-                var weights = node.Input1Constant(node.TransBOptional() ? "KC" : "CK", name:"B");
-                var biases  = node.Input2ConstantOptional(Bias(weights.shape), 0.0f, "C", name:"C");
+                if (node.IsInput1Const && node.IsInput2Const)
+                {
+                    var weights = node.Input1Constant(node.TransBOptional() ? "KC" : "CK", name: "B");
+                    var biases = node.Input2ConstantOptional(Bias(weights.shape), 0.0f, "C", name: "C");
 
-                // NOTE: Intermediate NCHW -- op is implemented expecting NHWC by default, so this is non-runnable as-is
-                net.Dense(node.Name, node.Input0, weights, biases);
-                Output(node, features:weights.channels, rank:2); // Gemm forces flatten of the input to rank 2
+                    var input0 = node.Input0;
+
+                    int transposeA = node.GetOptionalInt("transA", 0);
+                    if (transposeA == 1)
+                    {
+                        input0 = input0 + "_transpose";
+                        net.Transpose(input0, node.Input0, new[] { 1, 0 });
+                    }
+
+                    net.Dense(node.Name, input0, weights, biases);
+                    Output(node, features: weights.channels, rank: 2); // Gemm forces flatten of the input to rank 2
+                }
+                else
+                {
+                    int transposeA = node.GetOptionalInt("transA", 0);
+                    int transposeB = node.GetOptionalInt("transB", 0);
+
+                    var input0 = node.Input0;
+                    var input1 = node.Input1;
+
+
+                    if (transposeA == 1)
+                    {
+                        input0 = input0 + "_transpose";
+                        net.Transpose(input0, node.Input0, new[] { 1, 0 });
+                    }
+
+                    if (transposeB == 1)
+                    {
+                        input1 = input1 + "_transpose";
+                        net.Transpose(input1, node.Input1, new[] { 1, 0 });
+                    }
+
+                    net.MatMul(node.Name, input0, input1);
+
+                    if (node.InputCount == 3)
+                    {
+                        net.Add(node.Name + "_bias", new[] { node.Name, node.Input2 });
+                    }
+                }
             });
             Add("MatMul", (net, node)   => {
                 net.MatMul(node.Name, node.Input0, node.Input1);

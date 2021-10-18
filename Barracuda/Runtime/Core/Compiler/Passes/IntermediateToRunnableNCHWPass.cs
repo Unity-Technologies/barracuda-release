@@ -62,7 +62,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 int axis = layer.pool[0];
                 if (axis < 0)
-                    axis = rank + 1 - axis;
+                    axis = rank + axis;
 
                 int[] shape8D = input0Shape.Value.ToArray(); // 8D
                 List<int> shape = new List<int>();
@@ -93,7 +93,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 int rank = input0Rank.Value;
                 int axis = layer.pool[0];
                 if (axis < 0)
-                    axis = rank + 1 - axis;
+                    axis = rank + axis;
 
                 var transpose = SqueezeAxisPermutation(rank, axis);
                 net.Transpose(layer.name, input0, transpose);
@@ -192,9 +192,11 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 // inputShape needs to be unsqueezed
                 var transpose = RankChangePermutationBarracuda(rank0, size.Count);
-                net.Transpose(layer.name, input0, transpose);
+                Layer nchwTranspose = net.Transpose($"Transpose_{input0}_For_{layer.name}", input0, transpose);
 
                 ShapeToBarracuda(layer, net);
+
+                net.Expand(layer.name, nchwTranspose, layer.pool);
 
                 return false;
             });
@@ -231,11 +233,8 @@ namespace Unity.Barracuda.Compiler.Passes
 
             foreach (var l in model.layers)
             {
-                bool hasRewriter = rewriters.TryGetValue(l.type, out Func<Layer, ModelBuilder, bool> rw);
-                bool existingLayerRewritten = hasRewriter && rw(l, modelBuilder);
-                if (existingLayerRewritten || !hasRewriter)
+                if (!rewriters.TryGetValue(l.type, out Func<Layer, ModelBuilder, bool> rw) || rw(l, modelBuilder))
                 {
-                    // Either no re-write was needed or the layer was not replaced
                     nchw.layers.Add(l);
                 }
             }

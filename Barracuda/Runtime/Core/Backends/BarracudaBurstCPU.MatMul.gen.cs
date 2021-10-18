@@ -3,8 +3,13 @@ using UnityEngine;
 using System;
 using Unity.Burst;
 using Unity.Burst.Intrinsics;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
 using static Unity.Burst.Intrinsics.X86.Avx;
 using static Unity.Burst.Intrinsics.X86.Fma;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs.LowLevel.Unsafe;
 
 namespace Unity.Barracuda {
 public partial class BurstCPUOps

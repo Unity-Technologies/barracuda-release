@@ -350,6 +350,39 @@ namespace Unity.Barracuda.ONNX
             return attribute.Strings.Select(s => s.ToStringUtf8()).ToArray();
         }
 
+        public Layer.AutoPad AutoPadMode()
+        {
+            var autoPad = GetOptionalString("auto_pad", "NOTSET");
+            Layer.AutoPad autoPadType = Layer.AutoPad.NotSet;
+            if (autoPad == "VALID")
+                autoPadType = Layer.AutoPad.Valid;
+            else if (autoPad == "SAME_UPPER")
+                autoPadType = Layer.AutoPad.SameUpper;
+            else if (autoPad == "SAME_LOWER")
+                autoPadType = Layer.AutoPad.SameLower;
+
+            return autoPadType;
+        }
+
+        public Layer.PadMode PadMode()
+        {
+            var mode = ModeOptional("constant");
+            var modeType = Layer.PadMode.Constant;
+            switch (mode)
+            {
+                case "constant":
+                    modeType = Layer.PadMode.Constant;
+                    break;
+                case "reflect":
+                    modeType = Layer.PadMode.Reflect;
+                    break;
+                case "edge":
+                    modeType = Layer.PadMode.Edge;
+                    break;
+            }
+            return modeType;
+        }
+
         // Complex attribute helpers
         private int[] ConvertPadsToBarracuda(int[] defaultValues = null)
         {

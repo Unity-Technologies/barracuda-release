@@ -258,22 +258,27 @@ internal class ModelAnalyzer
             {
                 O = new TensorShape(X.batch, 1, 1, X.channels);
             }
-            else if (
+            else if (l.type == Layer.Type.Border3D)
+            {
+                Assert.IsNotNull(l.pad);
+                // legacy support
+                if (l.pad.Length == 6)
+                    X = X.ApplyBorder(new[] { l.pad[0], l.pad[1], l.pad[2], 0, l.pad[3], l.pad[4], l.pad[5], 0 });
+                else
+                    O = X.ApplyBorder(l.pad);
+            }
+                else if (
                 l.type == Layer.Type.Border2D ||
-                l.type == Layer.Type.Border3D ||
                 l.type == Layer.Type.Pad2DReflect ||
                 l.type == Layer.Type.Pad2DSymmetric ||
                 l.type == Layer.Type.Pad2DEdge)
             {
-                if(inputShapes.Count > 1)
-                {
-                    O = null;
-                }
+                Assert.IsNotNull(l.pad);
+                // legacy support
+                if (l.pad.Length == 4)
+                    X = X.ApplyBorder(new[] { l.pad[0], l.pad[1], 0, l.pad[2], l.pad[3], 0 });
                 else
-                {
-                    Assert.IsNotNull(l.pad);
                     O = X.ApplyBorder(l.pad);
-                }
             }
             else if (
                 l.type == Layer.Type.Conv3D ||
@@ -325,6 +330,19 @@ internal class ModelAnalyzer
                     O = new TensorShape(X.batch, depth);
                 else
                     O = new TensorShape(X.batch, 1, depth, features);
+            }
+            else if (l.type == Layer.Type.RoiAlign)
+            {
+                Assert.IsNotNull(l.pool);
+                Assert.AreEqual(l.pool.Length, 2);
+
+                if (shapesByName.TryGetValue(l.inputs[1], out TensorShape? shape) && shape != null)
+                {
+                    int batches = shape.Value.flatHeight;
+                    O = new TensorShape(batches, l.pool[0], l.pool[1], X.channels);
+                }
+                else
+                    O = null;
             }
             else if (
                 l.type == Layer.Type.Add ||
@@ -466,7 +484,11 @@ internal class ModelAnalyzer
                         O = (O.Value).Permute(new int[] { 0, 1, 3, 2 });
                 }
 
-        }
+            }
+            else if (l.type == Layer.Type.ScatterND)
+            {
+                O = X;
+            }
             else if (
                 l.type == Layer.Type.Squeeze ||
                 l.type == Layer.Type.Unsqueeze)
@@ -605,8 +627,8 @@ internal class ModelAnalyzer
         ListTemporaryTensorShapes(model, inputShapes, out shapesByName);
 
         TensorShape? dynamicShape;
-        bool found = shapesByName.TryGetValue(output, out dynamicShape);
-        if (found && (dynamicShape != null))
+        bool found = shapesByName.TryGetValue(output, out dynamicShape) && dynamicShape != null;
+        if (found)
             shape = dynamicShape.Value;
         return found;
     }
@@ -853,6 +875,30 @@ internal class ModelAnalyzer
                 return false;
         }
         return true;
+    }
+
+    public static bool DoesTransposeChangeTensorLayout(TensorShape shape, int[] permutations)
+    {
+        var activeDimLayout = new List<int>();
+        for (int i = 0; i < 8; i++)
+        {
+            if (shape[i] != 1)
+                activeDimLayout.Add(i);
+        }
+
+        if (permutations.Length == 4)
+            permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(shape, permutations);
+
+        var transposedLayout = TensorExtensions.Permute(new[] { 0, 1, 2, 3, 4, 5, 6, 7 }, permutations);
+        var permutedShape = shape.Permute(permutations);
+        var premutedActiveDimLayout = new List<int>();
+        for (int i = 0; i < 8; i++)
+        {
+            if (permutedShape[i] != 1)
+                premutedActiveDimLayout.Add(transposedLayout[i]);
+        }
+
+        return activeDimLayout.SequenceEqual(premutedActiveDimLayout);
     }
 }
 

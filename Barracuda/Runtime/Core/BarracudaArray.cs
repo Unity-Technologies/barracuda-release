@@ -6,6 +6,7 @@ using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Assertions;
 
 namespace Unity.Barracuda
 {
@@ -218,8 +219,22 @@ public class BarracudaArray : IDisposable
 
     public unsafe float* AddressAt(long index)
     {
-        //TODO fp16 ASSERT!
+        Assert.AreEqual(DataType.Float, m_DataType);
         return (float*) RawPtr + index;
+    }
+
+    public unsafe half* HalfAddressAt(long index)
+    {
+        Assert.AreEqual(DataType.Half, m_DataType);
+        return (half*) RawPtr + index;
+    }
+
+    public unsafe void* RawAddressAt(long index)
+    {
+        if (m_DataType == DataType.Half)
+            return HalfAddressAt(index);
+        else
+            return AddressAt(index);
     }
 
     public float this[long index]

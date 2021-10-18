@@ -4,6 +4,22 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2021-10-15
+### Added
+- PixelShader worker! Allowing to run on GPU without requiring support for compute shaders. Note: limited to 4D tensors for now.
+- ONNX: Added support for `transA` and `transB` parameters for `Gemm` operator.
+- ONNX: Added support for multi-axis `Squeeze`/`Unsqueeze`.
+- Added support for `RoiAlign`.
+
+### Changed
+- Improved Tensor storage handling for Burst backend, should reduce overall memory pressure when used.
+- Improved `Transpose` performance when they are not changing memory layout.
+- Improved automatic test coverage for consoles.
+- Improved `ConvTranspose2D` performance for large spatial kernel.
+
+### Fixed
+- Added ability to create tensor from RenderTexture when compute shaders or GPU are not available.
+
 ## [2.2.1] - 2021-09-14
 ### Fixed
 - Fixed `CSharpBurst` Random layer failure when model is loaded from an old .nn file
@@ -54,10 +70,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [2.0.0] - 2021-04-05
 ### Changed
 - Combined verified release of 1.1.x-1.4.x improvements
-- Burst updated to 1.6.0-pre.2
+- Burst updated to 1.6.0
+- Now Barracuda requires Unity 2019.4.29f1 or newer 
 
 ### Fixed
-- Fixed Transpose removal pass for ML-Agents networks.
+- Fixed Transpose removal pass for ML-Agents networks
 
 ## [1.4.0] - 2021-04-01
 ### Added

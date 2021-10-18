@@ -171,14 +171,27 @@ namespace Unity.Barracuda.Compiler.Passes
                 if (m_RanksByName.ContainsKey(layer.inputs[0]) && m_RanksByName[layer.inputs[0]] != null)
                     input0Rank = m_RanksByName[layer.inputs[0]].Value;
 
-                var axis = layer.pool[0];
-                if (axis < 0)
-                    axis = input0Rank + 1 - axis;
+                int rank = input0Rank;
+                var combinePermutations = new[] { 0, 1, 2, 3 };
+                for (int i = 0; i < layer.pool.Length; i++)
+                {
+                    int axis = layer.pool[i];
+                    if (axis < 0)
+                        axis = rank + 1 - axis;
 
-                var transpose = SqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(input0Rank, axis);
+                    var transpose = SqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(rank, axis);
+
+                    // there could be a 4 / 8D shape mismatch
+                    if (transpose.Length == 8 && combinePermutations.Length == 4)
+                        combinePermutations = Permutation4DTo8D(combinePermutations);
+
+                    combinePermutations = TensorExtensions.Permute(transpose, combinePermutations);
+
+                    rank--;
+                }
 
                 layer.type = Layer.Type.Transpose;
-                layer.pool = transpose;
+                layer.pool = combinePermutations;
 
                 return true;
             });
@@ -188,14 +201,27 @@ namespace Unity.Barracuda.Compiler.Passes
                 if (m_RanksByName.ContainsKey(layer.inputs[0]) && m_RanksByName[layer.inputs[0]] != null)
                     input0Rank = m_RanksByName[layer.inputs[0]].Value;
 
-                var axis = layer.pool[0];
-                if (axis < 0)
-                    axis = input0Rank + 1 - axis;
+                int rank = input0Rank;
+                var combinePermutations = new[] { 0, 1, 2, 3 };
+                for (int i = 0; i < layer.pool.Length; i++)
+                {
+                    int axis = layer.pool[i];
+                    if (axis < 0)
+                        axis = rank + 1 - axis;
 
-                var transpose = UnSqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(input0Rank, axis);
+                    var transpose = UnSqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(rank, axis);
+
+                    // there could be a 4 / 8D shape mismatch
+                    if (transpose.Length == 8 && combinePermutations.Length == 4)
+                        combinePermutations = Permutation4DTo8D(combinePermutations);
+
+                    combinePermutations = TensorExtensions.Permute(transpose, combinePermutations);
+
+                    rank++;
+                }
 
                 layer.type = Layer.Type.Transpose;
-                layer.pool = transpose;
+                layer.pool = combinePermutations;
 
                 return true;
             });
@@ -258,7 +284,7 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 return false;
             });
-
+            rewritersNHWC.Add(Layer.Type.Pad, PadNHWC);
 
             return rewritersNHWC;
         }
@@ -315,6 +341,57 @@ namespace Unity.Barracuda.Compiler.Passes
             layer.pool = new[] { input0Rank.Value, input1Rank.Value };
 
             return ConvertAxisNHWC(layer, net);
+        }
+
+        bool PadNHWC(Layer layer, ModelBuilder net)
+        {
+            string input0 = layer.inputs[0];
+            if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                throw new Exception($"Must have input rank for {input0} in order to convert pad for NHWC op");
+
+            var autopadOption = (Layer.AutoPad)(layer.pool[0]);
+
+            if (input0Rank <= 4)
+            {
+                if (autopadOption == Layer.AutoPad.NotSet)
+                {
+                    if (input0Rank == 4) // HWC => WHC
+                        layer.pad = new[] { layer.pad[2], layer.pad[1], layer.pad[3], layer.pad[6], layer.pad[5], layer.pad[7]};
+                    else if (input0Rank == 3) // WC => W_C
+                        layer.pad = new[] { layer.pad[1], 0, layer.pad[2], 0, layer.pad[3], layer.pad[5] };
+                }
+                else
+                {
+                    int autopad = -(int)(autopadOption);
+                    layer.pad = new[] { autopad, autopad, autopad, autopad };
+                }
+                switch (layer.axis)
+                {
+                    case 0:
+                        layer.type = Layer.Type.Border2D;
+                        break;
+                    case 1:
+                        layer.type = Layer.Type.Pad2DReflect;
+                        break;
+                    case 2:
+                        layer.type = Layer.Type.Pad2DEdge;
+                        break;
+                    case 3:
+                        layer.type = Layer.Type.Pad2DSymmetric;
+                        break;
+                }
+                layer.axis = -1;
+                return true;
+            }
+            else if (input0Rank == 5)
+            {
+                // DHWC => WHDC
+                layer.pad = new[] { layer.pad[3], layer.pad[2], layer.pad[1], layer.pad[4], layer.pad[8], layer.pad[7], layer.pad[6], layer.pad[9] };
+                layer.type = Layer.Type.Border3D;
+                return true;
+            }
+
+            throw new Exception($"Unsuported Pad layer, {layer.name}");
         }
 
         static int[] SqueezeAxisPermutationForMappingNHWCLayoutToBarracuda(int onnxRank, int onnxAxis)

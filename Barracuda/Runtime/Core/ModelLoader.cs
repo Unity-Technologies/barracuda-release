@@ -178,12 +178,19 @@ public static class ModelLoader
             }
             model.layers = layers;
 
-            Int64 floatsToRead = 0;
+            Int64 numWeightsToRead = 0;
             for (var l = 0; l < model.layers.Count; ++l)
                 for (var d = 0; d < model.layers[l].datasets.Length; ++d)
-                    floatsToRead += model.layers[l].datasets[d].length;
+                    numWeightsToRead += model.layers[l].datasets[d].length;
 
             Profiler.EndSample();
+
+            BarracudaArray.DataType weightsDataType = BarracudaArray.DataType.Float;
+            if (version >= 20)
+            {
+                //Version 20 introduce weights type but full model need to be in the same type. Per layer no supported yet.
+                weightsDataType = (BarracudaArray.DataType)file.ReadInt32();
+            }
 
             if (version >= 19)
             {
@@ -194,16 +201,14 @@ public static class ModelLoader
             }
 
             if (skipWeights)
-                SkipLargeFloatArray(file, floatsToRead);
+                SkipLargeByteArray(file, numWeightsToRead * BarracudaArray.DataItemSize(weightsDataType));
             else
             {
-                var sharedWeightsArray = ReadLargeFloatArray(file, floatsToRead);
-                //TODO fp16
-                var sharedWeights = new BarracudaArray(sharedWeightsArray.Length);
-                BarracudaArray.Copy(sharedWeightsArray, sharedWeights);
+                var sharedWeightsArray = ReadLargeWeightArray(file, numWeightsToRead, weightsDataType);
+                Assert.AreEqual(weightsDataType, sharedWeightsArray.Type);
 
                 for (var l = 0; l < model.layers.Count; ++l)
-                    model.layers[l].weights = sharedWeights;
+                    model.layers[l].weights = sharedWeightsArray;
             }
 
             // Importer Reporting
@@ -288,16 +293,15 @@ public static class ModelLoader
         }
     }
 
-    private static void SkipLargeFloatArray(BinaryReader file, Int64 count)
+    private static void SkipLargeByteArray(BinaryReader file, Int64 count)
     {
-        Int64 bytesToReadInt64 = count * sizeof(float);
-        file.BaseStream.Seek(bytesToReadInt64, SeekOrigin.Current);
+        file.BaseStream.Seek(count, SeekOrigin.Current);
     }
 
-    private static BarracudaArray ReadLargeFloatArray(BinaryReader file, Int64 count)
+    private static BarracudaArray ReadLargeWeightArray(BinaryReader file, Int64 count, BarracudaArray.DataType dataType)
     {
         int bytesToRead;
-        Int64 bytesToReadInt64 = count * sizeof(float);
+        Int64 bytesToReadInt64 = count * BarracudaArray.DataItemSize(dataType);
         try
         {
             bytesToRead = Convert.ToInt32(bytesToReadInt64); // throws OverflowException
@@ -316,7 +320,7 @@ public static class ModelLoader
             var memoryStream = stream as MemoryStream;
             var sourceBuffer = memoryStream?.GetBuffer();
             int currentPosition = (int)memoryStream?.Position;
-            remappedWeights = new BarracudaArrayFromManagedArray(sourceBuffer, currentPosition, BarracudaArray.DataType.Float, (int) count); //TODO fp16?
+            remappedWeights = new BarracudaArrayFromManagedArray(sourceBuffer, currentPosition, dataType, (int) count);
         }
         catch (Exception e)
         {
@@ -326,13 +330,14 @@ public static class ModelLoader
         {
             //We remapped memory. Need to advance stream position to be consistent with read behavior.
             file.BaseStream.Position += bytesToRead;
+            Profiler.EndSample();
             return remappedWeights;
         }
         Profiler.EndSample();
 
         //2-Can't remap will copy from managed memory to native
         Profiler.BeginSample("Barracuda.AllocWeights");
-        BarracudaArray loadedWeights = new BarracudaArray((int)count);//TODO fp16?
+        BarracudaArray loadedWeights = new BarracudaArray((int)count, dataType);
         Profiler.EndSample();
 
         Profiler.BeginSample("Barracuda.LoadWeights");

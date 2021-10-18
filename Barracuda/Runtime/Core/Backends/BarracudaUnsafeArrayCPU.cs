@@ -201,7 +201,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Neg(Tensor X)
     {
         // f(x) = -x
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -237,7 +237,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Relu(Tensor X)
     {
         // f(x) = max(x,0.0)
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 64;
 
@@ -274,7 +274,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Relu6(Tensor X)
     {
         // f(x) = min(max(x, 0), 6)
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 64;
 
@@ -313,7 +313,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         // f(x) = alpha * x for x < 0, f(x) = x for x >= 0.
         Assert.IsTrue(alpha <= 1);
 
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 64;
 
@@ -357,7 +357,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         // f(x) = alpha * (exp(x) - 1.) for x < 0, f(x) = x for x >= 0
         // "Fast and Accurate Deep Network Learning by Exponential Linear Units (ELUs)", DA Clevert, 2015
         // https://arxiv.org/abs/1511.07289
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -397,7 +397,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         // f(x) = x for x >= 0, f(x) = slope*x for x <= 0
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -436,7 +436,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Softplus(Tensor X)
     {
         // f(x) = 1 / (1 + exp(-x))
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -473,7 +473,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor Sigmoid(Tensor X)
     {
         // f(x) = 1 / (1 + exp(-x))
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -510,7 +510,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     public override Tensor HardSigmoid(Tensor X, float alpha, float beta)
     {
         // f(x) = 1 / (1 + exp(-x))
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -550,7 +550,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         // "Searching for Activation Functions". P Ramachandran, 2017
         // https://arxiv.org/abs/1710.05941
 
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -586,7 +586,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Exp(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -622,7 +622,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sqrt(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -658,7 +658,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Tanh(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -694,7 +694,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Acos(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -730,7 +730,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Acosh(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -766,7 +766,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Asin(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -802,7 +802,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Asinh(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -838,7 +838,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Atan(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -874,7 +874,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Atanh(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -910,7 +910,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Cos(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -946,7 +946,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Cosh(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -982,7 +982,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sin(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -1018,7 +1018,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sinh(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -1054,7 +1054,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Tan(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -1090,7 +1090,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Erf(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -1144,7 +1144,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
            return true;
 
         bool dimensionMismatch = false;
-        for (int i = TensorShape.MaxRank; i >= 0; --i)
+        for (int i = TensorShape.MaxRank - 1; i >= 0; --i)
         {
             if (dimensionMismatch)
             {
@@ -1170,7 +1170,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
             throw new NotImplementedException();
 
-        var O = NewTensorLike(tensors);
+        var O = NewTensorLike(tensors, AllocScope.LayerOutput);
         var A = tensors[0];
 
         unsafe
@@ -1342,7 +1342,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
 
         unsafe
         {
@@ -1364,7 +1364,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sign(Tensor X)
     {
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
 
         unsafe
         {
@@ -1389,7 +1389,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         if (!C.shape.Is4D() || !C.shape.Is4D() || !B.shape.Is4D())
             return base.Where(C,A,B);
 
-        var O = NewTensorLike(new [] { C, A, B });
+        var O = NewTensorLike(new [] { C, A, B }, AllocScope.LayerOutput);
 
         unsafe
         {
@@ -1423,7 +1423,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         if (!A.shape.Is4D() || !B.shape.Is4D())
             throw new NotImplementedException();
 
-        var O = NewTensorLike(new Tensor[] { A, B });
+        var O = NewTensorLike(new Tensor[] { A, B }, AllocScope.LayerOutput);
 
         unsafe
         {
@@ -1470,7 +1470,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         }
 
         Assert.AreEqual(xw, yh);
-        var O = NewTensor(xh, yw);
+        var O = NewOutputTensor(new TensorShape(xh, yw));
 
         unsafe
         {
@@ -1500,7 +1500,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Assert.AreEqual(B.flatWidth, B.length);
         Assert.AreEqual(B.flatWidth, W.flatWidth);
         Assert.AreEqual(X.flatWidth, W.flatHeight);
-        var O = NewTensor(X.flatHeight, W.flatWidth);
+        var O = NewTensorForFusedActivation(new TensorShape(X.flatHeight, W.flatWidth), fusedActivation);
 
         var pinX = Pin(X);
         var pinW = Pin(W);
@@ -1602,7 +1602,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
 
         int xnMult = X.height * X.width * X.channels;
         int xyMult = X.width * X.channels;
@@ -1671,7 +1671,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
 
         int xnMult = X.height * X.width * X.channels;
         int xyMult = X.width * X.channels;
@@ -1781,8 +1781,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         //   Mobilenet    <<<Exec #10:  129.3 ms, cpu: 133.6 ms, avg: 133.6 ms, result:OK
         //   CNN@16       <<<Exec #10:   17.0 ms, cpu:  16.2 ms, avg:  16.2 ms, result:OK
 
-        var O = Conv2DUsingIm2ColSliced(X, K, B, stride, pad);
-        return ApplyFusedActivation(O, fusedActivation);
+        return Conv2DUsingIm2ColSlicedHelper(X, K, B, stride, pad, fusedActivation);
 
         // Slightly faster, but much more memory
         // Requires temporary tensor of input shape (X) multiple of kernel width & height and divided by stride
@@ -1817,7 +1816,8 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         //   CNN@16    440.0ms    Conv2D 429.4ms
     }
 
-    Tensor Conv2DUsingIm2Col(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    /* Not used anymore, see Conv2DUsingIm2ColSlicedHelper*/
+    /*Tensor Conv2DUsingIm2Col(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -1837,9 +1837,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                                     stride[0] == 1 && stride[1] == 1 &&                         // no strides
                                     pad[0] == 0 && pad[1] == 0 && pad[2] == 0 && pad[3] == 0;   // no padding
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewOutputTensor(X.shape.ApplyKernel(K.shape, stride, pad));
         var T = pointwiseConvolution ? null:                                                    // pointwise convolution is just O=X*K, we can completely skip Im2Col()
-                NewTensor(O.batch, O.height, O.width, kernelHeight * kernelWidth * inChannels); // holds results of Im2Col(X)
+                NewTempTensor(new TensorShape(O.batch, O.height, O.width, kernelHeight * kernelWidth * inChannels)); // holds results of Im2Col(X)
 
         var outElements = O.batch * O.height * O.width;
 
@@ -1907,9 +1907,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         T?.Dispose();
 
-        return O;
-    }
+        return O;//TODO need to handle fusedactivation
+    }*/
 
+    /*
     private static unsafe void Im2ColInnerLoop(int[] stride, int[] pad, int batch,
         float* xPtr, int xHeight, int xWidth, int xChannels, int xStrideBatch, int xStrideHeight, int xStrideWidth,
         float* oPtr, int oHeight, int oWidth, int oStrideBatch,
@@ -1946,7 +1947,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                             }
                         }
         });
-    }
+    }*/
 
     static internal int SafeIntDivCeil(int v, int div)
     {
@@ -1955,7 +1956,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         return (v + div - 1) / div;
     }
 
-    Tensor Conv2DUsingIm2ColSliced(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad)
+    private Tensor Conv2DUsingIm2ColSlicedHelper(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -1974,9 +1975,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                                     stride[0] == 1 && stride[1] == 1 &&                         // no strides
                                     pad[0] == 0 && pad[1] == 0 && pad[2] == 0 && pad[3] == 0;   // no padding
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var T = pointwiseConvolution ? null:                       // pointwise convolution is just O=X*K, we can completely skip Im2Col()
-                NewTensor(O.batch, O.height, O.width, inChannels); // holds slice of Im2Col(X)
+                NewTempTensor(new TensorShape(O.batch, O.height, O.width, inChannels)); // holds slice of Im2Col(X)
 
         var outElements = O.batch * O.height * O.width;
 
@@ -2178,13 +2179,13 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
         T?.Dispose();
 
-        return O;
+        return ApplyFusedActivation(O, fusedActivation);
     }
 
     /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
-        if (K.kernelDepth != 1)
+        if (K.kernelDepth != 1 || IsTensorHalf(K))
             return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
         Assert.IsTrue(X.shape.Is4D());
@@ -2204,7 +2205,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         //      input [b, i + di, j + dj, k] *
         //      filter[di, dj, k, q] *
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
 
         int xnMult = X.height * X.width * X.channels;
         int xyMult = X.width * X.channels;
@@ -2673,127 +2674,32 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         });
     }
 
-    private Tensor ApplyPadding(Tensor X, int[] pad, float constant, Action<long> paddingOp)
-    {
-        Assert.IsTrue(X.shape.Is4D());
-        Assert.AreEqual(pad.Length, 4);
-
-        var O = NewTensor(X.shape.ApplyBorder(pad));
-
-        int prePadX = Math.Max(0, pad[0]);
-        int prePadY = Math.Max(0, pad[1]);
-        int postPadX = Math.Max(0, pad[2]);
-        int postPadY = Math.Max(0, pad[3]);
-
-        // NOTE: negative "pad" variable will crop X tensor
-        int preCropX  = Math.Max(0, -pad[0]);
-        int preCropY  = Math.Max(0, -pad[1]);
-        int postCropX = Math.Max(0, -pad[2]);
-        int postCropY = Math.Max(0, -pad[3]);
-        int croppedWidth = X.width - (preCropX + postCropX);
-        int croppedHeight = X.height - (preCropY + postCropY);
-
-        var Xarray = Pin(X).array;
-        var Xoffset = Pin(X).offset;
-        var pinO = Pin(O, uploadCache: false);
-        var Oarray = pinO.array;
-        var Ooffset = pinO.offset;
-
-        unsafe
-        {
-            float* xPtr = Xarray.AddressAt(Xoffset);
-            float* oPtr = Oarray.AddressAt(Ooffset);
-            {
-                m_InnerLoop.SetState(oPtr, xPtr, O.shape, X.shape, constant, prePadX, prePadY);
-
-                long numItemInARow = O.width * O.channels;
-                long numItemInABatch = O.height * numItemInARow;
-
-                for (int b = 0; b < O.batch; ++b)
-                {
-                    //PrePadY
-                    long prepadOffset = numItemInABatch * b;
-                    long numItemToPrepadInHeight = prePadY * O.width * O.channels;
-                    Parallel_For(prepadOffset, prepadOffset + numItemToPrepadInHeight, paddingOp);
-
-                    //CenterY
-                    Parallel.For(prePadY, croppedHeight + prePadY, y =>
-                    {
-                        long offset = numItemInABatch * b + numItemInARow * y;
-                        //PrePadX
-                        long numItemToPrepadInWidth = prePadX * O.channels;
-                        for (long n = offset; n < (offset + numItemToPrepadInWidth); ++n)
-                            paddingOp(n);
-                        offset += numItemToPrepadInWidth;
-
-                        //CenterX
-                        int srcFloatOffset = X.Index(b, (int)y - prePadY + preCropY, preCropX, 0) + Xoffset;
-                        int dstFloatOffset = O.Index(b, (int)y, prePadX, 0) + Ooffset;
-                        int numFloatToCopy = O.channels * croppedWidth;
-                        BarracudaArray.Copy(Xarray, srcFloatOffset, Oarray, dstFloatOffset, numFloatToCopy);
-                        offset += numFloatToCopy;
-
-                        //PostPadX
-                        long numItemToPostInWidth = postPadX * O.channels;
-                        for (long n = offset; n < (offset + numItemToPostInWidth); ++n)
-                            paddingOp(n);
-                    });
-
-                    //PostPadY
-                    long postpadOffset = prepadOffset + numItemToPrepadInHeight + numItemInARow * croppedHeight;
-                    long numItemToPostpadInHeight = postPadY * O.width * O.channels;
-                    Parallel_For(postpadOffset, postpadOffset + numItemToPostpadInHeight, paddingOp);
-                }
-            }
-        }
-        return O;
-    }
-
-    /// <inheritdoc/>
-    public override Tensor Border2D(Tensor X, int[] pad, float constant)
-    {
-        return ApplyPadding(X, pad, constant, m_InnerLoop.m_border2DInnerLoopDelegate);
-    }
-
-    /// <inheritdoc/>
-    public override Tensor Pad2DEdge(Tensor X, int[] pad)
-    {
-        return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DEdgeInnerLoopDelegate);
-    }
-
-    /// <inheritdoc/>
-    public override Tensor Pad2DReflect(Tensor X, int[] pad)
-    {
-        return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DReflectInnerLoopDelegate);
-    }
-
-    /// <inheritdoc/>
-    public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
-    {
-        return ApplyPadding(X, pad, 0.0f, m_InnerLoop.m_pad2DSymmetricInnerLoopDelegate);
-    }
-
     /// <inheritdoc/>
     protected override Tensor CopyAndReshape(Tensor X, TensorShape shape)
     {
         Assert.AreEqual(X.length, shape.length);
-        var O = NewTensor(shape);
+        var O = NewOutputTensor(shape);
         var pinO = Pin(O, uploadCache: false);
         BarracudaArray.Copy(Pin(X).array, Pin(X).offset, pinO.array, pinO.offset, X.length);
         return O;
     }
 
+    private bool IsTensorHalf(Tensor tensor)
+    {
+        return Pin(tensor).array.Type == BarracudaArray.DataType.Half;
+    }
+
     /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (!X.shape.Is4D())
-            base.ScaleBias(X, S, B);
+        if (!X.shape.Is4D() || IsTensorHalf(S))
+            return base.ScaleBias(X, S, B);
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
         // f(x) = x for x >= 0, f(x) = slope*x for x <= 0
-        var O = NewTensorLike(X);
+        var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
 
@@ -2922,10 +2828,6 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         public Action<long> m_logicalOrInnerLoopDelegateNoBroadcast;
         public Action<long> m_logicalXorInnerLoopDelegateNoBroadcast;
         public Action<long> m_whereInnerLoopDelegateNoBroadcast;
-        public Action<long> m_border2DInnerLoopDelegate;
-        public Action<long> m_pad2DReflectInnerLoopDelegate;
-        public Action<long> m_pad2DSymmetricInnerLoopDelegate;
-        public Action<long> m_pad2DEdgeInnerLoopDelegate;
         public Action<long> m_scaleBiasInnerLoopDelegate;
 
         public Func<float,float,float> m_maxOpDelegate;
@@ -3005,10 +2907,6 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             m_logicalOrInnerLoopDelegateNoBroadcast = LogicalOrInnerLoopNoBroadcast;
             m_logicalXorInnerLoopDelegateNoBroadcast = LogicalXorInnerLoopNoBroadcast;
             m_whereInnerLoopDelegateNoBroadcast = WhereInnerLoopNoBroadcast;
-            m_border2DInnerLoopDelegate = Border2DInnerLoop;
-            m_pad2DEdgeInnerLoopDelegate = Pad2DEdgeInnerLoop;
-            m_pad2DReflectInnerLoopDelegate = Pad2DReflectInnerLoop;
-            m_pad2DSymmetricInnerLoopDelegate = Pad2DSymmetricInnerLoop;
             m_scaleBiasInnerLoopDelegate = ScaleBiasInnerLoop;
             m_maxOpDelegate = Max;
             m_minOpDelegate = Min;
@@ -4667,83 +4565,6 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             oPtr[i + 1] = Convert.ToBoolean(xPtr[(i + 1) % xLen]) ? sPtr[(i + 1) % bLen] : bPtr[(i + 1) % bLen];
             oPtr[i + 2] = Convert.ToBoolean(xPtr[(i + 2) % xLen]) ? sPtr[(i + 2) % bLen] : bPtr[(i + 2) % bLen];
             oPtr[i + 3] = Convert.ToBoolean(xPtr[(i + 3) % xLen]) ? sPtr[(i + 3) % bLen] : bPtr[(i + 3) % bLen];
-        }
-
-        private static void ClampHWToTensorShape(TensorShape shape, ref int height, ref int width)
-        {
-            width = Math.Max(width, 0);
-            height = Math.Max(height, 0);
-            width = Math.Min(width, shape.width - 1);
-            height = Math.Min(height, shape.height - 1);
-        }
-        private void Border2DInnerLoop(long n)
-        {
-            int i = (int)n;
-            oPtr[i]  = alpha;
-        }
-        private void Pad2DEdgeInnerLoop(long n)
-        {
-            int i = (int)n;
-            int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
-            oShape.GetPositionsFromIndex(i, ref b0, ref h0, ref w0, ref ch0);
-            h0 -= prePadY;
-            w0 -= prePadX;
-
-            ClampHWToTensorShape(xShape, ref h0, ref w0);
-
-            oPtr[i] = xPtr[xShape.Index(b0, h0, w0, ch0)];
-        }
-
-        private void Pad2DReflectInnerLoop(long n)
-        {
-            int i = (int)n;
-            int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
-            oShape.GetPositionsFromIndex(i, ref b0, ref h0, ref w0, ref ch0);
-            h0 -= prePadY;
-            w0 -= prePadX;
-
-            int lastXIndex = xShape.width - 1;
-            int lastYIndex = xShape.height - 1;
-
-            if (w0 < 0)
-                w0 = -w0;
-            else if (w0 > lastXIndex)
-                w0 = lastXIndex - (w0 - lastXIndex);
-
-            if (h0 < 0)
-                h0 = -h0;
-            else if (h0 > lastYIndex)
-                h0 = lastYIndex - (h0 - lastYIndex);
-
-            ClampHWToTensorShape(xShape, ref h0, ref w0);
-
-            oPtr[i] = xPtr[xShape.Index(b0, h0, w0, ch0)];
-        }
-
-        private void Pad2DSymmetricInnerLoop(long n)
-        {
-            int i = (int)n;
-            int b0 = 0, h0 = 0, w0 = 0, ch0 = 0;
-            oShape.GetPositionsFromIndex(i, ref b0, ref h0, ref w0, ref ch0);
-            h0 -= prePadY;
-            w0 -= prePadX;
-
-            int lastXIndex = xShape.width - 1;
-            int lastYIndex = xShape.height - 1;
-
-            if (w0 < 0)
-                w0 = -w0 - 1;
-            else if (w0 > lastXIndex)
-                w0 = lastXIndex - (w0 - lastXIndex) + 1;
-
-            if (h0 < 0)
-                h0 = -h0 - 1;
-            else if (h0 > lastYIndex)
-                h0 = lastYIndex - (h0 - lastYIndex) + 1;
-
-            ClampHWToTensorShape(xShape, ref h0, ref w0);
-
-            oPtr[i] = xPtr[xShape.Index(b0, h0, w0, ch0)];
         }
 
         private void ScaleBiasInnerLoop(long n)

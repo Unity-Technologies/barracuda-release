@@ -63,6 +63,25 @@ public class GenericWorker : IWorker
         m_TakeoverWeights = takeoverWeights;
 
         m_AllocatorIsStale = true;
+
+        SetupTensorLeaksTracking();
+    }
+
+    private void SetupTensorLeaksTracking()
+    {
+        //Reference backends are not targeting optimal memory usage
+        //and should not be tracked for tensor leaks
+
+        //Note: duplicate test (considering inheritance) for clarity
+        bool isProductionBackend =
+            m_Ops is UnsafeArrayCPUOps || m_Ops is BurstCPUOps ||
+            m_Ops is ComputeOps || m_Ops is PrecompiledComputeOps;
+
+        var genericVarsWithPreallocation = m_Vars as GenericVarsWithPreallocation;
+        if (genericVarsWithPreallocation != null)
+        {
+            genericVarsWithPreallocation.ShouldTrackTensorLeaks = isProductionBackend;
+        }
     }
 
     /// <summary>
@@ -386,39 +405,63 @@ public class GenericWorker : IWorker
                 // because beta is 0 by default (while alpha is 1 by default)
                 // 0 value is more inline with zero padding
                 float fillValue = l.beta;
-                X = m_Ops.Border3D(X, l.pad, fillValue);
+                // legacy support
+                if (l.pad.Length == 6)
+                    X = m_Ops.Border3D(X, new[] { l.pad[0], l.pad[1], l.pad[2], 0, l.pad[3], l.pad[4], l.pad[5], 0 }, fillValue);
+                else
+                    X = m_Ops.Border3D(X, l.pad, fillValue);
             }
             else if (l.type == Layer.Type.Border2D)
             {
                 Profiler.BeginSample ("Barracuda.Border2D");
 
                 Assert.IsNotNull(l.pad);
-                // NOTE: beta is used to retrieve fillin value
+                // NOTE: beta is used to retrieve filling value
                 // because beta is 0 by default (while alpha is 1 by default)
                 // 0 value is more inline with zero padding
                 float fillValue = l.beta;
-                X = m_Ops.Border2D(X, l.pad, fillValue);
+
+                // legacy support
+                if(l.pad.Length == 4)
+                    X = m_Ops.Border2D(X, new[] { l.pad[0], l.pad[1], 0, l.pad[2], l.pad[3], 0 }, fillValue);
+                else
+                    X = m_Ops.Border2D(X, l.pad, fillValue);
             }
             else if (l.type == Layer.Type.Pad2DReflect)
             {
                 Profiler.BeginSample ("Barracuda.Pad2DReflect");
 
                 Assert.IsNotNull(l.pad);
-                X = m_Ops.Pad2DReflect(X, l.pad);
+
+                // legacy support
+                if(l.pad.Length == 4)
+                    X = m_Ops.Pad2DReflect(X, new[] { l.pad[0], l.pad[1], 0, l.pad[2], l.pad[3], 0 });
+                else
+                    X = m_Ops.Pad2DReflect(X, l.pad);
             }
             else if (l.type == Layer.Type.Pad2DSymmetric)
             {
                 Profiler.BeginSample ("Barracuda.Pad2DSymmetric");
 
                 Assert.IsNotNull(l.pad);
-                X = m_Ops.Pad2DSymmetric(X, l.pad);
+
+                // legacy support
+                if(l.pad.Length == 4)
+                    X = m_Ops.Pad2DSymmetric(X, new[] { l.pad[0], l.pad[1], 0, l.pad[2], l.pad[3], 0 });
+                else
+                    X = m_Ops.Pad2DSymmetric(X, l.pad);
             }
             else if (l.type == Layer.Type.Pad2DEdge)
             {
                 Profiler.BeginSample ("Barracuda.Pad2DEdge");
 
                 Assert.IsNotNull(l.pad);
-                X = m_Ops.Pad2DEdge(X, l.pad);
+
+                // legacy support
+                if(l.pad.Length == 4)
+                    X = m_Ops.Pad2DEdge(X, new[] { l.pad[0], l.pad[1], 0, l.pad[2], l.pad[3], 0 });
+                else
+                    X = m_Ops.Pad2DEdge(X, l.pad);
             }
             // 3D
             else if (l.type == Layer.Type.Upsample3D)
@@ -544,6 +587,12 @@ public class GenericWorker : IWorker
                 int depth = l.pool[0];
                 float on = l.alpha, off = l.beta;
                 X = m_Ops.OneHot(X, depth, on, off);
+            }
+            else if (l.type == Layer.Type.RoiAlign)
+            {
+                Profiler.BeginSample ("Barracuda.RoiAlign");
+
+                X = m_Ops.RoiAlign(X, inputs[1], inputs[2], l.pool[0], l.pool[1], l.axis, l.alpha);
             }
             else if (l.type == Layer.Type.TopKIndices)
             {
@@ -806,7 +855,13 @@ public class GenericWorker : IWorker
                 if (permutations == null)
                     X = m_Ops.Transpose(X);
                 else
-                    X = m_Ops.Transpose(X, permutations);
+                {
+                    // if transpose does not change internal memory layout, skip
+                    if(ModelAnalyzer.DoesTransposeChangeTensorLayout(X.shape, permutations))
+                        X = m_Ops.Reshape(X, X.shape.Permute(permutations));
+                    else
+                        X = m_Ops.Transpose(X, permutations);
+                }
             }
             else if (l.type == Layer.Type.Gather)
             {
@@ -831,6 +886,12 @@ public class GenericWorker : IWorker
                     if (xRank == 2 && xShape.Count == 3)
                         X = m_Ops.Transpose(X, new int[] {0,1,3,2});
                 }
+            }
+            else if (l.type == Layer.Type.ScatterND)
+            {
+                Profiler.BeginSample ("Barracuda.ScatterND");
+
+                X = m_Ops.ScatterND(X, inputs[1], inputs[2], (Layer.ScatterNDReductionMode)l.axis);
             }
             else if (l.type == Layer.Type.NonMaxSuppression)
             {
@@ -1630,6 +1691,7 @@ internal class GenericVarsWithReuse : GenericVars
 
 internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAllocator, IVarsStatistics
 {
+    public bool ShouldTrackTensorLeaks;
     private Model m_CachedModel;
 
     private DefaultTensorAllocator m_InferenceScopedPingPongAllocator = new DefaultTensorAllocator();
@@ -1641,6 +1703,7 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
         m_InferenceScopedPingPongAllocator.name = "Inference ping pong Allocator";
         m_InferenceScopedStorageAllocator.name = "Inference storage Allocator";
         m_LayerScopedAllocator.name = "Layer scoped Allocator";
+        ShouldTrackTensorLeaks = false;
     }
 
     public new IEnumerable<IAllocatorStatistics> GetAllocatorsStatistics()
@@ -1653,7 +1716,7 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     /// <inheritdoc/>
     public virtual void PostLayerCleanup()
     {
-        m_LayerScopedAllocator.Dispose();
+        m_LayerScopedAllocator.Reset(keepCachedMemory:true);
 
         m_InferenceScopedPingPongAllocator.PostLayerCleanup();
         m_InferenceScopedStorageAllocator.PostLayerCleanup();
@@ -1684,15 +1747,14 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
 
     public override void DisposeAfterLayer(Layer forLayer)
     {
-#if ENABLE_BARRACUDA_WARN_ON_LEAKS
-        if (m_InferenceScopedPingPongAllocator.NumAllocatedBufferSinceCleanup != 0)
+#if ENABLE_BARRACUDA_ERROR_ON_LEAKS
+        if (ShouldTrackTensorLeaks && m_InferenceScopedPingPongAllocator.NumAllocatedBufferSinceCleanup != 0)
         {
-            D.LogWarning($"TensorData leak detected: {m_InferenceScopedPingPongAllocator.NumAllocatedBufferSinceCleanup} tensorData(s)" +
+            D.LogError($"TensorData leak detected: {m_InferenceScopedPingPongAllocator.NumAllocatedBufferSinceCleanup} tensorData(s)" +
                          $" was/were allocated in the ping pong allocator during execution of layer {forLayer} of type {forLayer.type}.");
-            System.Diagnostics.Debugger.Break();
         }
 #endif
-        
+
         PostLayerCleanup();
 
         base.DisposeAfterLayer(forLayer);
@@ -1702,11 +1764,10 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     {
         base.Store(fromLayer, result);
 
-#if ENABLE_BARRACUDA_WARN_ON_LEAKS
-        if (!m_InferenceScopedPingPongAllocator.IsPingPongReady)
+#if ENABLE_BARRACUDA_ERROR_ON_LEAKS
+        if (ShouldTrackTensorLeaks && !m_InferenceScopedPingPongAllocator.IsPingPongReady)
         {
-            D.LogWarning($"TensorData leak detected, one of the ping pong buffer was not released in layer {fromLayer} of type {fromLayer.type}.");
-            System.Diagnostics.Debugger.Break();
+            D.LogError($"TensorData leak detected, one of the ping pong buffer was not released in layer {fromLayer} of type {fromLayer.type}.");
         }
 #endif
     }
@@ -1759,6 +1820,7 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
     {
         m_InferenceScopedPingPongAllocator.Reset(keepCachedMemory);
         m_InferenceScopedStorageAllocator.Reset(keepCachedMemory);
+        m_LayerScopedAllocator.Reset(keepCachedMemory);
     }
 
     public override void Dispose()

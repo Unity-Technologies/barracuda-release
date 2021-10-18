@@ -1014,6 +1014,30 @@ namespace Unity.Barracuda
         }
 
         /// <summary>
+        /// Performs RoiAlign as described in the Mask R-CNN paper
+        /// </summary>
+        /// <param name="x">input</param>
+        /// <param name="roi">rois</param>
+        /// <param name="indices">batch indices</param>
+        /// <param name="outputHeight">outputHeight</param>
+        /// <param name="outputWidth">outputWidth</param>
+        /// <param name="samplingRatio">samplingRatio</param>
+        /// <param name="spatialScale">spatialScale</param>
+        /// <returns>output Tensor</returns>
+        public Layer RoiAlign(string name, object input, object rois, object batchIndices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale)
+        {
+            Layer layer = new Layer(name, Layer.Type.RoiAlign);
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(rois), ResolveInput(batchIndices) };
+            layer.pool = new int[] { outputHeight, outputWidth };
+            layer.axis = samplingRatio;
+            layer.alpha = spatialScale;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        /// <summary>
         /// Retrieve the indices for top-K largest or smallest elements along a specified axis.
         /// </summary>
         /// <param name="name">Layer name</param>
@@ -1108,11 +1132,30 @@ namespace Unity.Barracuda
             return layer;
         }
 
+        internal Layer Squeeze(string name, object input, object axes)
+        {
+            Layer layer = new Layer(name, Layer.Type.Squeeze);
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(axes) };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
         internal Layer Unsqueeze(string name, object input, int[] axes)
         {
             Layer layer = new Layer(name, Layer.Type.Unsqueeze);
             layer.inputs = new[] { ResolveInput(input) };
             layer.pool = axes;
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        internal Layer Unsqueeze(string name, object input, object axes)
+        {
+            Layer layer = new Layer(name, Layer.Type.Unsqueeze);
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(axes) };
 
             m_Model.layers.Add(layer);
 
@@ -1154,6 +1197,20 @@ namespace Unity.Barracuda
         public Layer Relu(string name, object input)
         {
             return Activation(Layer.Activation.Relu, name, input);
+        }
+
+        /// <summary>
+        /// Element-wise `Pow` activation function: f(x) = pow(x, alpha)
+        /// </summary>
+        /// <param name="name">Layer name</param>
+        /// <param name="input">input node</param>
+        /// <param name="alpha">power input will be raised to</param>
+        /// <returns>created Layer instance</returns>
+        public Layer Pow(string name, object input, float alpha)
+        {
+            Layer layer = Activation(Layer.Activation.Pow, name, input);
+            layer.alpha = alpha;
+            return layer;
         }
 
         /// <summary>
@@ -1849,20 +1906,42 @@ namespace Unity.Barracuda
             return layer;
         }
 
-        internal Layer Pad(Layer.Type type, string name, object input, object pad, object value)
+        // Generic-ONNX style pad
+        internal Layer Pad(string name, object input, object pad, object value, Layer.PadMode mode, Layer.AutoPad autoPadMode)
         {
-            Layer layer = new Layer(name, type);
+            Layer layer = new Layer(name, Layer.Type.Pad);
             var valuestring = ResolveInput(value);
             if (string.IsNullOrEmpty(valuestring))
+            {
                 layer.inputs = new[] { ResolveInput(input), ResolveInput(pad) };
+                layer.beta = 0.0f;
+            }
             else
                 layer.inputs = new[] { ResolveInput(input), ResolveInput(pad), ResolveInput(value) };
+
+            layer.axis = (int)mode;
+            layer.pool = new[] { (int)autoPadMode };
 
             m_Model.layers.Add(layer);
 
             return layer;
         }
 
+        internal Layer Pad(string name, object input, Int32[] pad, float constantValue, Layer.PadMode mode, Layer.AutoPad autoPadMode)
+        {
+            Layer layer = new Layer(name, Layer.Type.Pad);
+            layer.inputs = new[] { ResolveInput(input) };
+            layer.beta = constantValue;
+            layer.pad = pad;
+            layer.axis = (int)mode;
+            layer.pool = new[] { (int)autoPadMode };
+
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        // known Layer.Type
         internal Layer Pad(Layer.Type type, string name, object input, Int32[] pad, float constantValue = 0.0f)
         {
             Layer layer = new Layer(name, type);
@@ -1987,7 +2066,7 @@ namespace Unity.Barracuda
         /// <param name="input">input node</param>
         /// <param name="pad">padding</param>
         /// <returns>created Layer instance</returns>
-        public Layer Pad2Symmetric(string name, object input, Int32[] pad)
+        public Layer Pad2DSymmetric(string name, object input, Int32[] pad)
         {
             return Pad(Layer.Type.Pad2DSymmetric, name, input, pad);
         }
@@ -2182,6 +2261,16 @@ namespace Unity.Barracuda
             Layer layer = new Layer(name, Layer.Type.Gather);
             layer.inputs = inputs.Select(i => ResolveInput(i)).ToArray();
             layer.axis = axisIs8D?axis:TensorExtensions.Convert4DTo8DAxis(axis);
+            m_Model.layers.Add(layer);
+
+            return layer;
+        }
+
+        public Layer ScatterND(string name, object input, object indices, object updates, Layer.ScatterNDReductionMode reductionType)
+        {
+            Layer layer = new Layer(name, Layer.Type.ScatterND);
+            layer.inputs = new[] { ResolveInput(input), ResolveInput(indices), ResolveInput(updates) };
+            layer.axis = (int)reductionType;
             m_Model.layers.Add(layer);
 
             return layer;

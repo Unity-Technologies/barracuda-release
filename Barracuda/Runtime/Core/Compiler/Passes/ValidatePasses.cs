@@ -134,11 +134,11 @@ namespace Unity.Barracuda.Compiler.Passes
                 }
                 else if (type == Layer.Type.Unsqueeze)
                 {
-                    ValidationHelper.AppendWarning(l.pool.Length == 1, name, "ValidateIntermediateNCHWModelLayers::Unsqueeze unsupported multi axis Unsqueeze", ref warnings, MessageType.Warning);
+                    ValidationHelper.AppendWarning(l.inputs.Length == 1, name, "ValidateIntermediateNCHWModelLayers::Unsqueeze unsupported dynamic Unsqueeze, axes must be constant", ref warnings, MessageType.Warning);
                 }
                 else if (type == Layer.Type.Squeeze)
                 {
-                    ValidationHelper.AppendWarning(l.pool.Length == 1, name, "ValidateIntermediateNCHWModelLayers::Squeeze unsupported multi axis Squeeze", ref warnings, MessageType.Warning);
+                    ValidationHelper.AppendWarning(l.inputs.Length == 1, name, "ValidateIntermediateNCHWModelLayers::Unsqueeze unsupported dynamic Squeeze, axes must be constant", ref warnings, MessageType.Warning);
                 }
             }
         }

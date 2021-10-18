@@ -538,6 +538,11 @@ public class WorkerFactory
         ComputeRef          = 2 | Device.GPU,
 
         /// <summary>
+        /// Pixel Shader implementation, slower than compute
+        /// </summary>
+        PixelShader          = 3 | Device.GPU,
+
+        /// <summary>
         /// Unity Burst implementation, fastest CPU option
         /// </summary>
         CSharpBurst         = 0 | Device.CPU,
@@ -795,6 +800,18 @@ public class WorkerFactory
     {
         return CreateWorker(Type.ComputePrecompiled, model, verbose);
     }
+
+    /// <summary>
+    /// Create a worker using the reference GPU backend for the given `model`.
+    /// </summary>
+    /// <param name="model">the associated model. See ModelLoader.cs</param>
+    /// <param name="verbose">will log scheduling of layers execution to the console (default == false)</param>
+    /// <returns>Worker instance</returns>
+    public static IWorker CreatePixelShaderWorker(Model model, bool verbose = false)
+    {
+        return CreateWorker(Type.PixelShader, model, verbose);
+    }
+
 
     /// <summary>
     /// Check if a backend is of a given type.

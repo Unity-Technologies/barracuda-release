@@ -603,6 +603,45 @@ namespace Unity.Barracuda.Compiler.Passes
 
                     return;
                 }
+                case Layer.Type.Squeeze:
+                {
+                    if (layer.inputs.Length <= 1 || !IsLayerKnown(layer.inputs[1], knownLayersValue))
+                        return;
+
+                    int[] axes = Array.ConvertAll(knownLayersValue[layer.inputs[1]].ToReadOnlyArray(), x => (int)x);
+
+                    layer.pool = axes;
+                    layer.inputs = new[] { layer.inputs[0] };
+                    return;
+                }
+                case Layer.Type.Unsqueeze:
+                {
+                    if (layer.inputs.Length <= 1 || !IsLayerKnown(layer.inputs[1], knownLayersValue))
+                        return;
+
+                    int[] axes = Array.ConvertAll(knownLayersValue[layer.inputs[1]].ToReadOnlyArray(), x => (int)x);
+
+                    layer.pool = axes;
+                    layer.inputs = new[] { layer.inputs[0] };
+                    return;
+                }
+                case Layer.Type.Pad:
+                {
+                    if (layer.inputs.Length <= 1)
+                        return;
+                    if (layer.inputs.Length == 2 && !IsLayerKnown(layer.inputs[1], knownLayersValue))
+                        return;
+                    if (layer.inputs.Length == 3 && !IsLayerKnown(layer.inputs[1], knownLayersValue) && !IsLayerKnown(layer.inputs[2], knownLayersValue))
+                        return;
+
+                    float value = (layer.inputs.Length == 2) ? layer.beta : knownLayersValue[layer.inputs[2]].ToReadOnlyArray()[0];
+                    int[] pads = Array.ConvertAll(knownLayersValue[layer.inputs[1]].ToReadOnlyArray(), x => (int)x);
+
+                    layer.beta = value;
+                    layer.pad = pads;
+                    layer.inputs = (layer.inputs.Length == 2) ? new [] { layer.inputs[0] } : new [] { layer.inputs[0], layer.inputs[1] };
+                    return;
+                }
                 default:
                     return;
             }

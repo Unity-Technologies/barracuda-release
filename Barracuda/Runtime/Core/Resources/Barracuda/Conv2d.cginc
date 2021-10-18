@@ -1303,25 +1303,26 @@ void KERNEL_FUNC(Conv2DTrans)(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (x >= O.width) return;
     if (y >= O.height) return;
 
-    uint2 strideMask = _Stride.xy - 1;
+    uint strideH = 1;
+    uint strideW = 1;
 
     for (uint n = 0; n < O.batch; ++n)
     {
         float acc = B.FastGet(k);
-        for (uint dy = (y + _Pad.y) & strideMask.y; dy < K.GetKernelHeight(); dy += _Stride.y)
+        for (uint dy = 0; dy < K.GetKernelHeight(); dy += strideH)
         {
-            for (uint dx = (x + _Pad.x) & strideMask.x; dx < K.GetKernelWidth(); dx += _Stride.x)
+            for (uint dx = 0; dx < K.GetKernelWidth(); dx += strideW)
             {
+                uint readX = (x + dx - _Pad.x) / _Stride.x;
+                uint readY = (y + dy - _Pad.y) / _Stride.y;
 
-                uint2 pos = uint2(x + dx, y + dy);
-                uint2 opos = (pos - _Pad.xy) / _Stride.xy;
-
-                if (any(opos >= uint2(X.width, X.height))) continue;
-                if (any(pos < _Pad.xy)) continue;
+                if (any(uint2(x + dx, y + dy) < _Pad.xy)) continue;
+                if (any(uint2(readX, readY) >= uint2(X.width, X.height))) continue;
+                if (any(uint2(x + dx - _Pad.x, y + dy - _Pad.y) % _Stride.xy != 0)) continue;
 
                 for (uint c = 0; c < X.channels; ++c)
                 {
-                    acc = fastfma(  X.Get(n, opos.y, opos.x, c),
+                    acc = fastfma(  X.Get(n, readY, readX, c),
                                     K.Get(  K.GetKernelHeight() - 1 - dy,
                                             K.GetKernelWidth()  - 1 - dx, c, k),
                                     acc);
@@ -1387,23 +1388,28 @@ void CONV2DTRANS_NAME(MAX_KERNEL_SIZE, GROUP_SIZE_X,GROUP_SIZE_Y)(uint3 dispatch
     if (y >= O.height) return;
     if (k >= K.channels) return;
 
+    uint strideH = 1;
+    uint strideW = 1;
+
     // Apply kernels from LDS to all batches and write result out (per batch as input differ)
     uint2 strideMask = _Stride.xy - 1;
     for (uint n = 0; n < O.batch; ++n)
     {
         float acc = Conv2DTrans_SharedBias;
-        for (uint dy = (y + _Pad.y) & strideMask.y; dy < K.GetKernelHeight(); dy += _Stride.y)
+        for (uint dy = 0; dy < K.GetKernelHeight(); dy += strideH)
         {
-            for (uint dx = (x + _Pad.x) & strideMask.x; dx < K.GetKernelWidth(); dx += _Stride.x)
+            for (uint dx = 0; dx < K.GetKernelWidth(); dx += strideW)
             {
-                uint2 pos = uint2(x + dx, y + dy);
-                uint2 opos = (pos - _Pad.xy) / _Stride.xy;
-                if (any(opos >= uint2(X.width, X.height))) continue;
-                if (any(pos < _Pad.xy)) continue;
+                uint readX = (x + dx - _Pad.x) / _Stride.x;
+                uint readY = (y + dy - _Pad.y) / _Stride.y;
+
+                if (any(uint2(x + dx, y + dy) < _Pad.xy)) continue;
+                if (any(uint2(readX, readY) >= uint2(X.width, X.height))) continue;
+                if (any(uint2(x + dx - _Pad.x, y + dy - _Pad.y) % _Stride.xy != 0)) continue;
 
                 for (uint c = 0; c < X.channels; ++c)
                 {
-                    acc = fastfma(X.Get(n, opos.y, opos.x, c),
+                    acc = fastfma(X.Get(n, readY, readX, c),
                         Conv2DTrans_SharedKernel[dy][dx][c],
                         acc);
                 }

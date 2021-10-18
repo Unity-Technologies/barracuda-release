@@ -58,12 +58,12 @@ public class CompareOpsUtils
             Y.Dispose();
     }
 
-    static internal void CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, Layer.Type type, LogLevel logLevel)
+    static internal bool CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, Layer.Type type, LogLevel logLevel)
     {
-        CheckApproximately(X, Y, count, epsilon, type.ToString(), logLevel);
+        return CheckApproximately(X, Y, count, epsilon, type.ToString(), logLevel);
     }
 
-    static internal void CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, string opName, LogLevel logLevel)
+    static internal bool CheckApproximately(Tensor X, Tensor Y, int count, float epsilon, string opName, LogLevel logLevel)
     {
         if (!X.Approximately(Y, epsilon, count))
         {
@@ -80,9 +80,12 @@ public class CompareOpsUtils
                 count = X.channels * X.width * 2;
             X.PrintDataPart(count);
             Y.PrintDataPart(count);
+            return false;
         }
         if (X.tensorOnDevice != Y.tensorOnDevice)
             Y.Dispose();
+
+        return true;
     }
 }
 

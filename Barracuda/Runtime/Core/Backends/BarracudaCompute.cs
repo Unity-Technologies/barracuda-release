@@ -1137,7 +1137,7 @@ public class ComputeOps : ReferenceComputeOps
         if (!(rankX == 3 && rankY == 2))
             return base.MatMul(X, rankX, Y, rankY);
 
-        var O = NewTensor(X.batch, 1, Y.channels, X.channels);
+        var O = NewOutputTensor(new TensorShape(X.batch, 1, Y.channels, X.channels));
 
         var fn = BestKernel(ComputeKernelLibrary.MultidimMatMul(X.shape, rankX, Y.shape, rankY, O.shape));
 
@@ -1153,7 +1153,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
-        var O = NewTensor(X.batch, 1, W.channels, X.channels);
+        var O = NewOutputTensor(new TensorShape(X.batch, 1, W.channels, X.channels));
 
         var fn = BestKernel(ComputeKernelLibrary.Dense3(X.shape, W.shape, O.shape));
 
@@ -1179,7 +1179,7 @@ public class ComputeOps : ReferenceComputeOps
         if (ShouldFlattenInputForDenseLayer(X.shape))
             X = Flatten(X);
 
-        var O = NewTensor(X.flatHeight, W.flatWidth);
+        var O = NewTensorForFusedActivation(new TensorShape(X.flatHeight, W.flatWidth),fusedActivation);
 
         var itemSize = 4; // @TODO: itemSizeInBytes == 2 | float16
         var fn = BestKernel(ComputeKernelLibrary.Dense(X.shape, W.shape, O.shape, itemSize >> 2));
@@ -1203,7 +1203,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    Tensor Conv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad, Layer.FusedActivation fusedActivation, ComputeKernel fn)
+    Tensor Conv2DWinogradHelper(Tensor X, Tensor K, Tensor B, Tensor O, int[] stride, int[] pad, Layer.FusedActivation fusedActivation, ComputeKernel fn)
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -1256,7 +1256,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(stride.Length, 3);//WHD
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.Conv3D(X.shape, K.shape, O.shape, stride, pad));
 
         if (printKernels)
@@ -1291,7 +1291,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.Conv2D(X.shape, K.shape, O.shape, stride, pad));
 
         if (printKernels)
@@ -1299,7 +1299,7 @@ public class ComputeOps : ReferenceComputeOps
 
         if (fn.func.kernelName.StartsWith("Conv2DWinograd") || fn.func.kernelName.StartsWith("Conv2D_Winograd"))
         {
-            return Conv2DWinograd(X, K, B, O, stride, pad, fusedActivation, fn);
+            return Conv2DWinogradHelper(X, K, B, O, stride, pad, fusedActivation, fn);
         }
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1321,7 +1321,7 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    Tensor DepthwiseConv2DWinograd(Tensor X, Tensor K, Tensor B, Tensor O, int[] pad, Layer.FusedActivation fusedActivation, ComputeKernel fn)
+    Tensor DepthwiseConv2DWinogradHelper(Tensor X, Tensor K, Tensor B, Tensor O, int[] pad, Layer.FusedActivation fusedActivation, ComputeKernel fn)
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(K.kernelDepth, 1);
@@ -1378,12 +1378,12 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.DepthwiseConv2D(X.shape, K.shape, O.shape, stride));
 
         if (fn.func.kernelName.StartsWith("DepthwiseConv2D_Winograd"))
         {
-            return DepthwiseConv2DWinograd(X, K, B, O, pad, fusedActivation, fn);
+            return DepthwiseConv2DWinogradHelper(X, K, B, O, pad, fusedActivation, fn);
         }
 
         if (printKernels)
@@ -1410,6 +1410,50 @@ public class ComputeOps : ReferenceComputeOps
 
     /// <inheritdoc/>
     public override Tensor Conv2DTrans(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
+    {
+        Assert.IsTrue(X.shape.Is4D());
+        Assert.AreEqual(X.channels, K.kernelDepth);
+        Assert.AreEqual(K.kernelCount, B.flatWidth);
+        Assert.AreEqual(B.flatWidth, B.length);
+        Assert.AreEqual(stride.Length, 2);
+        Assert.AreEqual(pad.Length, 4);
+
+        // unwrapp conv2d transpose as conv2d iff strides are low enough
+        // TODO: refactor this with an efficient conv2dtrans implementation
+        if(stride[0] * stride[1] <= 4)
+        {
+            return Conv2DTransAsConv2D(X, K, B, stride, pad, outputAdjustment, fusedActivation);
+        }
+
+        var O = NewTensorForFusedActivation(X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment), fusedActivation);
+        var fn = BestKernel(ComputeKernelLibrary.Conv2DTrans(X.shape, K.shape, O.shape));
+
+        pad = new int[]
+        {
+            K.kernelWidth - pad[0] - 1, K.kernelHeight - pad[1] - 1,
+            K.kernelWidth - pad[2] - 1, K.kernelHeight - pad[3] - 1
+        };
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensorDecl("K", K.shape, Pin(K).offset);
+        fn.SetTensorDecl("B", B.shape, Pin(B).offset);
+        Assert.AreEqual(Pin(K).buffer, Pin(B).buffer);
+        fn.SetTensorBuffer("WBK", Pin(K).buffer);
+
+        fn.shader.SetInts("_Stride", stride);
+        fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
+
+        fn.Dispatch();
+
+        if (!IsFusedActivationSupported(fusedActivation))
+            O = Activation(fusedActivation.ToString(), O);
+
+        return O;
+    }
+
+    private Tensor Conv2DTransAsConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, int[] outputAdjustment, Layer.FusedActivation fusedActivation)
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
@@ -1470,7 +1514,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(scale.Length, 2);
 
-        var O = NewTensor(X.batch, X.height*scale[1], X.width*scale[0], X.channels);
+        var O = NewOutputTensor(new TensorShape(X.batch, X.height*scale[1], X.width*scale[0], X.channels));
         var fn = BestKernel(ComputeKernelLibrary.Upsample2D(X.shape, O.shape, scale, bilinear));
 
         if (printKernels)
@@ -1492,7 +1536,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
 
-        var O = NewTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
         var fn = BestKernel(ComputeKernelLibrary.Pool2D(X.shape, O.shape, kernelName));
 
         if (printKernels)
@@ -1521,7 +1565,7 @@ public class ComputeOps : ReferenceComputeOps
         return GlobalPool2D("AvgPool2DReduce", "GlobalAvgPool2D", X);
     }
 
-    Tuple<Tensor, Tensor> GlobalAvgVariancePool2DReduce(Tensor X, Tensor X2, bool isFirstDispatch)
+    Tuple<Tensor, Tensor> GlobalAvgVariancePool2DReduceHelper(Tensor X, Tensor X2, bool isFirstDispatch)
     {
         var pool = new[] { 8, 8 };
         var stride = pool;
@@ -1529,18 +1573,18 @@ public class ComputeOps : ReferenceComputeOps
         string kernelName = "AvgVariancePool2DReduce";
 
         var Oshape = X.shape.ApplyPool(pool, stride, pad, ceilMode: true);
-        var O = NewTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
-        var O2 = NewTensor(O.shape);
+        var Otemp = NewTempTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
+        var O2temp = NewTempTensor(Otemp.shape);
 
-        var fn = BestKernel(ComputeKernelLibrary.PoolAvgVar2D(X.shape, O.shape, kernelName));
+        var fn = BestKernel(ComputeKernelLibrary.PoolAvgVar2D(X.shape, Otemp.shape, kernelName));
 
         if (printKernels)
-            D.Log($"{fn.func.kernelName}: {O.shape} = {X.shape} ^ pool: {pool[0]},{pool[1]} stride: {stride[0]},{stride[1]} pad:{pad[0]},{pad[1]}" );
+            D.Log($"{fn.func.kernelName}: {Otemp.shape} = {X.shape} ^ pool: {pool[0]},{pool[1]} stride: {stride[0]},{stride[1]} pad:{pad[0]},{pad[1]}" );
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("X2", X2.shape, Pin(X2).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
-        fn.SetTensor("O2", O2.shape, Pin(O2, uploadCache: false).buffer);
+        fn.SetTensor("O", Otemp.shape, Pin(Otemp, uploadCache: false).buffer);
+        fn.SetTensor("O2", O2temp.shape, Pin(O2temp, uploadCache: false).buffer);
 
         fn.shader.SetInts("_Pool", pool);
         fn.shader.SetInts("_Stride", stride);
@@ -1548,7 +1592,7 @@ public class ComputeOps : ReferenceComputeOps
         fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
         fn.Dispatch();
-        return new Tuple<Tensor,Tensor>(O,O2);
+        return new Tuple<Tensor,Tensor>(Otemp,O2temp);
     }
 
     /// <inheritdoc/>
@@ -1562,14 +1606,14 @@ public class ComputeOps : ReferenceComputeOps
         while (X.height > 8*2 || X.width > 8*2)
         {
             var lastLength = X.length;
-            var XX2 = GlobalAvgVariancePool2DReduce(X, X2, isFirstDispatch);
+            var XX2 = GlobalAvgVariancePool2DReduceHelper(X, X2, isFirstDispatch);
             X = XX2.Item1;
             X2 = XX2.Item2;
             Assert.IsTrue(X.length < lastLength);
             isFirstDispatch = false;
         }
 
-        var O = NewTensor(X.batch, 2, 1, X.channels);
+        var O = NewOutputTensor(new TensorShape(X.batch, 2, 1, X.channels));
         var fn = BestKernel(ComputeKernelLibrary.GlobalPool2D(X.shape, O.shape, "GlobalAvgVariancePool2D"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1582,28 +1626,28 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    Tensor GlobalPool2DReduce(string kernelName, Tensor X)
+    Tensor GlobalPool2DReduceHelper(string kernelName, Tensor X)
     {
         var pool = new[] { 8, 8 };
         var stride = pool;
         var pad = new[] { 0, 0, 0, 0 };
 
         var Oshape = X.shape.ApplyPool(pool, stride, pad, ceilMode: true);
-        var O = NewTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
-        var fn = BestKernel(ComputeKernelLibrary.Pool2DReduce(X.shape, O.shape, kernelName));
+        var Otemp = NewTempTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
+        var fn = BestKernel(ComputeKernelLibrary.Pool2DReduce(X.shape, Otemp.shape, kernelName));
 
         if (printKernels)
-            D.Log($"{fn.func.kernelName}: {O.shape} = {X.shape} ^ pool: {pool[0]},{pool[1]} stride: {stride[0]},{stride[1]} pad:{pad[0]},{pad[1]}" );
+            D.Log($"{fn.func.kernelName}: {Otemp.shape} = {X.shape} ^ pool: {pool[0]},{pool[1]} stride: {stride[0]},{stride[1]} pad:{pad[0]},{pad[1]}" );
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensor("O", Otemp.shape, Pin(Otemp, uploadCache: false).buffer);
 
         fn.shader.SetInts("_Pool", pool);
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", pad);
 
         fn.Dispatch();
-        return O;
+        return Otemp;
     }
 
     internal static int[] s_GlobalPool2DInputDim = new int[2];
@@ -1625,11 +1669,11 @@ public class ComputeOps : ReferenceComputeOps
         while (X.height > 8*2 || X.width > 8*2)
         {
             var lastLength = X.length;
-            X = GlobalPool2DReduce(smallKernelName, X);
+            X = GlobalPool2DReduceHelper(smallKernelName, X);
             Assert.IsTrue(X.length < lastLength);
         }
 
-        var O = NewTensor(X.batch, 1, 1, X.channels);
+        var O = NewOutputTensor(new TensorShape(X.batch, 1, 1, X.channels));
         var fn = BestKernel(ComputeKernelLibrary.GlobalPool2D(X.shape, O.shape, globalKernelName));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1649,7 +1693,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
-        var O = NewTensor(X.shape);
+        var O = NewOutputTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.ScaleBias(X.shape, O.shape));
 
         if (printKernels)
@@ -1686,7 +1730,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
-        var O = NewTensor(X.shape);
+        var O = NewTensorForFusedActivation(X.shape, fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.NormalizationTail(X.shape, O.shape));
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
@@ -1739,7 +1783,7 @@ public class ComputeOps : ReferenceComputeOps
 
     internal static int[] s_PartialReduceSumDimensions = new int[3];
 
-    Tensor ReducePartial(Layer.Type kernelName, Tensor X, int axis)
+    Tensor ReducePartialHelper(Layer.Type kernelName, Tensor X, int axis)
     {
         var Oshape = X.shape;
         Oshape[axis] = ComputeHelper.IDivC(ComputeHelper.IDivC(X.shape[axis], 64), 4);
@@ -1753,23 +1797,23 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(Oshape);
+        var Otemp = NewTempTensor(Oshape);
         var fn = BestKernel(ComputeKernelLibrary.PartialReduce(kernelName, flatHeight, reducedDim, flatWidth));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensor("O", Otemp.shape, Pin(Otemp, uploadCache: false).buffer);
         fn.shader.SetInt("_UnrolledH", unrolledH);
         fn.shader.SetInt("_UnrolledW", unrolledW);
         fn.shader.SetInt("_ReducedDim", Oshape[axis]);
         fn.shader.SetInts("_Pool", s_PartialReduceSumDimensions);
 
         fn.Dispatch();
-        return O;
+        return Otemp;
     }
 
     internal static int[] s_GlobalReduceSumDimensions = new int[3];
 
-    internal override Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    protected virtual Tensor ReduceHelper(Layer.Type kernelName, Tensor X, int axis, AllocScope outputScope)
     {
         axis = X.shape.Axis(axis);
         int baseReducedDim = X.shape[axis];
@@ -1778,12 +1822,11 @@ public class ComputeOps : ReferenceComputeOps
         while(X.shape[axis] > 64*4)
         {
             var lastLength = X.length;
-            X = ReducePartial(kernelName, X, axis);
+            X = ReducePartialHelper(kernelName, X, axis);
             Assert.IsTrue(X.length < lastLength);
         }
 
         ComputeReduceDispatchDim(X.shape, Oshape, axis, out int flatHeight, out int reducedDim, out int flatWidth);
-
 
         s_GlobalReduceSumDimensions[0] = flatHeight;
         s_GlobalReduceSumDimensions[1] = flatWidth;
@@ -1793,7 +1836,7 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(Oshape);
+        var O = NewTensor(Oshape, outputScope);
         var fn = BestKernel(ComputeKernelLibrary.GlobalReduce(kernelName, flatHeight, reducedDim, flatWidth));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1818,12 +1861,16 @@ public class ComputeOps : ReferenceComputeOps
         FillReducePermute(axis);
 
         if (needTranpose)
-            X = Transpose(X, s_ReducePermute);
+            X = TransposeHelper(X, s_ReducePermute, AllocScope.InternalToLayer);
 
         var oShape = X.shape.Reduce(TensorShape.C);
         Assert.AreEqual(oShape.channels, 1);
 
-        var O = NewTensor(oShape);
+        Tensor O;
+        if (needTranpose)
+            O = NewTempTensor(oShape);
+        else
+            O = NewOutputTensor(oShape);
 
         var fn = new ComputeKernel(new ComputeFunc(ComputeShaderContext.Optimized, kernelName, GetModelExecutionsReporter()),
                                     (oShape.width, oShape.height, 1));
@@ -1837,7 +1884,10 @@ public class ComputeOps : ReferenceComputeOps
         fn.Dispatch();
 
         if (needTranpose)
-            O = Transpose(O, s_ReducePermute);
+        {
+            X.Dispose();
+            O = TransposeHelper(O, s_ReducePermute, AllocScope.LayerOutput);
+        }
 
         return O;
     }
@@ -1854,7 +1904,37 @@ public class ComputeOps : ReferenceComputeOps
         return ReduceSlow("ArgMin", X, axis);
     }
 
-    private Tensor ExpBiasReducePartial(Tensor X, Tensor B, int axis, bool isFirstDispatch)
+    /// <inheritdoc/>
+    public override Tensor ReduceMin(Tensor X, int axis)
+    {
+        return ReduceHelper(Layer.Type.ReduceMin, X, axis, AllocScope.LayerOutput);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ReduceMax(Tensor X, int axis)
+    {
+        return ReduceHelper(Layer.Type.ReduceMax, X, axis, AllocScope.LayerOutput);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ReduceSum(Tensor X, int axis)
+    {
+        return ReduceHelper(Layer.Type.ReduceSum, X, axis, AllocScope.LayerOutput);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ReduceMean(Tensor X, int axis)
+    {
+        return ReduceHelper(Layer.Type.ReduceMean, X, axis, AllocScope.LayerOutput);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ReduceProd(Tensor X, int axis)
+    {
+        return ReduceHelper(Layer.Type.ReduceProd, X, axis, AllocScope.LayerOutput);
+    }
+
+    private Tensor ExpBiasReducePartialHelper(Tensor X, Tensor B, int axis, bool isFirstDispatch)
     {
         var Oshape = X.shape;
         Oshape[axis] = ComputeHelper.IDivC(ComputeHelper.IDivC(X.shape[axis], 64), 4);
@@ -1868,13 +1948,13 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(Oshape);
+        var Otemp = NewTempTensor(Oshape);
         var fn = BestKernel(ComputeKernelLibrary.PartialExpBiasReduce(flatHeight, reducedDim, flatWidth));
 
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("B", B.shape, Pin(B).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensor("O", Otemp.shape, Pin(Otemp, uploadCache: false).buffer);
         fn.shader.SetInt("_UnrolledH", unrolledH);
         fn.shader.SetInt("_UnrolledW", unrolledW);
         fn.shader.SetInt("_ReducedDim", Oshape[axis]);
@@ -1882,9 +1962,10 @@ public class ComputeOps : ReferenceComputeOps
         fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
         fn.Dispatch();
-        return O;
+        return Otemp;
     }
-    private Tensor ExpBiasReduce(Tensor X, Tensor B, int axis)
+
+    private Tensor ExpBiasReduceHelper(Tensor X, Tensor B, int axis)
     {
         axis = X.shape.Axis(axis);
         int baseReducedDim = X.shape[axis];
@@ -1894,28 +1975,26 @@ public class ComputeOps : ReferenceComputeOps
         while(X.shape[axis] > 64*4)
         {
             var lastLength = X.length;
-            X = ExpBiasReducePartial(X, B, axis, isFirstDispatch);
+            X = ExpBiasReducePartialHelper(X, B, axis, isFirstDispatch);
             Assert.IsTrue(X.length < lastLength);
             isFirstDispatch = false;
         }
 
         ComputeReduceDispatchDim(X.shape, Oshape, axis, out int flatHeight, out int reducedDim, out int flatWidth);
 
-
         s_GlobalReduceSumDimensions[0] = flatHeight;
         s_GlobalReduceSumDimensions[1] = flatWidth;
         s_GlobalReduceSumDimensions[2] = baseReducedDim;
 
-
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(Oshape);
+        var Otemp = NewTempTensor(Oshape);
         var fn = BestKernel(ComputeKernelLibrary.GlobalExpBiasReduce(flatHeight, reducedDim, flatWidth));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("B", B.shape, Pin(B).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensor("O", Otemp.shape, Pin(Otemp, uploadCache: false).buffer);
         fn.shader.SetInt("_UnrolledH", unrolledH);
         fn.shader.SetInt("_UnrolledW", unrolledW);
         fn.shader.SetInt("_ReducedDim", reducedDim);
@@ -1923,7 +2002,7 @@ public class ComputeOps : ReferenceComputeOps
         fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
         fn.Dispatch();
-        return O;
+        return Otemp;
     }
 
 
@@ -1933,7 +2012,7 @@ public class ComputeOps : ReferenceComputeOps
         if (!X.shape.Is4D())
             return base.Activation(kernelName, X, alpha, beta);
 
-        var O = NewTensor(X.shape);
+        var O = NewOutputTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, kernelName));
 
         if (printKernels)
@@ -1957,7 +2036,7 @@ public class ComputeOps : ReferenceComputeOps
 
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
-        var O = NewTensor(X.shape);
+        var O = NewOutputTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.PRelu(X.shape, O.shape));
 
         if (printKernels)
@@ -1971,14 +2050,36 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
+    private Tensor DivExpSubHelper(Tensor X, Tensor B, Tensor S, AllocScope outputScope)
+    {
+        if(!X.shape.Is4D() || !B.shape.Is4D() || !S.shape.Is4D())
+            return Div(new[] { Exp(Sub(new[] { X, B })), S });
+
+        Tensor O = NewTensorLike(new [] { X, B, S }, outputScope);
+        var fn = BestKernel(ComputeKernelLibrary.Broadcast(X.shape, O.shape, "BroadcastDivExpSub"));
+
+        fn.SetTensor("X", X.shape, Pin(X).buffer);
+        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensor("S", S.shape, Pin(S).buffer, Pin(S).offset);
+        fn.SetTensor("B", B.shape, Pin(B).buffer, Pin(B).offset);
+
+        fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder, s_XStrides));
+        fn.shader.SetInts("_SStrides", GetInputTensorStridesOnDevice(S.shape, Pin(S).channelsOrder, s_SStrides));
+        fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder, s_BStrides));
+
+        fn.Dispatch();
+        return O;
+    }
+
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
-        var XMax = Reduce(Layer.Type.ReduceMax, X, axis);
-        var XExpSum = ExpBiasReduce(X, XMax, axis);
 
-        var O = DivExpSub(X, XMax, XExpSum);
+        var XMax = ReduceHelper(Layer.Type.ReduceMax, X, axis, AllocScope.InternalToLayer);
+        var XExpSum = ExpBiasReduceHelper(X, XMax, axis);
+
+        var O = DivExpSubHelper(X, XMax, XExpSum, AllocScope.LayerOutput);
         XMax.Dispose();
         XExpSum.Dispose();
         return O;
@@ -1988,10 +2089,10 @@ public class ComputeOps : ReferenceComputeOps
     public override Tensor LogSoftmax(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
-        var XMax = Reduce(Layer.Type.ReduceMax, X, axis);
-        var XExpSum = ExpBiasReduce(X, XMax, axis);
+        var XMax = ReduceHelper(Layer.Type.ReduceMax, X, axis, AllocScope.InternalToLayer);
+        var XExpSum = ExpBiasReduceHelper(X, XMax, axis);
 
-        var O = LogSoftmaxEnd(X, XMax, XExpSum);
+        var O = LogSoftmaxEndHelper(X, XMax, XExpSum, AllocScope.LayerOutput);
         XMax.Dispose();
         XExpSum.Dispose();
         return O;
@@ -2001,16 +2102,16 @@ public class ComputeOps : ReferenceComputeOps
     // public override Tensor Dropout(Tensor X, float alpha)
 
     /// <inheritdoc/>
-    internal override Tensor TransposeToChannelFirst(Tensor X)
+    internal override Tensor TransposeToChannelFirstHelper(Tensor X)
     {
-        var O = NewTensor(X.shape);
-        var fn = BestKernel(ComputeKernelLibrary.TransposeToChannelFirst(X.shape, O.shape));
+        var Otemp = NewTempTensor(X.shape);
+        var fn = BestKernel(ComputeKernelLibrary.TransposeToChannelFirst(X.shape, Otemp.shape));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
+        fn.SetTensor("O", Otemp.shape, Pin(Otemp, uploadCache: false).buffer);
 
         fn.Dispatch();
-        return O;
+        return Otemp;
     }
 
     /// <inheritdoc/>
@@ -2018,7 +2119,7 @@ public class ComputeOps : ReferenceComputeOps
     {
         Assert.IsTrue(X.dimensions <= 2);
 
-        var O = NewTensor(X.flatWidth, X.flatHeight);
+        var O = NewOutputTensor(new TensorShape(X.flatWidth, X.flatHeight));
         var fn = BestKernel(ComputeKernelLibrary.Transpose2D(O.shape));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2031,12 +2132,17 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Transpose(Tensor X, int[] permutations)
     {
+        return TransposeHelper(X, permutations, AllocScope.LayerOutput);
+    }
+
+    private Tensor TransposeHelper(Tensor X, int[] permutations, AllocScope outputScope)
+    {
         if (!X.shape.Is4D() || permutations.Length != 4)
-            return Transpose8D(X, permutations);
+            return Transpose8DHelper(X, permutations, outputScope);
 
         Assert.AreEqual(permutations.Length, 4);
 
-        var O = NewTensor(X.shape.Permute(permutations));
+        var O = NewTensor(X.shape.Permute(permutations), outputScope);
 
         var fn = BestKernel(ComputeKernelLibrary.Transpose(X.shape, O.shape));
 
@@ -2049,12 +2155,12 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    internal override Tensor Transpose8D(Tensor X, int[] permutations)
+    private Tensor Transpose8DHelper(Tensor X, int[] permutations, AllocScope outputScope)
     {
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
 
         // See: Permute() in ONNXTensor.cs and https://stackoverflow.com/a/32034565
-        var O = NewTensor(X.shape.Permute(permutations));
+        var O = NewTensor(X.shape.Permute(permutations), outputScope);
 
         var OonDeviceShape = GetOnDeviceShape(O.shape);
         var XonDeviceShape = GetOnDeviceShape(X.shape);
@@ -2099,7 +2205,7 @@ public class ComputeOps : ReferenceComputeOps
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || !TensorExtensions.Is8DAxisConvertibleTo4D(axis))
             return base.Concat(tensors, axis);
 
-        var O = NewTensor(TensorExtensions.Concat(tensors, axis));
+        var O = NewOutputTensor(TensorExtensions.Concat(tensors, axis));
 
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
@@ -2110,7 +2216,7 @@ public class ComputeOps : ReferenceComputeOps
         {
             // input can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
             // => permute if there is a layout mismatch
-            var X = GetTensorInCurrentMemoryLayout(inputTensor);
+            var X = GetTensorInCurrentMemoryLayoutHelper(inputTensor);
 
             var fn = BestKernel(ComputeKernelLibrary.Copy(X.shape, O.shape));
 
@@ -2157,24 +2263,28 @@ public class ComputeOps : ReferenceComputeOps
     protected override Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
         Assert.IsTrue(tensors.Length > 0);
-
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
             return base.ElementwiseWithBroadcast(kernelName, tensors);
 
-        Tensor outputTensor1 = NewTensor(TensorExtensions.MaxShape(tensors));
-        Tensor outputTensor2 = null;
-        if (tensors.Length > 2)
-            outputTensor2 = NewTensor(TensorExtensions.MaxShape(tensors));
-
         var X = tensors[0];
-        var fn = BestKernel(ComputeKernelLibrary.Broadcast(X.shape, outputTensor1.shape, kernelName));
+
+        Tensor outputTensor = NewOutputTensor(TensorExtensions.MaxShape(tensors));
+        Tensor tempTensor = null;
+        if (tensors.Length > 2)
+        {
+            tempTensor = NewTempTensor(TensorExtensions.MaxShape(tensors));
+        }
+        Tensor outputTensorOddIndex  = (tensors.Length % 2 == 0) ? outputTensor : tempTensor;
+        Tensor outputTensorEvenIndex = (tensors.Length % 2 == 0) ? tempTensor   : outputTensor;
+
+        var fn = BestKernel(ComputeKernelLibrary.Broadcast(X.shape, outputTensor.shape, kernelName));
 
         Tensor O = null;
         bool isFirstDispatch = true;
         for (int t = 1; t < tensors.Length; ++t)
         {
             var B = tensors[t];
-            O = (t % 2 == 1) ? outputTensor1 : outputTensor2;
+            O = (t % 2 == 1) ? outputTensorOddIndex : outputTensorEvenIndex;
             fn.SetTensor("X", X.shape, Pin(X).buffer);
             fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
             fn.SetTensor("B", B.shape, Pin(B).buffer, Pin(B).offset);
@@ -2190,20 +2300,20 @@ public class ComputeOps : ReferenceComputeOps
             isFirstDispatch = false;
         }
 
-        if (O != outputTensor1) outputTensor1.Dispose();
-        if (O != outputTensor2) outputTensor2?.Dispose();
+        tempTensor?.Dispose();
+        Assert.AreEqual(outputTensor, O);
         return O;
     }
 
 
-    internal static int[] s_ApplyPaddingCroppedSize = new int[2];
+    internal static int[] s_ApplyPaddingCroppedSize = new int[3];
     /// <inheritdoc/>
     protected override Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
         Assert.IsTrue(X.shape.Is4D());
-        Assert.AreEqual(pad.Length, 4);
+        Assert.AreEqual(pad.Length, 6);
 
-        var O = NewTensor(X.shape.ApplyBorder(pad));
+        var O = NewOutputTensor(X.shape.ApplyBorder(pad));
         var fn = BestKernel(ComputeKernelLibrary.Padding(X.shape, O.shape, kernelName));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2214,11 +2324,13 @@ public class ComputeOps : ReferenceComputeOps
         if (kernelName == "Border2D")
         {
             // NOTE: negative "pad" variable will crop X tensor
-            int croppedWidth = X.width - Math.Max(0, -pad[2]);
-            int croppedHeight = X.height - Math.Max(0, -pad[3]);
+            int croppedWidth = X.width - Math.Max(0, -pad[3]);
+            int croppedHeight = X.height - Math.Max(0, -pad[4]);
+            int croppedChannels = X.channels - Math.Max(0, -pad[5]);
 
             s_ApplyPaddingCroppedSize[0] = croppedWidth;
             s_ApplyPaddingCroppedSize[1] = croppedHeight;
+            s_ApplyPaddingCroppedSize[2] = croppedChannels;
 
             fn.shader.SetInts("_Pool", s_ApplyPaddingCroppedSize);
             fn.shader.SetFloat("_Beta", constant);
@@ -2231,7 +2343,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
-        var O = NewTensor(X.shape);
+        var O = NewOutputTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, "LogicalNot"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2244,7 +2356,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Sign(Tensor X)
     {
-        var O = NewTensor(X.shape);
+        var O = NewOutputTensor(X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, "Sign"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2261,7 +2373,7 @@ public class ComputeOps : ReferenceComputeOps
         if (!C.shape.Is4D() || !A.shape.Is4D() || !B.shape.Is4D())
             return base.Where(C, A, B);
 
-        Tensor O = NewTensorLike(new [] { C, A, B });
+        Tensor O = NewTensorLike(new [] { C, A, B }, AllocScope.LayerOutput);
         var fn = BestKernel(ComputeKernelLibrary.Broadcast(C.shape, O.shape, "BroadcastWhere"));
 
         fn.SetTensor("X", C.shape, Pin(C).buffer);
@@ -2277,33 +2389,12 @@ public class ComputeOps : ReferenceComputeOps
         return O;
     }
 
-    private Tensor DivExpSub(Tensor X, Tensor B, Tensor S)
-    {
-        if(!X.shape.Is4D() || !B.shape.Is4D() || !S.shape.Is4D())
-            return Div(new[] { Exp(Sub(new[] { X, B })), S });
-
-        Tensor O = NewTensorLike(new [] { X, B, S });
-        var fn = BestKernel(ComputeKernelLibrary.Broadcast(X.shape, O.shape, "BroadcastDivExpSub"));
-
-        fn.SetTensor("X", X.shape, Pin(X).buffer);
-        fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
-        fn.SetTensor("S", S.shape, Pin(S).buffer, Pin(S).offset);
-        fn.SetTensor("B", B.shape, Pin(B).buffer, Pin(B).offset);
-
-        fn.shader.SetInts("_XStrides", GetInputTensorStridesOnDevice(X.shape, Pin(X).channelsOrder, s_XStrides));
-        fn.shader.SetInts("_SStrides", GetInputTensorStridesOnDevice(S.shape, Pin(S).channelsOrder, s_SStrides));
-        fn.shader.SetInts("_BStrides", GetInputTensorStridesOnDevice(B.shape, Pin(B).channelsOrder, s_BStrides));
-
-        fn.Dispatch();
-        return O;
-    }
-
-    private Tensor LogSoftmaxEnd(Tensor X, Tensor B, Tensor S)
+    private Tensor LogSoftmaxEndHelper(Tensor X, Tensor B, Tensor S, AllocScope outputScope)
     {
         if(!X.shape.Is4D() || !B.shape.Is4D() || !S.shape.Is4D())
             return Sub(new[] { Sub(new[] { X, B }), Log(S) });
 
-        Tensor O = NewTensorLike(new [] { X, B, S });
+        Tensor O = NewTensorLike(new [] { X, B, S }, outputScope);
         var fn = BestKernel(ComputeKernelLibrary.Broadcast(X.shape, O.shape, "LogSoftmaxEnd"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2330,7 +2421,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(X.length, newShape.length);
         Assert.AreEqual(ComputeInfo.ChannelsOrder.NCHW, ComputeInfo.channelsOrder);
 
-        var O = NewTensor(newShape, AllocScope.LayerOutput, "O");
+        var O = NewOutputTensor(newShape, "O");
         var fn = BestKernel(ComputeKernelLibrary.ReshapeFromNHWCModel(O.shape));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2360,7 +2451,7 @@ public class ComputeOps : ReferenceComputeOps
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
 
-        var O = NewTensor(newShape);
+        var O = NewOutputTensor(newShape);
         var fn = BestKernel(ComputeKernelLibrary.Copy(copyShape, copyShape));
 
         fn.SetTensor("X", copyShape, Pin(X).buffer);
@@ -2449,7 +2540,19 @@ internal class ComputeVarsWithSharedModel : DefaultVars
         // as would be expected per API documentation
         // @TODO: bugreport documentation discrepancy!
         offsetIntoModelWeights = minOffset;
-        layer.weights.UploadToComputeBuffer(buffer, Convert.ToInt32(offsetIntoModelWeights), 0, length);
+
+        if (layer.weights.Type == BarracudaArray.DataType.Float)
+        {
+            layer.weights.UploadToComputeBuffer(buffer, Convert.ToInt32(offsetIntoModelWeights), 0, length);
+        }
+        else
+        {
+            //No support for half on GPU for now. Expand to fp32 when uploading to GFX mem.
+            BarracudaArray floatArray = new BarracudaArray(length, BarracudaArray.DataType.Float);
+            BarracudaArray.Copy(layer.weights, Convert.ToInt32(offsetIntoModelWeights), floatArray, 0, length);
+            floatArray.UploadToComputeBuffer(buffer, 0, 0, length);
+        }
+
         return buffer;
     }
 }

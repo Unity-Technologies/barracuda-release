@@ -1,17 +1,22 @@
 using UnityEngine.Assertions;
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 
 namespace Unity.Barracuda {
 
 /// <summary>
 /// TensorShape are immutable representation of a Tensor dimensions and rank.
-/// At the moment a TensorShape is always of rank 4 and channels last ie NHWC.
-/// However an axis can be of size 1. For example a tensor without spatial information will be N,1,1,C
+/// Depending on which constructor is used, the TensorShape will either be rank 8 and channels last (ie NHWC) or actual
+/// rank with unnamed tensor dimensions when using the constructor that takes int[].
+/// With legacy use (explicit named constructors) of TensorShape an axis can be of size 1. For example, a tensor
+/// without spatial information will be N,1,1,C. With the use of TensorShape via the int[] constructor, then axes can
+/// have values of 0.
 /// </summary>
 [Serializable]
-public struct TensorShape
+public unsafe struct TensorShape
 {
     /// <summary>
     /// Max rank
@@ -79,7 +84,7 @@ public struct TensorShape
     /// <summary>
     /// Data features
     /// </summary>
-    public readonly static int[] DataFeatures = new int[] { W, H, D, DataFeature3 };
+    public static readonly int[] DataFeatures = { W, H, D, DataFeature3 };
 
     /// <summary>
     /// Kernel input channel dimension
@@ -114,41 +119,178 @@ public struct TensorShape
     /// <summary>
     /// Kernel spatial dimensions
     /// </summary>
-    public readonly static int[] KernelSpatials = new int[] { KernelSpatial0, KernelSpatial1, KernelSpatial2, KernelSpatial3 };
+    public static readonly int[] KernelSpatials = { KernelSpatial0, KernelSpatial1, KernelSpatial2, KernelSpatial3 };
 
     /// <summary>
     /// Return the number of sequence.
     /// </summary>
-    public readonly int sequenceLength;
+    public int sequenceLength
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[SequenceLength];
+                    return value;
+                }
+            }
+
+            return 1;
+        }
+    }
+
     /// <summary>
     /// Return the number of direction.
     /// </summary>
-    public readonly int numberOfDirections;
+    public int numberOfDirections
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[NumberOfDirections];
+                    return value;
+                }
+            }
+
+            return 1;
+        }
+    }
+
     /// <summary>
     /// Return the number of batch.
     /// </summary>
-    public readonly int batch;
+    public int batch
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[DataBatch];
+                    return value;
+                }
+            }
+
+            return this[0];
+        }
+    }
+
     /// <summary>
     /// Return the size of 3rd spatial dimension (axis is DataFeature3)
     /// Internal for now, please use myTensorShape[DataFeature3] instead.
     /// </summary>
-    internal readonly int extraDimension;
+    internal int extraDimension
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[DataFeature3];
+                    return value;
+                }
+            }
+
+            return 1;
+        }
+    }
+
     /// <summary>
     /// Return the spatial depth (axis is DataFeature2).
     /// </summary>
-    public readonly int depth;
+    public int depth
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[DataFeature2];
+                    return value;
+                }
+            }
+
+            return 1;
+        }
+    }
+
     /// <summary>
     /// Return the spatial height (axis is DataFeature1).
     /// </summary>
-    public readonly int height;
+    public int height
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[DataFeature1];
+                    return value;
+                }
+            }
+
+            return this[1];
+        }
+    }
+
     /// <summary>
     /// Return the spatial width (axis is DataFeature0).
     /// </summary>
-    public readonly int width;
+    public int width
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[DataFeature0];
+                    return value;
+                }
+            }
+
+            return this[2];
+        }
+    }
+
     /// <summary>
     /// Return the number of channels.
     /// </summary>
-    public readonly int channels;
+    public int channels
+    {
+        get
+        {
+            if (hasNamedDimensions)
+            {
+                fixed (int* shape = &d0)
+                {
+                    int value = shape[DataChannel];
+                    return value;
+                }
+            }
+
+            return this[3];
+        }
+    }
+
+    // TODO: Use `fixed int m_Shape[MaxRank];` when debugger display works
+    int d0;
+    int d1;
+    int d2;
+    int d3;
+    int d4;
+    int d5;
+    int d6;
+    int d7;
 
     #region Constructors
     /// <summary>
@@ -164,15 +306,21 @@ public struct TensorShape
     /// <param name="w">width</param>
     /// <param name="c">channels</param>
     public TensorShape(int s, int r, int n, int t, int d, int h, int w, int c)
+        : this()
     {
-        sequenceLength = s > 0 ? s : 1;
-        numberOfDirections = r > 0 ? r : 1;
-        batch = n > 0 ? n : 1;
-        extraDimension = t > 0 ? t : 1;
-        depth = d > 0 ? d : 1;
-        height = h > 0 ? h : 1;
-        width = w > 0 ? w : 1;
-        channels = c > 0 ? c : 1;
+        m_UsesNamedDimensions = NamedDimension.All;
+        m_Rank = MaxRank;
+        fixed (int* shape = &d0)
+        {
+            shape[SequenceLength] = s > 0 ? s : 1;
+            shape[NumberOfDirections] = r > 0 ? r : 1;
+            shape[DataBatch] = n > 0 ? n : 1;
+            shape[DataFeature3] = t > 0 ? t : 1;
+            shape[DataFeature2] = d > 0 ? d : 1;
+            shape[DataFeature1] = h > 0 ? h : 1;
+            shape[DataFeature0] = w > 0 ? w : 1;
+            shape[DataChannel] = c > 0 ? c : 1;
+        }
     }
 
     /// <summary>
@@ -184,15 +332,9 @@ public struct TensorShape
     /// <param name="w">width</param>
     /// <param name="c">channels</param>
     public TensorShape(int n, int d, int h, int w, int c)
+        : this(1, 1, n, 1, d, h, w, c)
     {
-        sequenceLength = 1;
-        numberOfDirections = 1;
-        batch = n > 0 ? n : 1;
-        extraDimension = 1;
-        depth = d > 0 ? d : 1;
-        height = h > 0 ? h : 1;
-        width = w > 0 ? w : 1;
-        channels = c > 0 ? c : 1;
+        m_UsesNamedDimensions = NamedDimension.N | NamedDimension.D | NamedDimension.H | NamedDimension.W | NamedDimension.C;
     }
 
     /// <summary>
@@ -203,15 +345,9 @@ public struct TensorShape
     /// <param name="w">width</param>
     /// <param name="c">channels</param>
     public TensorShape(int n, int h, int w, int c)
+        : this(n, 1, h, w, c)
     {
-        sequenceLength = 1;
-        numberOfDirections = 1;
-        batch = n > 0 ? n : 1;
-        extraDimension = 1;
-        depth = 1;
-        height = h > 0 ? h : 1;
-        width = w > 0 ? w : 1;
-        channels = c > 0 ? c : 1;
+        m_UsesNamedDimensions = NamedDimension.N | NamedDimension.H | NamedDimension.W | NamedDimension.C;
     }
 
     /// <summary>
@@ -221,15 +357,9 @@ public struct TensorShape
     /// <param name="w">width</param>
     /// <param name="c">channels</param>
     public TensorShape(int n, int w, int c)
+        : this(n, 1, w, c)
     {
-        sequenceLength = 1;
-        numberOfDirections = 1;
-        batch = n > 0 ? n : 1;
-        extraDimension = 1;
-        depth = 1;
-        height = 1;
-        width = w > 0 ? w : 1;
-        channels = c > 0 ? c : 1;
+        m_UsesNamedDimensions = NamedDimension.N | NamedDimension.W | NamedDimension.C;
     }
     /// <summary>
     /// Create a TensorShape of shape [1,1,N,1,1,1,1,C].
@@ -237,15 +367,9 @@ public struct TensorShape
     /// <param name="n">batch</param>
     /// <param name="c">channels</param>
     public TensorShape(int n, int c)
+        : this(n, 1, c)
     {
-        sequenceLength = 1;
-        numberOfDirections = 1;
-        batch = n > 0 ? n : 1;
-        extraDimension = 1;
-        depth = 1;
-        height = 1;
-        width = 1;
-        channels = c > 0 ? c : 1;
+        m_UsesNamedDimensions = NamedDimension.N | NamedDimension.C;
     }
 
     /// <summary>
@@ -253,93 +377,228 @@ public struct TensorShape
     /// </summary>
     /// <param name="n">batch</param>
     public TensorShape(int n)
+        : this(n, 1)
     {
-        sequenceLength = 1;
-        numberOfDirections = 1;
-        batch = n > 0 ? n : 1;
-        extraDimension = 1;
-        depth = 1;
-        height = 1;
-        width = 1;
-        channels = 1;
+        m_UsesNamedDimensions = NamedDimension.N;
     }
+
     /// <summary>
     /// Create a TensorShape of arbitrary `shape`.
-    /// `shape` must be of length 4 [N,H,W,C] or 8 [S,R,N,T,D,H,W,C].
-    /// If `shape.length` is 4 then the dimensions S,R,T and D will be defaulted to 1.
     /// </summary>
     /// <param name="shape">shape as int array</param>
-    public TensorShape(int[] shape)
-        : this( shape.Length > 4 ? shape[0] : 1,
-                shape.Length > 4 ? shape[1] : 1,
-                shape.Length > 4 ? shape[2] : shape[0],
-                shape.Length > 4 ? shape[3] : 1,
-                shape.Length > 4 ? shape[4] : 1,
-                shape.Length > 4 ? shape[5] : (shape.Length > 1?shape[1]:1),
-                shape.Length > 4 ? shape[6] : (shape.Length > 2?shape[2]:1),
-                shape.Length > 4 ? shape[7] : (shape.Length > 3?shape[3]:1))
+    /// <param name="unnamedDimensions">create the shape with no specific, named layout</param>
+    public TensorShape(int[] shape, bool unnamedDimensions = false)
+        : this()
     {
+        Assert.IsTrue(shape.Length <= MaxRank, $"Only shapes up to a maximum rank of {MaxRank} are supported.");
+
+        if (unnamedDimensions)
+        {
+            m_UsesNamedDimensions = NamedDimension.None;
+            m_Rank = shape.Length;
+
+            if (m_Rank > 0)
+            {
+                fixed (int* dst = &d0, src = &shape[0])
+                {
+                    UnsafeUtility.MemCpy(dst, src, shape.Length * sizeof(int));
+                    UnsafeUtility.MemSet(dst + shape.Length, 0, (MaxRank - shape.Length) * sizeof(int));
+                }
+            }
+            else
+            {
+                // Treat a scalar as a rank-1 tensor
+                m_Rank = 1;
+                fixed (int* dst = &d0)
+                {
+                    UnsafeUtility.MemSet(dst, 0, MaxRank * sizeof(int));
+                    dst[0] = 1;
+                }
+            }
+        }
+        else
+        {
+            TensorShape copy;
+
+            switch (shape.Length)
+            {
+                case 0:
+                    // Treat a scalar as a rank-1 tensor
+                    copy = new TensorShape(1);
+                    break;
+
+                case 1:
+                    copy = new TensorShape(shape[0]);
+                    break;
+
+                case 2:
+                    copy = new TensorShape(shape[0], shape[1]);
+                    break;
+
+                case 3:
+                    copy = new TensorShape(shape[0], shape[1], shape[2]);
+                    break;
+
+                case 4:
+                    copy = new TensorShape(shape[0], shape[1], shape[2], shape[3]);
+                    break;
+
+                case 5:
+                    copy = new TensorShape(shape[0], shape[1], shape[2], shape[3], shape[4]);
+                    break;
+
+                case 6:
+                case 7:
+                    throw new ArgumentException($"Must use unnamedDimensions = true for a rank {shape.Length} tensor");
+
+                case 8:
+                default:
+                    copy = new TensorShape(shape[0], shape[1], shape[2], shape[3], shape[4], shape[5], shape[6], shape[7]);
+                    break;
+            }
+
+            fixed (TensorShape* dst = &this)
+            {
+                UnsafeUtility.CopyStructureToPtr(ref copy, dst);
+            }
+        }
     }
+
     #endregion
 
     #region Properties
+
+    [Flags]
+    enum NamedDimension : byte
+    {
+        S = 1 << SequenceLength,
+        R = 1 << NumberOfDirections,
+        N = 1 << DataBatch,
+        T = 1 << DataFeature3,
+        D = 1 << DataFeature2,
+        H = 1 << DataFeature1,
+        W = 1 << DataFeature0,
+        C = 1 << DataChannel,
+
+        None = 0,
+        All = S | R | N | T | D | H | W | C
+    }
+
+    /// <summary>
+    /// Whether this shape makes use of named dimensions or is nameless.
+    /// </summary>
+    public bool hasNamedDimensions => m_UsesNamedDimensions != 0;
+    NamedDimension m_UsesNamedDimensions;
+
     /// <summary>
     /// Kernel dimension ordering is [D,H,W,C,K] for efficiency purpose.
     /// Return kernel intermediate dimension 0.
     /// </summary>
-    public int kernelSpatialDepth { get { return numberOfDirections; } }
+    public int kernelSpatialDepth => numberOfDirections;
+
     /// <summary>
     /// Kernel dimension ordering is [D,H,W,C,K] for efficiency purpose.
     /// Return kernel height.
     /// </summary>
-    public int kernelHeight { get { return batch; } }//Use .batch so HWCK weight use 4D constructor for backward compatibility with 4D tensorShape.
+    public int kernelHeight => batch; //Use .batch so HWCK weight use 4D constructor for backward compatibility with 4D tensorShape.
     /// <summary>
     /// Kernel dimension ordering is [D,H,W,C,K] for efficiency purpose.
     /// Return kernel width.
     /// </summary>
-    public int kernelWidth { get { return height; } }
+    public int kernelWidth => height;
+
     /// <summary>
     /// Kernel dimension ordering is [D,H,W,C,K] for efficiency purpose.
     /// Return kernel depth (aka the number of input channels of the associated operator).
     /// </summary>
-    public int kernelDepth { get { return width; } }
+    public int kernelDepth => width;
+
     /// <summary>
     /// Kernel dimension ordering is [D,H,W,C,K] for efficiency purpose.
     /// Return kernel count (aka the number of output channels of the associated operator).
     /// </summary>
-    public int kernelCount { get { return channels; } }
+    public int kernelCount => channels;
+
     /// <summary>
     /// Return the number of batch.
     /// </summary>
-    public int flatHeight { get { return batch; } }
+    public int flatHeight => batch;
+
     /// <summary>
     /// Return the T*D*H*W*C.
     /// </summary>
-    public int flatWidth { get { return extraDimension * depth * height * width * channels; } }
+    public int flatWidth
+    {
+        get
+        {
+            int w = 1;
+            if (hasNamedDimensions)
+            {
+                w = extraDimension * depth * height * width * channels;
+                return w;
+            }
+
+            for (int i = 1; i < rank; i++)
+            {
+                w *= this[i];
+            }
+
+            return w;
+        }
+    }
+
     /// <summary>
     /// Return the total number of elements represented by this shape.
     /// </summary>
-    public int length { get { return sequenceLength * numberOfDirections *flatHeight * flatWidth; } }
+    public int length
+    {
+        get
+        {
+            int l = 1;
+            if (hasNamedDimensions)
+            {
+                l = sequenceLength * numberOfDirections * flatHeight * flatWidth;
+                return l;
+            }
+
+            for (int i = 0; i < rank; i++)
+            {
+                l *= this[i];
+            }
+
+            return l;
+        }
+    }
+
     /// <summary>
-    /// Always 8, look also at the `dimensions` property.
+    /// Always 8 if legacy, named constructors are used otherwise the actual rank.
+    /// Look also at the `dimensions` property.
     /// </summary>
-    public int rank { get { return 8; } }
+    public int rank => m_Rank;
+    int m_Rank;
+
     /// <summary>
     /// Return the count of non-unit dimension of this shape.
     /// For example [N,1,1,C] dimensions is 2.
     /// </summary>
-    public int dimensions { get {
-            return
-                (sequenceLength > 1 ? 1 : 0) +
-                (numberOfDirections > 1 ? 1 : 0) +
-                (batch > 1 ? 1 : 0) +
-                (extraDimension > 1 ? 1 : 0) +
-                (depth > 1 ? 1 : 0) +
-                (height > 1 ? 1 : 0) +
-                (width > 1 ? 1 : 0) +
-                (channels > 1 ? 1 : 0);
+    public int dimensions
+    {
+        get
+        {
+            if (hasNamedDimensions) // legacy
+                return (sequenceLength > 1 ? 1 : 0) +
+                    (numberOfDirections > 1 ? 1 : 0) +
+                    (batch > 1 ? 1 : 0) +
+                    (extraDimension > 1 ? 1 : 0) +
+                    (depth > 1 ? 1 : 0) +
+                    (height > 1 ? 1 : 0) +
+                    (width > 1 ? 1 : 0) +
+                    (channels > 1 ? 1 : 0);
+
+            return rank;
         }
     }
+
     #endregion
 
     #region Helpers
@@ -365,10 +624,14 @@ public struct TensorShape
     /// <param name="c">channels</param>
     public void GetPositionsFromIndex(int index, ref int n, ref int h, ref int w, ref int c)
     {
-        c = index % channels;
-        w = (index / channels) % width;
-        h = (index / (channels * width)) % height;
-        n = (index / (channels * width * height * depth * extraDimension)) % batch;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        c = index % shape.channels;
+        w = (index / shape.channels) % shape.width;
+        h = (index / (shape.channels * shape.width)) % shape.height;
+        n = (index / (shape.channels * shape.width * shape.height * shape.depth * shape.extraDimension)) % shape.batch;
     }
 
     /// <summary>
@@ -385,14 +648,18 @@ public struct TensorShape
     /// <param name="c">channels</param>
     public void GetPositionsFromIndex(int index, ref int s, ref int r, ref int n, ref int t, ref int d, ref int h, ref int w, ref int c)
     {
-        c =  index % channels;
-        w = (index / channels) % width;
-        h = (index / (channels * width)) % height;
-        d = (index / (channels * width * height)) % depth;
-        t = (index / (channels * width * height * depth)) % extraDimension;
-        n = (index / (channels * width * height * depth * extraDimension)) % batch;
-        r = (index / (channels * width * height * depth * extraDimension * batch)) % numberOfDirections;
-        s = (index / (channels * width * height * depth * extraDimension * batch * numberOfDirections)) % sequenceLength;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        c =  index % shape.channels;
+        w = (index / shape.channels) % shape.width;
+        h = (index / (shape.channels * shape.width)) % shape.height;
+        d = (index / (shape.channels * shape.width * shape.height)) % shape.depth;
+        t = (index / (shape.channels * shape.width * shape.height * shape.depth)) % shape.extraDimension;
+        n = (index / (shape.channels * shape.width * shape.height * shape.depth * shape.extraDimension)) % shape.batch;
+        r = (index / (shape.channels * shape.width * shape.height * shape.depth * shape.extraDimension * shape.batch)) % shape.numberOfDirections;
+        s = (index / (shape.channels * shape.width * shape.height * shape.depth * shape.extraDimension * shape.batch * shape.numberOfDirections)) % shape.sequenceLength;
     }
 
     /// <summary>
@@ -409,14 +676,18 @@ public struct TensorShape
     /// <param name="c">channels</param>
     internal void GetPositionsFromIndexChannelFirst(int index, ref int s, ref int r, ref int n, ref int t, ref int d, ref int h, ref int w, ref int c)
     {
-        w  = index % width;
-        h  = (index / width) % height;
-        d  = (index / (width * height)) % depth;
-        t  = (index / (width * height * depth)) % extraDimension;
-        c  = (index / (width * height * depth * extraDimension)) % channels;
-        n  = (index / (width * height * depth * extraDimension * channels)) % batch;
-        r  = (index / (width * height * depth * extraDimension * channels * batch)) % numberOfDirections;
-        s  = (index / (width * height * depth * extraDimension * channels * batch * numberOfDirections)) % sequenceLength;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        w  = index % shape.width;
+        h  = (index / shape.width) % shape.height;
+        d  = (index / (shape.width * shape.height)) % shape.depth;
+        t  = (index / (shape.width * shape.height * shape.depth)) % shape.extraDimension;
+        c  = (index / (shape.width * shape.height * shape.depth * shape.extraDimension)) % shape.channels;
+        n  = (index / (shape.width * shape.height * shape.depth * shape.extraDimension * shape.channels)) % shape.batch;
+        r  = (index / (shape.width * shape.height * shape.depth * shape.extraDimension * shape.channels * shape.batch)) % shape.numberOfDirections;
+        s  = (index / (shape.width * shape.height * shape.depth * shape.extraDimension * shape.channels * shape.batch * shape.numberOfDirections)) % shape.sequenceLength;
     }
 
     /// <summary>
@@ -429,10 +700,14 @@ public struct TensorShape
     /// <param name="c">channels</param>
     internal void GetPositionsFromIndexChannelFirst(int index, ref int n, ref int h, ref int w, ref int c)
     {
-        w = index % width;
-        h = (index / width) % height;
-        c  = (index / (width * height * depth * extraDimension)) % channels;
-        n  = (index / (width * height * depth * extraDimension * channels)) % batch;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        w = index % shape.width;
+        h = (index / shape.width) % shape.height;
+        c  = (index / (shape.width * shape.height * shape.depth * shape.extraDimension)) % shape.channels;
+        n  = (index / (shape.width * shape.height * shape.depth * shape.extraDimension * shape.channels)) % shape.batch;
     }
 
     /// <summary>
@@ -445,10 +720,14 @@ public struct TensorShape
     /// <returns></returns>
     public int IndexWithBroadcast(int n, int h, int w, int c)
     {
-        n %= batch;
-        h %= height;
-        w %= width;
-        c %= channels;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        n %= shape.batch;
+        h %= shape.height;
+        w %= shape.width;
+        c %= shape.channels;
         return Index(n, h, w, c);
     }
 
@@ -466,14 +745,18 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithBroadcast(int s, int r, int n, int t, int d, int h, int w, int c)
     {
-        s %= sequenceLength;
-        r %= numberOfDirections;
-        n %= batch;
-        t %= extraDimension;
-        d %= depth;
-        h %= height;
-        w %= width;
-        c %= channels;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        s %= shape.sequenceLength;
+        r %= shape.numberOfDirections;
+        n %= shape.batch;
+        t %= shape.extraDimension;
+        d %= shape.depth;
+        h %= shape.height;
+        w %= shape.width;
+        c %= shape.channels;
         return Index(s, r, n, t, d, h, w, c);
     }
 
@@ -487,14 +770,18 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithClamp(int n, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         n = Math.Max(n, 0);
         h = Math.Max(h, 0);
         w = Math.Max(w, 0);
         c = Math.Max(c, 0);
-        n = Math.Min(n, batch - 1);
-        h = Math.Min(h, height - 1);
-        w = Math.Min(w, width - 1);
-        c = Math.Min(c, channels - 1);
+        n = Math.Min(n, shape.batch - 1);
+        h = Math.Min(h, shape.height - 1);
+        w = Math.Min(w, shape.width - 1);
+        c = Math.Min(c, shape.channels - 1);
         return Index(n, h, w, c);
     }
 
@@ -509,16 +796,20 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithClamp(int n, int d, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         n = Math.Max(n, 0);
         d = Math.Max(d, 0);
         h = Math.Max(h, 0);
         w = Math.Max(w, 0);
         c = Math.Max(c, 0);
-        n = Math.Min(n, batch - 1);
-        d = Math.Min(d, depth - 1);
-        h = Math.Min(h, height - 1);
-        w = Math.Min(w, width - 1);
-        c = Math.Min(c, channels - 1);
+        n = Math.Min(n, shape.batch - 1);
+        d = Math.Min(d, shape.depth - 1);
+        h = Math.Min(h, shape.height - 1);
+        w = Math.Min(w, shape.width - 1);
+        c = Math.Min(c, shape.channels - 1);
         return Index(n, d, h, w, c);
     }
 
@@ -536,6 +827,10 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int IndexWithClamp(int s, int r, int n, int t, int d, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         s = Math.Max(s, 0);
         r = Math.Max(r, 0);
         n = Math.Max(n, 0);
@@ -544,14 +839,14 @@ public struct TensorShape
         h = Math.Max(h, 0);
         w = Math.Max(w, 0);
         c = Math.Max(c, 0);
-        s = Math.Min(s, sequenceLength - 1);
-        r = Math.Min(r, numberOfDirections - 1);
-        n = Math.Min(n, batch - 1);
-        t = Math.Min(t, extraDimension - 1);
-        d = Math.Min(d, depth - 1);
-        h = Math.Min(h, height - 1);
-        w = Math.Min(w, width - 1);
-        c = Math.Min(c, channels - 1);
+        s = Math.Min(s, shape.sequenceLength - 1);
+        r = Math.Min(r, shape.numberOfDirections - 1);
+        n = Math.Min(n, shape.batch - 1);
+        t = Math.Min(t, shape.extraDimension - 1);
+        d = Math.Min(d, shape.depth - 1);
+        h = Math.Min(h, shape.height - 1);
+        w = Math.Min(w, shape.width - 1);
+        c = Math.Min(c, shape.channels - 1);
         return Index(s,r,n,t,d,h,w,c);
     }
 
@@ -569,14 +864,18 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int s, int r, int n, int t, int d, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         int index =
-            s * numberOfDirections * batch * extraDimension * depth * height * width * channels +
-            r * batch * extraDimension * depth * height * width * channels +
-            n * extraDimension * depth * height * width * channels +
-            t * depth * height * width * channels +
-            d * height * width * channels +
-            h * width * channels +
-            w * channels +
+            s * shape.numberOfDirections * shape.batch * shape.extraDimension * shape.depth * shape.height * shape.width * shape.channels +
+            r * shape.batch * shape.extraDimension * shape.depth * shape.height * shape.width * shape.channels +
+            n * shape.extraDimension * shape.depth * shape.height * shape.width * shape.channels +
+            t * shape.depth * shape.height * shape.width * shape.channels +
+            d * shape.height * shape.width * shape.channels +
+            h * shape.width * shape.channels +
+            w * shape.channels +
             c;
         return index;
     }
@@ -592,11 +891,15 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int n, int d, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         int index =
-            n * extraDimension * depth * height * width * channels +
-            d * height * width * channels +
-            h * width * channels +
-            w * channels +
+            n * shape.extraDimension * shape.depth * shape.height * shape.width * shape.channels +
+            d * shape.height * shape.width * shape.channels +
+            h * shape.width * shape.channels +
+            w * shape.channels +
             c;
         return index;
     }
@@ -611,10 +914,14 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int n, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         int index =
-            n * extraDimension * depth * height * width * channels +
-            h * width * channels +
-            w * channels +
+            n * shape.extraDimension * shape.depth * shape.height * shape.width * shape.channels +
+            h * shape.width * shape.channels +
+            w * shape.channels +
             c;
         return index;
     }
@@ -633,14 +940,18 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     internal int IndexChannelFirst(int s, int r, int n, int t, int d, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         int index =
-            s * numberOfDirections * batch * channels * extraDimension * depth * height * width +
-            r * batch * channels * extraDimension * depth * height * width +
-            n * channels * extraDimension * depth * height * width +
-            c * extraDimension * depth * height * width +
-            t * depth * height * width +
-            d * height * width +
-            h * width +
+            s * shape.numberOfDirections * shape.batch * shape.channels * shape.extraDimension * shape.depth * shape.height * shape.width +
+            r * shape.batch * shape.channels * shape.extraDimension * shape.depth * shape.height * shape.width +
+            n * shape.channels * shape.extraDimension * shape.depth * shape.height * shape.width +
+            c * shape.extraDimension * shape.depth * shape.height * shape.width +
+            t * shape.depth * shape.height * shape.width +
+            d * shape.height * shape.width +
+            h * shape.width +
             w;
         return index;
     }
@@ -655,10 +966,14 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     internal int IndexChannelFirst(int n, int h, int w, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         int index =
-            n * channels * extraDimension * depth * height * width +
-            c * extraDimension * depth * height * width +
-            h * width +
+            n * shape.channels * shape.extraDimension * shape.depth * shape.height * shape.width +
+            c * shape.extraDimension * shape.depth * shape.height * shape.width +
+            h * shape.width +
             w;
         return index;
     }
@@ -671,8 +986,12 @@ public struct TensorShape
     /// <returns>one dimensional index (offset in the flat memory region)</returns>
     public int Index(int n, int c)
     {
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
         int index =
-            n * flatWidth +
+            n * shape.flatWidth +
             c;
         return index;
     }
@@ -686,41 +1005,55 @@ public struct TensorShape
     {
         get
         {
+            if (axis >= rank)
+                throw new IndexOutOfRangeException($"Attempting to access element {axis} from a rank {rank} shape");
+
             // switch case instead of ToArray() avoids GC allocation
-            switch(axis)
+            if (hasNamedDimensions)
             {
-                case 0:
-                    return sequenceLength;
-                case 1:
-                    return numberOfDirections;
-                case 2:
-                    return batch;
-                case 3:
-                    return extraDimension;
-                case 4:
-                    return depth;
-                case 5:
-                    return height;
-                case 6:
-                    return width;
-                default:
-                    return channels;
+                switch(axis)
+                {
+                    case 0:
+                        return sequenceLength;
+                    case 1:
+                        return numberOfDirections;
+                    case 2:
+                        return batch;
+                    case 3:
+                        return extraDimension;
+                    case 4:
+                        return depth;
+                    case 5:
+                        return height;
+                    case 6:
+                        return width;
+                    default:
+                        return channels;
+                }
+            }
+
+            fixed (int* shape = &d0)
+            {
+                return shape[axis];
             }
         }
 
         internal set
         {
-            unsafe
+            if (hasNamedDimensions)
+                axis = (axis < 0 || axis > 7) ? 7 : axis;
+            else
+                axis = Axis(axis);
+
+            if (axis >= rank)
+                throw new IndexOutOfRangeException($"Attempting to access element {axis} from a rank {rank} shape");
+
+            fixed (int* shape = &d0)
             {
-                fixed (TensorShape* thiz = &this)
-                {
-                    int* p = (int*)thiz;
-
-                    if (axis < 0 || axis > 7)
-                        axis = 7;
-
-                    p[axis] = value > 0 ? value : 1;
-                }
+                if (hasNamedDimensions)
+                    shape[axis] = value > 0 ? value : 1;
+                else
+                    shape[axis] = value;
             }
         }
     }
@@ -732,7 +1065,22 @@ public struct TensorShape
     /// <returns>shape as int array</returns>
     public int[] ToArray()
     {
-        return new[] { sequenceLength, numberOfDirections, batch, extraDimension, depth, height, width, channels };
+        int size = rank;
+        var shape = new int[size];
+        if (size > 0)
+        {
+            fixed (int* dst = &shape[0], src = &d0)
+            {
+                UnsafeUtility.MemCpy(dst, src, size * sizeof(int));
+            }
+        }
+        else
+        {
+            // Treat a scalar as a rank-1 tensor
+            return new[] { 1 };
+        }
+
+        return shape;
     }
 
     /// <summary>
@@ -742,7 +1090,11 @@ public struct TensorShape
     /// <returns>new TensorShape</returns>
     public TensorShape Squeeze()
     {
-        var dims = ToArray();
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        var dims = shape.ToArray();
 
         var squeezed = new TensorShape( 1,1,1,1,1,1,1,1 );
         Assert.IsTrue(dims.Length == squeezed.rank);
@@ -759,7 +1111,11 @@ public struct TensorShape
     /// <returns>new TensorShape</returns>
     public TensorShape Flatten()
     {
-        return new TensorShape(sequenceLength, numberOfDirections, batch, 1, 1, 1, 1, flatWidth);
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        return new TensorShape(shape.sequenceLength, shape.numberOfDirections, shape.batch, 1, 1, 1, 1, shape.flatWidth);
     }
     #endregion
 
@@ -772,9 +1128,15 @@ public struct TensorShape
     /// <returns>`true` if contents of the objects `a` and `b` are equal</returns>
     public static bool operator ==(TensorShape a, TensorShape b)
     {
-        for (var i = 0; i < TensorShape.MaxRank; ++i)
+        if (a.rank != b.rank)
+            return false;
+
+        for (var i = 0; i < a.rank; ++i)
+        {
             if (a[i] != b[i])
                 return false;
+        }
+
         return true;
     }
 
@@ -809,7 +1171,12 @@ public struct TensorShape
     /// <returns>object hash code</returns>
     public override int GetHashCode()
     {
-        return sequenceLength ^ numberOfDirections ^ batch ^ extraDimension ^ depth ^ height ^ width ^ channels;
+        var shape = this;
+        if (!hasNamedDimensions)
+            shape = AsNamed();
+
+        return shape.sequenceLength ^ shape.numberOfDirections ^ shape.batch ^ shape.extraDimension ^ shape.depth
+            ^ shape.height ^ shape.width ^ shape.channels;
     }
     #endregion
 
@@ -819,10 +1186,105 @@ public struct TensorShape
     /// <returns>object summary as a string</returns>
     public override string ToString()
     {
-        if (this.Is4D())
-            return $"(n:{batch}, h:{height}, w:{width}, c:{channels})";
+        if (rank == 0)
+            return "()";
+
+        if (hasNamedDimensions)
+        {
+            int b = batch;
+            int h = height;
+            int w = width;
+            int c = channels;
+
+            if (this.Is4D())
+            {
+                return $"(n:{b}, h:{h}, w:{w}, c:{c})";
+            }
+
+            int s = sequenceLength;
+            int r = numberOfDirections;
+            int t = extraDimension;
+            int d = depth;
+
+            return $"(s:{s}, r:{r}, n:{b}, t:{t}, d:{d}, h:{h}, w:{w}, c:{c})";
+        }
         else
-            return $"(s:{sequenceLength}, r:{numberOfDirections}, n:{batch}, t:{extraDimension}, d:{depth}, h:{height}, w:{width}, c:{channels})";
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("(");
+            for (int i = 0; i < rank; i++)
+            {
+                if (i != 0)
+                    sb.Append(", ");
+                sb.Append(this[i]);
+            }
+            sb.Append(")");
+            return sb.ToString();
+        }
+    }
+
+    public TensorShape AsNamed()
+    {
+        if (hasNamedDimensions)
+            throw new InvalidOperationException("TensorShape is already in the layout of named dimensions");
+
+        TensorShape shape;
+        switch (rank)
+        {
+            case 0:
+                // Treat a scalar as a rank-1 tensor
+                shape = new TensorShape(1);
+                break;
+
+            case 1:
+                shape = new TensorShape(this[0]);
+                break;
+
+            case 2:
+                shape = new TensorShape(this[0], this[1]);
+                break;
+
+            case 3:
+                shape = new TensorShape(this[0], this[1], this[2]);
+                break;
+
+            case 4:
+                shape = new TensorShape(this[0], this[1], this[2], this[3]);
+                break;
+
+            case 5:
+                shape = new TensorShape(this[0], this[1], this[2], this[3], this[4]);
+                break;
+
+            case 6:
+            case 7:
+                throw new ArgumentException($"Converting from rank {rank} not supported.");
+
+            case 8:
+            default:
+                shape = new TensorShape(this[0], this[1], this[2], this[3], this[4], this[5], this[6], this[7]);
+                break;
+        }
+
+        return shape;
+    }
+
+    public TensorShape AsUnnamed()
+    {
+        if (!hasNamedDimensions)
+            throw new InvalidOperationException("TensorShape is already in the layout of unnamed dimensions");
+
+        int size = Burst.Intrinsics.X86.Popcnt.popcnt_u32((UInt32)m_UsesNamedDimensions);
+        var shape = new int[size];
+
+        int s = 0;
+        for (int i = 0; i < MaxRank; i++)
+        {
+            if (m_UsesNamedDimensions.HasFlag((NamedDimension)(1 << i)))
+                shape[s++] = this[i];
+        }
+
+        return new TensorShape(shape, true);
     }
 }
 /// <summary>
@@ -888,6 +1350,9 @@ public struct TensorIterator
     /// <param name="index">starting index</param>
     public TensorIterator(TensorShape shape, int index = 0)
     {
+        if (!shape.hasNamedDimensions)
+            shape = shape.AsNamed();
+
         this.shape = shape;
         m_shapeLength = shape.length;
         this.index = index;
@@ -1150,7 +1615,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="srcData">source data</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, float[] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+    public Tensor(int[] shape, float[] srcData, string name = "", bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), srcData, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [N,H,W,C], an array of data `srcData` and an optional debug `name`.
@@ -1222,7 +1688,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="srcData">source data</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, float[][] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+    public Tensor(int[] shape, float[][] srcData, string name = "", bool unnamedDimensions = false) : this(new TensorShape(shape, unnamedDimensions), srcData, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an array of data `srcData` and an optional debug `name`.
@@ -1234,7 +1700,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="c">channels</param>
     /// <param name="srcData">source data</param>
     /// <param name="name">name</param>
-    public Tensor(int n, int h, int w, int c, float[][] srcData, string name = "") : this(new TensorShape(n, h, w, c), srcData, name) {}
+    public Tensor(int n, int h, int w, int c, float[][] srcData, string name = "")
+        : this(new TensorShape(n, h, w, c), srcData, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], an array of data `srcData` and an optional debug `name`.
@@ -1280,7 +1747,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="srcData">source data</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, float[,] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+    public Tensor(int[] shape, float[,] srcData, string name = "", bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), srcData, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], an array of data `srcData` and an optional debug `name`.
@@ -1328,7 +1796,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="srcData">source data</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, float[,,,] srcData, string name = "") : this(new TensorShape(shape), srcData, name) {}
+    public Tensor(int[] shape, float[,,,] srcData, string name = "", bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), srcData, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an array of data `srcData` and an optional debug `name`.
@@ -1361,7 +1830,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="srcBuffer">source buffer</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, UnityEngine.ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(shape), srcBuffer, name) {}
+    public Tensor(int[] shape, ComputeBuffer srcBuffer, string name = "", bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), srcBuffer, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
@@ -1373,7 +1843,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="c">channels</param>
     /// <param name="srcBuffer">source buffer</param>
     /// <param name="name">name</param>
-    public Tensor(int n, int h, int w, int c, UnityEngine.ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(n, h, w, c), srcBuffer, name) {}
+    public Tensor(int n, int h, int w, int c, ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(n, h, w, c), srcBuffer, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,1,1,C], associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
@@ -1383,7 +1853,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="c">channels</param>
     /// <param name="srcBuffer">source buffer</param>
     /// <param name="name">name</param>
-    public Tensor(int n, int c, UnityEngine.ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(n, c), srcBuffer, name) {}
+    public Tensor(int n, int c, ComputeBuffer srcBuffer, string name = "") : this(new TensorShape(n, c), srcBuffer, name) {}
 
     /// <summary>
     /// Create a Tensor with specified `shape`, associated ComputeBuffer `srcBuffer` filled with tensor values, and an optional debug `name`.
@@ -1393,7 +1863,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="srcBuffer">source buffer</param>
     /// <param name="name">name</param>
     /// <exception cref="ArgumentException">thrown if specified buffer is too small or stride is mismatched</exception>
-    public Tensor(TensorShape shape, UnityEngine.ComputeBuffer srcBuffer, string name = "")
+    public Tensor(TensorShape shape, ComputeBuffer srcBuffer, string name = "")
     {
         this.name = name;
         this.shape = shape;
@@ -1415,7 +1885,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="srcTexture">source texture</param>
     /// <param name="channels">channels</param>
     /// <param name="name">name</param>
-    public Tensor(UnityEngine.Texture srcTexture, int channels = -1, string name = "") : this(new [] { srcTexture }, channels, name) {}
+    public Tensor(Texture srcTexture, int channels = -1, string name = "") : this(new [] { srcTexture }, channels, name) {}
 
     /// <summary>
     /// Create a Tensor from multiple texture, shape is [1,1, `srcTextures.length`,1,1, `texture.height`, `texture.width`, `channels`].
@@ -1430,7 +1900,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="bias">bias</param>
     /// <param name="channels">channels</param>
     /// <param name="name">name</param>
-    public Tensor(UnityEngine.Texture srcTexture, bool flipY, Vector4 scale, Vector4 bias, int channels = -1, string name = "") : this(new [] { srcTexture }, flipY, false, scale, bias, channels, name) {}
+    public Tensor(Texture srcTexture, bool flipY, Vector4 scale, Vector4 bias, int channels = -1, string name = "") : this(new [] { srcTexture }, flipY, false, scale, bias, channels, name) {}
 
     /// <summary>
     /// Create a Tensor from multiple texture, shape is [1,1, `srcTextures.length`,1,1, `texture.height`, `texture.width`, `channels`].
@@ -1441,7 +1911,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="srcTextures">source textures</param>
     /// <param name="channels">channels</param>
     /// <param name="name">name</param>
-    public Tensor(UnityEngine.Texture[] srcTextures, int channels = -1, string name = "")
+    public Tensor(Texture[] srcTextures, int channels = -1, string name = "")
     {
         this.name = name;
         var tensorData = new TextureAsTensorData(srcTextures, channels);
@@ -1470,7 +1940,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="bias">bias</param>
     /// <param name="channels">channels</param>
     /// <param name="name">name</param>
-    public Tensor(UnityEngine.Texture[] srcTextures, bool flipY, bool concatOnBatch, Vector4 scale, Vector4 bias, int channels = -1, string name = "")
+    public Tensor(Texture[] srcTextures, bool flipY, bool concatOnBatch, Vector4 scale, Vector4 bias, int channels = -1, string name = "")
     {
         this.name = name;
         var tensorData = new TextureAsTensorData(srcTextures,
@@ -1496,7 +1966,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="data">data</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, ITensorData data, string name = "") : this(new TensorShape(shape), data, name) {}
+    public Tensor(int[] shape, ITensorData data, string name = "", bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), data, name) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an ITensorData `data` and an optional debug `name`.
@@ -1549,7 +2020,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// </summary>
     /// <param name="shape">shape</param>
     /// <param name="name">name</param>
-    public Tensor(int[] shape, string name = "") : this(new TensorShape(shape), name) {}
+    public Tensor(int[] shape, string name = "", bool unnamedDimensions = false) : this(new TensorShape(shape, unnamedDimensions), name) {}
 
     /// <summary>
     /// Create an uninitialized Tensor of shape [1,1,N,1,1,H,W,C] and an optional debug `name`.
@@ -1592,7 +2063,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="data">data</param>
     /// <param name="allocator">allocator</param>
-    public Tensor(int[] shape, ITensorData data, ITensorAllocator allocator) : this(new TensorShape(shape), data, allocator) {}
+    public Tensor(int[] shape, ITensorData data, ITensorAllocator allocator, bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), data, allocator) {}
 
     /// <summary>
     /// Create a Tensor of shape [1,1,N,1,1,H,W,C], an ITensorData `data` and an ITensorAllocator `allocator`.
@@ -1646,7 +2118,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// </summary>
     /// <param name="shape">shape</param>
     /// <param name="allocator">allocator</param>
-    public Tensor(int[] shape, ITensorAllocator allocator) : this(new TensorShape(shape), allocator) {}
+    public Tensor(int[] shape, ITensorAllocator allocator, bool unnamedDimensions = false)
+        : this(new TensorShape(shape, unnamedDimensions), allocator) {}
 
     /// <summary>
     /// Create an uninitialized Tensor of shape [1,1,N,1,1,H,W,C] and an ITensorAllocator `allocator`.
@@ -1984,10 +2457,18 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="scale">scale</param>
     /// <param name="bias">bias</param>
     /// <param name="lut">lut table</param>
-    public void ToRenderTexture(UnityEngine.RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut = null)
+    public void ToRenderTexture(RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut = null)
     {
-        var gpuBackend = new ReferenceComputeOps(null);
-        gpuBackend.TensorToRenderTexture(this, target, batch, fromChannel, scale, bias, lut);
+        if (tensorOnDevice is TextureAsTensorData || !SystemInfo.supportsComputeShaders)
+        {
+            var gpuBackend = new PixelShaderOps(null);
+            gpuBackend.TensorToRenderTexture(this, target, batch, fromChannel, scale, bias, lut);
+        }
+        else if (tensorOnDevice is ComputeTensorData)
+        {
+            var gpuBackend = new ReferenceComputeOps(null);
+            gpuBackend.TensorToRenderTexture(this, target, batch, fromChannel, scale, bias, lut);
+        }
     }
 
     /// <summary>
@@ -2004,7 +2485,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="scale">scale</param>
     /// <param name="bias">bias</param>
     /// <param name="lut">lut table</param>
-    public void ToRenderTexture(UnityEngine.RenderTexture target, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
+    public void ToRenderTexture(RenderTexture target, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
     {
         ToRenderTexture(target, batch, fromChannel, new Vector4(scale,scale,scale,scale), new Vector4(bias,bias,bias,bias), lut);
     }
@@ -2024,9 +2505,9 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="bias">bias</param>
     /// <param name="lut">lut table</param>
     /// <returns>created RenderTexture</returns>
-    public UnityEngine.RenderTexture ToRenderTexture(RenderTextureFormat format, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
+    public RenderTexture ToRenderTexture(RenderTextureFormat format, int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
     {
-        var target = new UnityEngine.RenderTexture(width, height, 0, format);
+        var target = new RenderTexture(width, height, 0, format);
         ToRenderTexture(target, batch, fromChannel, scale, bias, lut);
         return target;
     }
@@ -2045,7 +2526,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="bias">bias</param>
     /// <param name="lut">lut table</param>
     /// <returns></returns>
-    public UnityEngine.RenderTexture ToRenderTexture(int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
+    public RenderTexture ToRenderTexture(int batch = 0, int fromChannel = 0, float scale = 1.0f, float bias = 0f, Texture3D lut = null)
     {
         return ToRenderTexture(RenderTextureFormat.Default, batch, fromChannel, scale, bias, lut);
     }

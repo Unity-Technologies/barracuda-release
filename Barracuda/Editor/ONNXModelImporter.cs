@@ -21,7 +21,7 @@ namespace Unity.Barracuda
     /// Asset Importer for Open Neural Network Exchange (ONNX) files.
     /// For more information about ONNX file format see: https://github.com/onnx/onnx
     /// </summary>
-    [ScriptedImporter(33, new[] { "onnx" })]
+    [ScriptedImporter(34, new[] { "onnx" })]
     public class ONNXModelImporter : ScriptedImporter
     {
         // Configuration
@@ -43,6 +43,11 @@ namespace Unity.Barracuda
         [SerializeField, HideInInspector]
         internal ONNXModelConverter.ImportMode importMode = ONNXModelConverter.ImportMode.Standard;
 
+        [SerializeField, HideInInspector]
+        internal ONNXModelConverter.DataTypeMode weightsTypeMode = ONNXModelConverter.DataTypeMode.Default;
+        [SerializeField, HideInInspector]
+        internal ONNXModelConverter.DataTypeMode activationTypeMode = ONNXModelConverter.DataTypeMode.Default;
+
         internal const string iconName = "ONNXModelIcon";
 
 
@@ -58,6 +63,11 @@ namespace Unity.Barracuda
             var converter = new ONNXModelConverter(optimizeModel, treatErrorsAsWarnings, forceArbitraryBatchSize, importMode);
 
             var model = converter.Convert(ctx.assetPath);
+
+            if (weightsTypeMode == ONNXModelConverter.DataTypeMode.ForceHalf)
+                model.ConvertWeights(BarracudaArray.DataType.Half);
+            else if (weightsTypeMode == ONNXModelConverter.DataTypeMode.ForceFloat)
+                model.ConvertWeights(BarracudaArray.DataType.Float);
 
             NNModelData assetData = ScriptableObject.CreateInstance<NNModelData>();
             using (var memoryStream = new MemoryStream())

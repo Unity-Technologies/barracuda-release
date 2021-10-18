@@ -188,6 +188,11 @@ public class Layer
         Range = 71,
 
         /// <summary>
+        /// RoiAlign layer
+        /// </summary>
+        RoiAlign = 72,
+
+        /// <summary>
         /// Addition layer
         /// </summary>
         Add = 100,
@@ -333,6 +338,11 @@ public class Layer
         Sign = 150,
 
         /// <summary>
+        /// Generic Pad layer (not fully supported)
+        /// </summary>
+        Pad = 159,            // TODO: NOT IMPLEMENTED
+
+        /// <summary>
         /// Reflection padding layer
         /// </summary>
         Pad2DReflect = 160,
@@ -441,6 +451,11 @@ public class Layer
         /// LSTM
         /// </summary>
         LSTM = 215,
+
+        /// <summary>
+        /// ScatterND
+        /// </summary>
+        ScatterND = 216,
 
         /// <summary>
         /// Constant load layer (for internal use)
@@ -777,6 +792,11 @@ public class Layer
     public enum AutoPad
     {
         /// <summary>
+        /// NotSet
+        /// </summary>
+        NotSet = 1,
+
+        /// <summary>
         /// Valid
         /// </summary>
         Valid = 0,
@@ -790,6 +810,14 @@ public class Layer
         /// Same lower
         /// </summary>
         SameLower = -2,
+    }
+
+    public enum PadMode
+    {
+        Constant = 0,
+        Reflect = 1,
+        Edge = 2,
+        Symetric = 3,
     }
 
     /// <summary>
@@ -806,6 +834,27 @@ public class Layer
         /// CRD (Column Row Depth)
         /// </summary>
         CRD
+    }
+
+    /// <summary>
+    /// ScatterND reduction mode
+    /// </summary>
+    public enum ScatterNDReductionMode
+    {
+        /// <summary>
+        /// None
+        /// </summary>
+        None = 0,
+
+        /// <summary>
+        /// Add
+        /// </summary>
+        Add = 1,
+
+        /// <summary>
+        /// Multiply
+        /// </summary>
+        Mul = 2,
     }
 
     /// <summary>
@@ -1024,7 +1073,7 @@ public class Model
     /// <summary>
     /// Model version, incremented with each data structure change
     /// </summary>
-    public const int Version = 19;
+    public const int Version = 20;
     internal const int LastVersionWithout8DSupport = 16;
     public const int LastVersionWithoutWeightsAlignmentSupport = 18;
     internal const int WeightsAlignment = 16;
@@ -1196,6 +1245,24 @@ public class Model
             $"memories: [{string.Join(", ", memories.Select(m => $"{m.input} {m.shape} {m.output}"))}], " +
             $"outputs: [{string.Join(", ", outputs)}] " +
             $"\n{layers.Count} layers, {totalUniqueWeights:n0} weights: \n{string.Join("\n", layers.Select(i => $"{i.type} ({i})"))}";
+    }
+
+    /// <summary>
+    /// Convert in place all model weights to given data type
+    /// </summary>
+    /// <param name="type">target type for moodel weights</param>
+    internal void ConvertWeights(BarracudaArray.DataType type)
+    {
+        foreach (var layer in layers)
+        {
+            if (layer.weights != null && layer.weights.Type != type)
+            {
+                var sourceWeights = layer.weights;
+                var targetWeights = new BarracudaArray(layer.weights.Length, type);
+                BarracudaArray.Copy(sourceWeights, targetWeights);
+                layer.weights = targetWeights;
+            }
+        }
     }
 }
 

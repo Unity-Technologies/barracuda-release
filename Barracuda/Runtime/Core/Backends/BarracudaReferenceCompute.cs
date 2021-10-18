@@ -646,266 +646,6 @@ internal class TextureFormatUtils
 }
 
 /// <summary>
-/// Texture based `Tensor` storage
-/// </summary>
-public class TextureAsTensorData : UniqueResourceId, ITensorData
-{
-    /// <summary>
-    /// Flip flag enum
-    /// </summary>
-    public enum Flip
-    {
-        /// <summary>
-        /// None
-        /// </summary>
-        None,
-        /// <summary>
-        /// Flip Y
-        /// </summary>
-        Y,
-    }
-
-    /// <summary>
-    /// Interpret depth as enum
-    /// </summary>
-    public enum InterpretDepthAs
-    {
-        /// <summary>
-        /// Batch
-        /// </summary>
-        Batch,
-
-        /// <summary>
-        /// Channels
-        /// </summary>
-        Channels,
-    }
-
-    /// <summary>
-    /// Interpret color enum
-    /// </summary>
-    public enum InterpretColorAs
-    {
-        /// <summary>
-        /// Average multiple channels
-        /// </summary>
-        AverageMultipleChannels,
-        // TODO: PickFirstChannel,
-    }
-
-    /// <summary>
-    /// multiplies scales texture value
-    /// </summary>
-    public Vector4 scale { get { return m_scale; } }
-    /// <summary>
-    /// subtracts bias texture value
-    /// </summary>
-    public Vector4 bias { get { return m_bias; } }
-
-
-    private TensorShape m_Shape;
-    private Texture[] m_Textures;
-    private int m_InterpretPixelAsChannels;
-    private InterpretDepthAs m_InterpretDepthAs;
-    private InterpretColorAs m_InterpretColorAs;
-    private Flip m_Flip;
-    private Vector4 m_scale, m_bias;
-
-
-    /// <summary>
-    /// Shape
-    /// </summary>
-    public TensorShape shape { get { return m_Shape; } }
-
-    /// <summary>
-    /// Backing textures
-    /// </summary>
-    public Texture[] textures { get { return m_Textures; } }
-
-    /// <summary>
-    /// Interpret pixel as channels
-    /// </summary>
-    public int interpretPixelAsChannels { get { return m_InterpretPixelAsChannels; } }
-
-    /// <summary>
-    /// Interpret depth as
-    /// </summary>
-    public InterpretDepthAs interpretDepthAs { get { return m_InterpretDepthAs; } }
-
-    /// <summary>
-    /// Interpret color as
-    /// </summary>
-    public InterpretColorAs interpretColorAs { get { return m_InterpretColorAs; } }
-
-    /// <summary>
-    /// Flip flag
-    /// </summary>
-    public Flip flip { get { return m_Flip; } }
-
-    /// <summary>
-    /// Create `TextureAsTensorData` from supplied `textures`
-    /// </summary>
-    /// <param name="textures">backing textures</param>
-    /// <param name="interpretPixelAsChannels">interpret pixel as channels</param>
-    /// <param name="flip">flip</param>
-    /// <param name="depthAs">depth as</param>
-    /// <param name="colorAs">color as</param>
-    /// <exception cref="ArgumentException">thrown if textures array is empty or texture types are different</exception>
-    /// <exception cref="InvalidOperationException">thrown if unsupported texture type is supplied</exception>
-    public TextureAsTensorData(Texture[] textures, int interpretPixelAsChannels = -1,
-        Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels) :
-        this(textures, flip, depthAs, colorAs, Vector4.one, Vector4.zero, interpretPixelAsChannels) { }
-
-    /// <summary>
-    /// Create `TextureAsTensorData` from supplied `textures`
-    /// </summary>
-    /// <param name="textures">backing textures</param>
-    /// <param name="interpretPixelAsChannels">interpret pixel as channels</param>
-    /// <param name="flip">flip</param>
-    /// <param name="depthAs">depth as</param>
-    /// <param name="colorAs">color as</param>
-    /// <param name="scale">multiplies `scale` to texture values</param>
-    /// <param name="bias">substracts `bias` from texture values</param>
-    /// <exception cref="ArgumentException">thrown if textures array is empty or texture types are different</exception>
-    /// <exception cref="InvalidOperationException">thrown if unsupported texture type is supplied</exception>
-    public TextureAsTensorData(Texture[] textures,
-    Flip flip, InterpretDepthAs depthAs, InterpretColorAs colorAs, Vector4 scale, Vector4 bias, int interpretPixelAsChannels)
-    {
-        if (textures.Length < 1)
-            throw new ArgumentException("Textures array must be non empty");
-
-        if (interpretPixelAsChannels < 0)
-        {
-            interpretPixelAsChannels = TextureFormatUtils.FormatToChannelCount(textures[0]);
-
-            // check that all textures have the same number of channels
-            foreach (var tex in textures)
-                if (interpretPixelAsChannels != TextureFormatUtils.FormatToChannelCount(tex))
-                    throw new ArgumentException("All textures must have the same number of channels");
-        }
-
-        m_InterpretPixelAsChannels = interpretPixelAsChannels;
-        m_InterpretDepthAs = depthAs;
-        m_InterpretColorAs = colorAs;
-        m_Flip = flip;
-
-        m_scale = scale;
-        m_bias = bias;
-
-        var width = textures[0].width;
-        var height = textures[0].height;
-
-        var totalDepth = 0;
-        foreach (var tex in textures)
-        {
-            if (tex.width != width || tex.height != height)
-                throw new ArgumentException("All textures must have the same width and height dimensions");
-
-            var tex2D = tex as Texture2D;
-            var texArr = tex as Texture2DArray;
-            var tex3D = tex as Texture3D;
-            var rt = tex as RenderTexture;
-            if (tex2D)
-                totalDepth += 1;
-            else if (texArr)
-                totalDepth += texArr.depth;
-            else if (tex3D)
-                totalDepth += tex3D.depth;
-            else if (rt)
-                totalDepth += rt.volumeDepth;
-            else
-                throw new InvalidOperationException("Unsupported texture type");
-        }
-        m_Textures = textures;
-
-        int batch = 1;
-        int channels = interpretPixelAsChannels;
-        if (m_InterpretDepthAs == InterpretDepthAs.Batch)
-            batch *= totalDepth;
-        else if (m_InterpretDepthAs == InterpretDepthAs.Channels)
-            channels *= totalDepth;
-
-        m_Shape = new TensorShape(batch, height, width, channels);
-    }
-
-    /// <summary>
-    /// Create `TextureAsTensorData` from supplied `texture`
-    /// </summary>
-    /// <param name="texture">texture</param>
-    /// <param name="interpretPixelAsChannels">interpret pixel as channels</param>
-    /// <param name="flip">flip</param>
-    /// <param name="depthAs">depth as</param>
-    /// <param name="colorAs">color as</param>
-    public TextureAsTensorData(Texture texture, int interpretPixelAsChannels = -1,
-        Flip flip = Flip.Y, InterpretDepthAs depthAs = InterpretDepthAs.Batch, InterpretColorAs colorAs = InterpretColorAs.AverageMultipleChannels)
-    : this(new [] { texture }, interpretPixelAsChannels, flip, depthAs, colorAs) {}
-
-    /// <inheritdoc/>
-    public virtual void Reserve(int count)
-    {
-        // currently always readonly
-        throw new InvalidOperationException("TextureAsTensorData is readonly");
-    }
-
-    /// <inheritdoc/>
-    public virtual void Upload(float[] data, TensorShape shape, int managedBufferStartIndex = 0)
-    {
-        // currently always readonly
-        throw new InvalidOperationException("TextureAsTensorData is readonly");
-    }
-
-    /// <inheritdoc/>
-    public virtual bool ScheduleAsyncDownload(int count)
-    {
-        // @TODO: cache compute tensor data and request async
-        return true;
-    }
-
-    /// <inheritdoc/>
-    public virtual float[] Download(TensorShape shape)
-    {
-        var gpuBackend = new ReferenceComputeOps(null);
-        // @TODO: cache compute buffer
-        using(var computeTensorData = gpuBackend.TextureToTensorData(this, "__internalDownloadTextureToTensorData"))
-        {
-            return computeTensorData.Download(shape);
-        }
-    }
-
-    /// <inheritdoc/>
-    public virtual BarracudaArray SharedAccess(out int offset)
-    {
-        offset = 0;
-        return new BarracudaArrayFromManagedArray(Download(shape));//fp16?
-    }
-
-    /// <inheritdoc/>
-    public virtual int maxCapacity { get
-    {
-        return m_Shape.length;
-    } }
-
-    /// <inheritdoc/>
-    public virtual bool inUse { get
-    {
-        return true;
-    } }
-
-    /// <inheritdoc/>
-    public virtual bool isGPUMem { get
-    {
-        return true;
-    } }
-
-    /// <summary>
-    /// Dispose
-    /// </summary>
-    public virtual void Dispose()
-    {
-    }
-}
-
-/// <summary>
 /// Reference GPU compute `IOps` implementation
 /// </summary>
 public class ReferenceComputeOps : ReferenceCPUOps
@@ -1071,11 +811,11 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     /// <summary>
-    /// Check if `fusedActivation` type is supported
+    /// Check if `fusedActivation` type is supported in place
     /// </summary>
     /// <param name="fusedActivation">fused activation type</param>
     /// <returns>`true` if supported</returns>
-    protected bool IsFusedActivationSupported(Layer.FusedActivation fusedActivation)
+    protected override bool IsFusedActivationSupported(Layer.FusedActivation fusedActivation)
     {
         switch (fusedActivation)
         {
@@ -1097,8 +837,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         // X and Y can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
         // => permute them if there is a layout mismatch
-        X = GetTensorInCurrentMemoryLayout(X);
-        Y = GetTensorInCurrentMemoryLayout(Y);
+        X = GetTensorInCurrentMemoryLayoutHelper(X);
+        Y = GetTensorInCurrentMemoryLayoutHelper(Y);
 
         // V-Table magic, ReferenceCPU.MaMul is calls MatMul2D, Concat & Slice all which are overloaded by all respective IOps, so will call the correct backend
         return base.MatMul(X, rankX, Y, rankY);
@@ -1107,14 +847,14 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
-        X = GetTensorInCurrentMemoryLayout(X);
-        Y = GetTensorInCurrentMemoryLayout(Y);
+        X = GetTensorInCurrentMemoryLayoutHelper(X);
+        Y = GetTensorInCurrentMemoryLayoutHelper(Y);
 
         // MatMul implementation in terms of Dense
         var A = (xTranspose) ? Transpose(X): X;
         var B = (yTranspose) ? Transpose(Y): Y;
-        var C = NewTensor(1, B.flatWidth);
-        var Z = Sub(new[] { C, C }); // intialize bias with zeros
+        var C = NewTempTensor(new TensorShape(1, B.flatWidth));
+        var Z = Sub(new[] { C, C }); // initialize bias with zeros, TODO will fragment ping pong allocator
 
         var O = Dense(A, B, Z, Layer.FusedActivation.None);
         if (A != X) A.Dispose();
@@ -1513,7 +1253,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     protected virtual Tensor ApplyPadding(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
         Assert.IsTrue(X.shape.Is4D());
-        Assert.AreEqual(pad.Length, 4);
+        Assert.AreEqual(pad.Length, 6);
 
         var O = X.shape.ApplyBorder(pad);
 
@@ -1521,16 +1261,18 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        fn.shader.SetInts("_Pad", pad);
+        fn.shader.SetInts("_Pad", pad.Take(3).ToArray());
 
         if (kernelName == "Border2D")
         {
             // NOTE: negative "pad" variable will crop X tensor
-            int croppedWidth = X.width - Math.Max(0, -pad[2]);
-            int croppedHeight = X.height - Math.Max(0, -pad[3]);
-            var croppedSize = new int[] { 0, 0 };
+            int croppedWidth = X.width - Math.Max(0, -pad[3]);
+            int croppedHeight = X.height - Math.Max(0, -pad[4]);
+            int croppedChannels = X.channels - Math.Max(0, -pad[5]);
+            var croppedSize = new int[] { 0, 0, 0 };
             croppedSize[0] = croppedWidth;
             croppedSize[1] = croppedHeight;
+            croppedSize[2] = croppedChannels;
 
             fn.shader.SetInts("_Pool", croppedSize);
             fn.shader.SetFloat("_Beta", constant);
@@ -1551,7 +1293,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     protected virtual Tensor ApplyPadding3D(Tensor X, int[] pad, string kernelName, float constant = 0.0f)
     {
         Assert.IsTrue(X.shape.IsNDHWC());
-        Assert.AreEqual(pad.Length, 6);
+        Assert.AreEqual(pad.Length, 8);
 
         var O = X.shape.ApplyBorder(pad);
 
@@ -1559,18 +1301,21 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        fn.shader.SetInts("_Pad", pad.Take(3).ToArray());
+        fn.shader.SetInts("_Pad", pad.Take(4).ToArray());
 
         if (kernelName == "Border3D")
         {
             // NOTE: negative "pad" variable will crop X tensor
-            int croppedWidth = X.width - Math.Max(0, -pad[3]);
-            int croppedHeight = X.height - Math.Max(0, -pad[4]);
-            int croppedDepth = X.depth - Math.Max(0, -pad[5]);
-            var croppedSize = new int[] { 0, 0, 0 };
+            int croppedWidth = X.width - Math.Max(0, -pad[4]);
+            int croppedHeight = X.height - Math.Max(0, -pad[5]);
+            int croppedDepth = X.depth - Math.Max(0, -pad[6]);
+            int croppedChannels = X.channels - Math.Max(0, -pad[7]);
+
+            var croppedSize = new int[] { 0, 0, 0, 0 };
             croppedSize[0] = croppedWidth;
             croppedSize[1] = croppedHeight;
             croppedSize[2] = croppedDepth;
+            croppedSize[3] = croppedChannels;
 
             fn.shader.SetInts("_Pool", croppedSize);
             fn.shader.SetFloat("_Beta", constant);
@@ -2049,8 +1794,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
             // B and X can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
             // => permute them if there is a layout mismatch
-            X = GetTensorInCurrentMemoryLayout(X);
-            B = GetTensorInCurrentMemoryLayout(B);
+            X = GetTensorInCurrentMemoryLayoutHelper(X);
+            B = GetTensorInCurrentMemoryLayoutHelper(B);
 
             SetTensor(fn, "X", X);
             SetTensor(fn, "B", B);
@@ -2136,7 +1881,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         {Layer.Type.ArgMin, "ArgMin"}
     };
 
-    internal virtual Tensor Reduce(Layer.Type kernelName, Tensor X, int axis)
+    private Tensor ReduceHelper(Layer.Type kernelName, Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
 
@@ -2163,43 +1908,43 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor ArgMax(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ArgMax, X, axis);
+        return ReduceHelper(Layer.Type.ArgMax, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ArgMin(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ArgMin, X, axis);
+        return ReduceHelper(Layer.Type.ArgMin, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceMin(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ReduceMin, X, axis);
+        return ReduceHelper(Layer.Type.ReduceMin, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceMax(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ReduceMax, X, axis);
+        return ReduceHelper(Layer.Type.ReduceMax, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceSum(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ReduceSum, X, axis);
+        return ReduceHelper(Layer.Type.ReduceSum, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceMean(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ReduceMean, X, axis);
+        return ReduceHelper(Layer.Type.ReduceMean, X, axis);
     }
 
     /// <inheritdoc/>
     public override Tensor ReduceProd(Tensor X, int axis)
     {
-        return Reduce(Layer.Type.ReduceProd, X, axis);
+        return ReduceHelper(Layer.Type.ReduceProd, X, axis);
     }
 
     /// <inheritdoc/>
@@ -2314,6 +2059,26 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInt("_Axis", depth);
 
         return Dispatch(fn, O, X.flatHeight, depth, X.flatWidth);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor RoiAlign(Tensor X, Tensor Rois, Tensor Indices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale)
+    {
+        Assert.IsTrue(X.shape.Is4D());
+        Assert.AreEqual(Rois.flatHeight, Indices.batch);
+        Assert.AreEqual(Rois.flatWidth, 4);
+
+        TensorShape O = new TensorShape(Rois.flatHeight, outputHeight, outputWidth, X.channels);
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "RoiAlign", GetModelExecutionsReporter());
+
+        SetTensor(fn, "X", X);
+        SetTensor(fn, "K", Rois);
+        SetTensor(fn, "B", Indices);
+
+        fn.shader.SetFloat("_Alpha", spatialScale);
+        fn.shader.SetInt("_Axis", samplingRatio);
+
+        return Dispatch(fn, O, outputHeight, outputWidth, X.channels);
     }
 
     /// <summary>
@@ -2464,7 +2229,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return permutationChannelFirst;
     }
 
-    internal virtual Tensor Transpose8D(Tensor X, int[] permutations)
+    private Tensor Transpose8DHelper(Tensor X, int[] permutations)
     {
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
 
@@ -2510,11 +2275,11 @@ public class ReferenceComputeOps : ReferenceCPUOps
     public override Tensor Transpose(Tensor X, int[] permutations)
     {
         if (!X.shape.Is4D() || permutations.Length != 4)
-            return Transpose8D(X, permutations);
+            return Transpose8DHelper(X, permutations);
 
         Assert.AreEqual(permutations.Length, 4);
 
-        X = GetTensorInCurrentMemoryLayout(X);
+        X = GetTensorInCurrentMemoryLayoutHelper(X);
         var O = X.shape.Permute(permutations);
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose", GetModelExecutionsReporter());
@@ -2523,7 +2288,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         return Dispatch(fn, O, X.channels, X.width, X.height);
     }
 
-    internal Tensor GetTensorInCurrentMemoryLayout(Tensor tensor)
+    internal Tensor GetTensorInCurrentMemoryLayoutHelper(Tensor tensor)
     {
         //Return a tensor in the current memory layout from ComputeInfo.channelsOrder.
         //Noop in the general case it will transpose constant tensor when ComputeInfo.channelsOrder == NCHW
@@ -2531,12 +2296,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
         //This is needed for kernel that can accept both input and constant tensor in the same argument.
         if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW &&
             Pin(tensor).channelsOrder == ComputeInfo.ChannelsOrder.NHWC)
-            return TransposeToChannelFirst(tensor);
+            return TransposeToChannelFirstHelper(tensor);
         else
             return tensor;
     }
 
-    internal virtual Tensor TransposeToChannelFirst(Tensor X)
+    internal virtual Tensor TransposeToChannelFirstHelper(Tensor X)
     {
         var O = X.shape;
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToChannelFirst", GetModelExecutionsReporter());
@@ -2556,7 +2321,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy", GetModelExecutionsReporter());
 
-        var O = NewTensor(TensorExtensions.Concat(tensors, axis));
+        var O = NewTensor(TensorExtensions.Concat(tensors, axis), AllocScope.LayerOutput);
 
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
@@ -2567,7 +2332,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         {
             // input can be constants, in that cases the internal layout does not match ComputeInfo.channelsOrder and will allways be NHWC
             // => permute if there is a layout mismatch
-            var X = GetTensorInCurrentMemoryLayout(inputTensor);
+            var X = GetTensorInCurrentMemoryLayoutHelper(inputTensor);
 
             SetTensor(fn, "X", X);
             SetTensor(fn, "O", O);
@@ -2618,7 +2383,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor StridedSlice(Tensor X, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D)
     {
-        X = GetTensorInCurrentMemoryLayout(X);
+        X = GetTensorInCurrentMemoryLayoutHelper(X);
 
         unsafe
         {
@@ -2671,6 +2436,23 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", indices);
         fn.shader.SetInt("_Axis", axis);
+
+        return Dispatch(fn, outputShape, outputShape.channels, outputShape.width, outputShape.height);
+    }
+
+    public override Tensor ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
+    {
+        // only support for scattering on C for now
+        Assert.IsTrue(indices.batch == X.batch);
+        Assert.IsTrue(updates.width == X.width && updates.height == X.height);
+        var outputShape = X.shape;
+           
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "ScatterND", GetModelExecutionsReporter());
+        SetTensor(fn, "X", X);
+        SetTensor(fn, "K", indices);
+        SetTensor(fn, "W", updates);
+
+        fn.shader.SetInt("_Axis", (int)reduction);
 
         return Dispatch(fn, outputShape, outputShape.channels, outputShape.width, outputShape.height);
     }

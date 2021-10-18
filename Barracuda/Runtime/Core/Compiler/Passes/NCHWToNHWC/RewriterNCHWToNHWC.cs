@@ -185,12 +185,25 @@ namespace Unity.Barracuda.Compiler.Passes
                 if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
                     throw new Exception($"Must have input rank for {input0} in order to convert axis for Unsqueeze");
 
-                var axis = layer.pool[0];
-                if (axis < 0)
-                    axis = input0Rank.Value + 1 - axis;
+                int rank = input0Rank.Value;
+                var combinePermutations = new[] { 0, 1, 2, 3 };
+                for (int i = 0; i < layer.pool.Length; i++)
+                {
+                    int axis = layer.pool[i];
+                    if (axis < 0)
+                        axis = rank + 1 - axis;
 
-                var transpose = UnSqueezeAxisPermutationForMappingNCHWLayoutToBarracuda(input0Rank.Value, axis);
-                net.Transpose(layer.name, input0, transpose);
+                    var transpose = UnSqueezeAxisPermutationForMappingNCHWLayoutToBarracuda(rank, axis);
+
+                    // there could be a 4 / 8D shape mismatch
+                    if (transpose.Length == 8 && combinePermutations.Length == 4)
+                        combinePermutations = Permutation4DTo8D(combinePermutations);
+
+                    combinePermutations = TensorExtensions.Permute(transpose, combinePermutations);
+
+                    rank++;
+                }
+                net.Transpose(layer.name, input0, combinePermutations);
 
                 return false;
             });
@@ -201,12 +214,25 @@ namespace Unity.Barracuda.Compiler.Passes
                 if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
                     throw new Exception($"Must have input rank for {input0} in order to convert axis for Squeeze");
 
-                var axis = layer.pool[0];
-                if (axis < 0)
-                    axis = input0Rank.Value + 1 - axis;
+                int rank = input0Rank.Value;
+                var combinePermutations = new[] { 0, 1, 2, 3 };
+                for (int i = 0; i < layer.pool.Length; i++)
+                {
+                    int axis = layer.pool[i];
+                    if (axis < 0)
+                        axis = rank + 1 - axis;
 
-                var transpose = SqueezeAxisPermutationForMappingNCHWLayoutToBarracuda(input0Rank.Value, axis);
-                net.Transpose(layer.name, input0, transpose);
+                    var transpose = SqueezeAxisPermutationForMappingNCHWLayoutToBarracuda(rank, axis);
+
+                    // there could be a 4 / 8D shape mismatch
+                    if (transpose.Length == 8 && combinePermutations.Length == 4)
+                        combinePermutations = Permutation4DTo8D(combinePermutations);
+
+                    combinePermutations = TensorExtensions.Permute(transpose, combinePermutations);
+
+                    rank--;
+                }
+                net.Transpose(layer.name, input0, combinePermutations);
 
                 return false;
             });
@@ -312,6 +338,8 @@ namespace Unity.Barracuda.Compiler.Passes
 
                 return true;
             });
+
+            rewriters.Add(Layer.Type.Pad, Pad);
 
 
             return rewriters;
@@ -474,6 +502,57 @@ namespace Unity.Barracuda.Compiler.Passes
             }
 
             return true;
+        }
+
+        bool Pad(Layer layer, ModelBuilder net)
+        {
+            string input0 = layer.inputs[0];
+            if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                throw new Exception($"Must have input rank for {input0} in order to convert pad for NHWC op");
+
+            var autopadOption = (Layer.AutoPad)(layer.pool[0]);
+
+            if (input0Rank <= 4)
+            {
+                if (autopadOption == Layer.AutoPad.NotSet)
+                {
+                    if (input0Rank == 4) // CHW => WHC
+                        layer.pad = new[] { layer.pad[3], layer.pad[2], layer.pad[1], layer.pad[7], layer.pad[6], layer.pad[5] };
+                    else if (input0Rank == 3) // CW => W_C
+                        layer.pad = new[] { layer.pad[2], 0, layer.pad[1], layer.pad[5], layer.pad[4] };
+                }
+                else
+                {
+                    int autopad = -(int)(autopadOption);
+                    layer.pad = new[] { autopad, autopad, autopad, autopad };
+                }
+                switch (layer.axis)
+                {
+                    case 0:
+                        layer.type = Layer.Type.Border2D;
+                        break;
+                    case 1:
+                        layer.type = Layer.Type.Pad2DReflect;
+                        break;
+                    case 2:
+                        layer.type = Layer.Type.Pad2DEdge;
+                        break;
+                    case 3:
+                        layer.type = Layer.Type.Pad2DSymmetric;
+                        break;
+                }
+                layer.axis = -1;
+                return true;
+            }
+            else if (input0Rank == 5)
+            {
+                // CDHW => WHDC
+                layer.pad = new[] { layer.pad[4], layer.pad[3], layer.pad[2], layer.pad[1], layer.pad[9], layer.pad[8], layer.pad[7], layer.pad[6] };
+                layer.type = Layer.Type.Border3D;
+                return true;
+            }
+
+            throw new Exception($"Unsuported Pad layer, {layer.name}");
         }
 
         bool Reduce(Layer layer, ModelBuilder net)
@@ -831,6 +910,18 @@ namespace Unity.Barracuda.Compiler.Passes
             }
             else
                 throw new ArgumentException($"Unsupported rank permutation change {rank0} to {rank1}");
+        }
+
+        static public int[] Permutation4DTo8D(int[] permutations)
+        {
+            if (permutations.Length == TensorShape.MaxRank)
+                return permutations;
+
+            int batchOldAxis   = TensorExtensions.Convert4DTo8DAxis(permutations[0]);
+            int heighOldAxis   = TensorExtensions.Convert4DTo8DAxis(permutations[1]);
+            int widthOldIndex  = TensorExtensions.Convert4DTo8DAxis(permutations[2]);
+            int channeOldIndex = TensorExtensions.Convert4DTo8DAxis(permutations[3]);
+            return new int[] { 0, 1, batchOldAxis, 3, 4, heighOldAxis, widthOldIndex, channeOldIndex };
         }
 
     }

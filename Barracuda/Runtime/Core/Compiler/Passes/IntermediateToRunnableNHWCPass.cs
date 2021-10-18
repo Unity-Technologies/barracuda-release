@@ -40,14 +40,14 @@ namespace Unity.Barracuda.Compiler.Passes
             // optimizations
             if (Optimize)
             {
+                var contractToSimplerLayerPass = new Optimization.ContractToSimplerLayerPass();
+                contractToSimplerLayerPass.Run(ref model);
+
                 var concatenateTransposesPass = new Optimization.ConcatenateTransposesPass();
                 concatenateTransposesPass.Run(ref model);
 
                 var dense3FusingPass = new Optimization.FuseDense3Pass();
                 dense3FusingPass.Run(ref model);
-
-                var contractToSimplerLayerPass = new Optimization.ContractToSimplerLayerPass();
-                contractToSimplerLayerPass.Run(ref model);
             }
 
             var validateNHWCPass = new ValidateNHWCPass();

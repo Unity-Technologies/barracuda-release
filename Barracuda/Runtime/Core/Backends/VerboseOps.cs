@@ -334,6 +334,15 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
+    Tensor IOps.RoiAlign(Tensor X, Tensor rois, Tensor indices, int outputHeight, int outputWidth, int samplingRatio, float spatialScale)
+    {
+        LogLayerSummary(X.shape + " # " + rois.shape + "-> (" + outputHeight + "," + outputWidth + "," + samplingRatio + "," + spatialScale + ")");
+        var O = m_Ops.RoiAlign(X, rois, indices, outputHeight, outputWidth, samplingRatio, spatialScale);
+        LogOutputTensorSummary(O, Prefix + "RoiAlign");
+        return O;
+    }
+
+    /// <inheritdoc/>
     Tensor IOps.TopKIndices(Tensor X, int k, int axis, bool largest, bool sorted)
     {
         LogLayerSummary($"{X.shape} Ω k={k} a={axis} l={largest} s={sorted}");
@@ -963,6 +972,15 @@ public class VerboseOps : IOps, IModelCompiler
     {
         var O = m_Ops.Gather(tensors,axis);
         LogLayerSummary("{" + tensors[0].shape + "," + tensors[1].shape + "," + axis + "} # " + O.shape);
+        LogOutputTensorSummary(O, Prefix + "Gather");
+        return O;
+    }
+
+    /// <inheritdoc/>
+    Tensor IOps.ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
+    {
+        var O = m_Ops.ScatterND(X, indices, updates, reduction);
+        LogLayerSummary("{" + X.shape + "," + indices.shape + "," + updates.shape + "," + reduction + "} # " + O.shape);
         LogOutputTensorSummary(O, Prefix + "Gather");
         return O;
     }
