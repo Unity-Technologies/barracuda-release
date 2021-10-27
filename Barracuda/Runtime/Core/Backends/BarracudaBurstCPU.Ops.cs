@@ -1944,7 +1944,8 @@ public partial class BurstCPUOps
 
         var job = new RandomNormalJobHelper();
         // seed is combined with jobCountCall to keep rng persistent over frame
-        job.rng = new Unity.Mathematics.Random((uint)(seed ^ (++jobCountCall)));
+        var finalSeed = (uint) (seed ^ (++jobCountCall));
+        job.rng = new Unity.Mathematics.Random(finalSeed != 0 ? finalSeed : 1);
         job.mean = mean;
         job.scale = scale;
         job.ScheduleO(pinO, 0, O.length, 1024);
@@ -1962,7 +1963,8 @@ public partial class BurstCPUOps
         var job = new RandomUniformJobHelper();
 
         // seed is combined with jobCountCall to keep rng persistent over frame
-        job.rng = new Unity.Mathematics.Random((uint)(seed ^ (++jobCountCall)));
+        var finalSeed = (uint) (seed ^ (++jobCountCall));
+        job.rng = new Unity.Mathematics.Random(finalSeed != 0 ? finalSeed : 1);
         job.mean = mean;
         job.scale = scale;
         job.ScheduleO(pinO, 0, O.length, 1024);
