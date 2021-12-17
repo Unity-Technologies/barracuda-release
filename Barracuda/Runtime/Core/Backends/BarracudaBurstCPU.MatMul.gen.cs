@@ -10,6 +10,7 @@ using static Unity.Burst.Intrinsics.X86.Avx;
 using static Unity.Burst.Intrinsics.X86.Fma;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs.LowLevel.Unsafe;
+using FencingHelperMode = Unity.Barracuda.BurstSchedulingHelper.FencingHelperMode;
 
 namespace Unity.Barracuda {
 public partial class BurstCPUOps

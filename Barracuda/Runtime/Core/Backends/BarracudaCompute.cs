@@ -1137,7 +1137,7 @@ public class ComputeOps : ReferenceComputeOps
         if (!(rankX == 3 && rankY == 2))
             return base.MatMul(X, rankX, Y, rankY);
 
-        var O = NewOutputTensor(new TensorShape(X.batch, 1, Y.channels, X.channels));
+        var O = NewOutputTensor(X.dataType, new TensorShape(X.batch, 1, Y.channels, X.channels));
 
         var fn = BestKernel(ComputeKernelLibrary.MultidimMatMul(X.shape, rankX, Y.shape, rankY, O.shape));
 
@@ -1153,7 +1153,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
     {
-        var O = NewOutputTensor(new TensorShape(X.batch, 1, W.channels, X.channels));
+        var O = NewOutputTensor(X.dataType, new TensorShape(X.batch, 1, W.channels, X.channels));
 
         var fn = BestKernel(ComputeKernelLibrary.Dense3(X.shape, W.shape, O.shape));
 
@@ -1179,7 +1179,7 @@ public class ComputeOps : ReferenceComputeOps
         if (ShouldFlattenInputForDenseLayer(X.shape))
             X = Flatten(X);
 
-        var O = NewTensorForFusedActivation(new TensorShape(X.flatHeight, W.flatWidth),fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, new TensorShape(X.flatHeight, W.flatWidth),fusedActivation);
 
         var itemSize = 4; // @TODO: itemSizeInBytes == 2 | float16
         var fn = BestKernel(ComputeKernelLibrary.Dense(X.shape, W.shape, O.shape, itemSize >> 2));
@@ -1256,7 +1256,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(stride.Length, 3);//WHD
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.Conv3D(X.shape, K.shape, O.shape, stride, pad));
 
         if (printKernels)
@@ -1291,7 +1291,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.Conv2D(X.shape, K.shape, O.shape, stride, pad));
 
         if (printKernels)
@@ -1378,7 +1378,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.DepthwiseConv2D(X.shape, K.shape, O.shape, stride));
 
         if (fn.func.kernelName.StartsWith("DepthwiseConv2D_Winograd"))
@@ -1425,7 +1425,7 @@ public class ComputeOps : ReferenceComputeOps
             return Conv2DTransAsConv2D(X, K, B, stride, pad, outputAdjustment, fusedActivation);
         }
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment), fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.Conv2DTrans(X.shape, K.shape, O.shape));
 
         pad = new int[]
@@ -1483,7 +1483,7 @@ public class ComputeOps : ReferenceComputeOps
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", outputAdjustment);
         fn.SetTensor("X", X.shape, Pin(X).buffer);
-        var Xpadded = Dispatch(fn, XpaddedShape, X.channels, X.width, X.height);
+        var Xpadded = Dispatch(fn, X.dataType, XpaddedShape, X.channels, X.width, X.height);
 
         // Flip kernel
         // handle WBK case (K and B data share the same CB), copy B at the same time as flipping K
@@ -1514,7 +1514,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(scale.Length, 2);
 
-        var O = NewOutputTensor(new TensorShape(X.batch, X.height*scale[1], X.width*scale[0], X.channels));
+        var O = NewOutputTensor(X.dataType, new TensorShape(X.batch, X.height*scale[1], X.width*scale[0], X.channels));
         var fn = BestKernel(ComputeKernelLibrary.Upsample2D(X.shape, O.shape, scale, bilinear));
 
         if (printKernels)
@@ -1536,7 +1536,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
 
-        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyPool(pool, stride, pad));
         var fn = BestKernel(ComputeKernelLibrary.Pool2D(X.shape, O.shape, kernelName));
 
         if (printKernels)
@@ -1573,8 +1573,8 @@ public class ComputeOps : ReferenceComputeOps
         string kernelName = "AvgVariancePool2DReduce";
 
         var Oshape = X.shape.ApplyPool(pool, stride, pad, ceilMode: true);
-        var Otemp = NewTempTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
-        var O2temp = NewTempTensor(Otemp.shape);
+        var Otemp = NewTempTensor(X.dataType, new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
+        var O2temp = NewTempTensor(X.dataType, Otemp.shape);
 
         var fn = BestKernel(ComputeKernelLibrary.PoolAvgVar2D(X.shape, Otemp.shape, kernelName));
 
@@ -1613,7 +1613,7 @@ public class ComputeOps : ReferenceComputeOps
             isFirstDispatch = false;
         }
 
-        var O = NewOutputTensor(new TensorShape(X.batch, 2, 1, X.channels));
+        var O = NewOutputTensor(X.dataType, new TensorShape(X.batch, 2, 1, X.channels));
         var fn = BestKernel(ComputeKernelLibrary.GlobalPool2D(X.shape, O.shape, "GlobalAvgVariancePool2D"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1633,7 +1633,7 @@ public class ComputeOps : ReferenceComputeOps
         var pad = new[] { 0, 0, 0, 0 };
 
         var Oshape = X.shape.ApplyPool(pool, stride, pad, ceilMode: true);
-        var Otemp = NewTempTensor(new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
+        var Otemp = NewTempTensor(X.dataType, new TensorShape(Oshape.batch, ComputeHelper.IDivC(Oshape.height, 2), ComputeHelper.IDivC(Oshape.width, 2), Oshape.channels));
         var fn = BestKernel(ComputeKernelLibrary.Pool2DReduce(X.shape, Otemp.shape, kernelName));
 
         if (printKernels)
@@ -1673,7 +1673,7 @@ public class ComputeOps : ReferenceComputeOps
             Assert.IsTrue(X.length < lastLength);
         }
 
-        var O = NewOutputTensor(new TensorShape(X.batch, 1, 1, X.channels));
+        var O = NewOutputTensor(X.dataType, new TensorShape(X.batch, 1, 1, X.channels));
         var fn = BestKernel(ComputeKernelLibrary.GlobalPool2D(X.shape, O.shape, globalKernelName));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1693,7 +1693,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         var fn = BestKernel(ComputeKernelLibrary.ScaleBias(X.shape, O.shape));
 
         if (printKernels)
@@ -1730,7 +1730,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
-        var O = NewTensorForFusedActivation(X.shape, fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape, fusedActivation);
         var fn = BestKernel(ComputeKernelLibrary.NormalizationTail(X.shape, O.shape));
         fn.SetTensor("X", X.shape, Pin(X).buffer);
         fn.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
@@ -1797,7 +1797,7 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var Otemp = NewTempTensor(Oshape);
+        var Otemp = NewTempTensor(X.dataType, Oshape);
         var fn = BestKernel(ComputeKernelLibrary.PartialReduce(kernelName, flatHeight, reducedDim, flatWidth));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1836,7 +1836,7 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(Oshape, outputScope);
+        var O = NewTensor(X.dataType, Oshape, outputScope);
         var fn = BestKernel(ComputeKernelLibrary.GlobalReduce(kernelName, flatHeight, reducedDim, flatWidth));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1868,9 +1868,9 @@ public class ComputeOps : ReferenceComputeOps
 
         Tensor O;
         if (needTranpose)
-            O = NewTempTensor(oShape);
+            O = NewTempTensor(X.dataType, oShape);
         else
-            O = NewOutputTensor(oShape);
+            O = NewOutputTensor(X.dataType, oShape);
 
         var fn = new ComputeKernel(new ComputeFunc(ComputeShaderContext.Optimized, kernelName, GetModelExecutionsReporter()),
                                     (oShape.width, oShape.height, 1));
@@ -1948,7 +1948,7 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var Otemp = NewTempTensor(Oshape);
+        var Otemp = NewTempTensor(X.dataType, Oshape);
         var fn = BestKernel(ComputeKernelLibrary.PartialExpBiasReduce(flatHeight, reducedDim, flatWidth));
 
 
@@ -1989,7 +1989,7 @@ public class ComputeOps : ReferenceComputeOps
         var unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         var unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var Otemp = NewTempTensor(Oshape);
+        var Otemp = NewTempTensor(X.dataType, Oshape);
         var fn = BestKernel(ComputeKernelLibrary.GlobalExpBiasReduce(flatHeight, reducedDim, flatWidth));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2012,7 +2012,7 @@ public class ComputeOps : ReferenceComputeOps
         if (!X.shape.Is4D())
             return base.Activation(kernelName, X, alpha, beta);
 
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, kernelName));
 
         if (printKernels)
@@ -2036,7 +2036,7 @@ public class ComputeOps : ReferenceComputeOps
 
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         var fn = BestKernel(ComputeKernelLibrary.PRelu(X.shape, O.shape));
 
         if (printKernels)
@@ -2104,7 +2104,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     internal override Tensor TransposeToChannelFirstHelper(Tensor X)
     {
-        var Otemp = NewTempTensor(X.shape);
+        var Otemp = NewTempTensor(X.dataType, X.shape);
         var fn = BestKernel(ComputeKernelLibrary.TransposeToChannelFirst(X.shape, Otemp.shape));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2119,7 +2119,7 @@ public class ComputeOps : ReferenceComputeOps
     {
         Assert.IsTrue(X.dimensions <= 2);
 
-        var O = NewOutputTensor(new TensorShape(X.flatWidth, X.flatHeight));
+        var O = NewOutputTensor(X.dataType, new TensorShape(X.flatWidth, X.flatHeight));
         var fn = BestKernel(ComputeKernelLibrary.Transpose2D(O.shape));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2142,7 +2142,7 @@ public class ComputeOps : ReferenceComputeOps
 
         Assert.AreEqual(permutations.Length, 4);
 
-        var O = NewTensor(X.shape.Permute(permutations), outputScope);
+        var O = NewTensor(X.dataType, X.shape.Permute(permutations), outputScope);
 
         var fn = BestKernel(ComputeKernelLibrary.Transpose(X.shape, O.shape));
 
@@ -2160,7 +2160,7 @@ public class ComputeOps : ReferenceComputeOps
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
 
         // See: Permute() in ONNXTensor.cs and https://stackoverflow.com/a/32034565
-        var O = NewTensor(X.shape.Permute(permutations), outputScope);
+        var O = NewTensor(X.dataType, X.shape.Permute(permutations), outputScope);
 
         var OonDeviceShape = GetOnDeviceShape(O.shape);
         var XonDeviceShape = GetOnDeviceShape(X.shape);
@@ -2205,7 +2205,8 @@ public class ComputeOps : ReferenceComputeOps
         if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || !TensorExtensions.Is8DAxisConvertibleTo4D(axis))
             return base.Concat(tensors, axis);
 
-        var O = NewOutputTensor(TensorExtensions.Concat(tensors, axis));
+        var dataType = tensors.Length > 0 ? tensors[0].dataType : DataType.Float;
+        var O = NewOutputTensor(dataType, TensorExtensions.Concat(tensors, axis));
 
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
@@ -2268,11 +2269,11 @@ public class ComputeOps : ReferenceComputeOps
 
         var X = tensors[0];
 
-        Tensor outputTensor = NewOutputTensor(TensorExtensions.MaxShape(tensors));
+        Tensor outputTensor = NewOutputTensor(X.dataType, TensorExtensions.MaxShape(tensors));
         Tensor tempTensor = null;
         if (tensors.Length > 2)
         {
-            tempTensor = NewTempTensor(TensorExtensions.MaxShape(tensors));
+            tempTensor = NewTempTensor(X.dataType, TensorExtensions.MaxShape(tensors));
         }
         Tensor outputTensorOddIndex  = (tensors.Length % 2 == 0) ? outputTensor : tempTensor;
         Tensor outputTensorEvenIndex = (tensors.Length % 2 == 0) ? tempTensor   : outputTensor;
@@ -2313,7 +2314,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewOutputTensor(X.shape.ApplyBorder(pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyBorder(pad));
         var fn = BestKernel(ComputeKernelLibrary.Padding(X.shape, O.shape, kernelName));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2343,7 +2344,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, "LogicalNot"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2356,7 +2357,7 @@ public class ComputeOps : ReferenceComputeOps
     /// <inheritdoc/>
     public override Tensor Sign(Tensor X)
     {
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         var fn = BestKernel(ComputeKernelLibrary.Activation(X.shape, O.shape, "Sign"));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2421,7 +2422,7 @@ public class ComputeOps : ReferenceComputeOps
         Assert.AreEqual(X.length, newShape.length);
         Assert.AreEqual(ComputeInfo.ChannelsOrder.NCHW, ComputeInfo.channelsOrder);
 
-        var O = NewOutputTensor(newShape, "O");
+        var O = NewOutputTensor(X.dataType, newShape, "O");
         var fn = BestKernel(ComputeKernelLibrary.ReshapeFromNHWCModel(O.shape));
 
         fn.SetTensor("X", X.shape, Pin(X).buffer);
@@ -2451,7 +2452,7 @@ public class ComputeOps : ReferenceComputeOps
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
 
-        var O = NewOutputTensor(newShape);
+        var O = NewOutputTensor(X.dataType, newShape);
         var fn = BestKernel(ComputeKernelLibrary.Copy(copyShape, copyShape));
 
         fn.SetTensor("X", copyShape, Pin(X).buffer);
@@ -2541,14 +2542,14 @@ internal class ComputeVarsWithSharedModel : DefaultVars
         // @TODO: bugreport documentation discrepancy!
         offsetIntoModelWeights = minOffset;
 
-        if (layer.weights.Type == BarracudaArray.DataType.Float)
+        if (layer.weights.Type == DataType.Float)
         {
             layer.weights.UploadToComputeBuffer(buffer, Convert.ToInt32(offsetIntoModelWeights), 0, length);
         }
         else
         {
             //No support for half on GPU for now. Expand to fp32 when uploading to GFX mem.
-            BarracudaArray floatArray = new BarracudaArray(length, BarracudaArray.DataType.Float);
+            BarracudaArray floatArray = new BarracudaArray(length, DataType.Float);
             BarracudaArray.Copy(layer.weights, Convert.ToInt32(offsetIntoModelWeights), floatArray, 0, length);
             floatArray.UploadToComputeBuffer(buffer, 0, 0, length);
         }

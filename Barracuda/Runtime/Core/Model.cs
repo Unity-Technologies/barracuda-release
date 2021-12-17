@@ -779,7 +779,7 @@ public class Layer
         /// Tan
         /// </summary>
         Tan = 210,
-  
+
         /// <summary>
         /// Erf
         /// </summary>
@@ -1251,7 +1251,7 @@ public class Model
     /// Convert in place all model weights to given data type
     /// </summary>
     /// <param name="type">target type for moodel weights</param>
-    internal void ConvertWeights(BarracudaArray.DataType type)
+    internal void ConvertWeights(DataType type)
     {
         foreach (var layer in layers)
         {

@@ -394,9 +394,9 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue)
+    Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank)
     {
-        var O = m_Ops.OneHot(X, depth, onValue, offValue);
+        var O = m_Ops.OneHot(X, depth, onValue, offValue, inputRank);
         // @TODO: not implemented
         m_Alu += 0;
         m_Mem += 0;
@@ -1089,9 +1089,9 @@ public class StatsOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.ConstantOfShape(TensorShape X, float value)
+    Tensor IOps.ConstantOfShape(TensorShape X, DataType type, float value)
     {
-        var O = m_Ops.ConstantOfShape(X, value);
+        var O = m_Ops.ConstantOfShape(X, type, value);
         Elementwise(O);
         RegisterLayerStats();
         return O;

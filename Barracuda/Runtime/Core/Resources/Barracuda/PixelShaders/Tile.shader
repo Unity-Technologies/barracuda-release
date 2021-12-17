@@ -1,4 +1,4 @@
-Shader "Barracuda/BroadcastMin"
+Shader "Barracuda/Tile"
 {
     Properties
     {
@@ -18,20 +18,20 @@ Shader "Barracuda/BroadcastMin"
 
             #include "TensorTexture.cginc"
 
-			
+
             TENSOR_DECL_O(O)
             TENSOR_DECL(X)
-            TENSOR_DECL(B)
+
+            int4 _Pool;
 
             fixed4 frag (v2f i) : SV_Target
             {
-                TENSOR_ARGS3(X, B, O);
-
+                TENSOR_ARGS2(X, O);
+				
                 uint n, h, w, c4;
                 O.GetPositionFromUV(i.uv, n, h, w, c4);
-				
-                float4 v = min(X.BroadcastGet4(n, h, w, c4), B.BroadcastGet4(n, h, w, c4));
-				
+                float4 v = X.BroadcastGet4(n, h, w, c4);
+
                 return v;
             }
             ENDCG

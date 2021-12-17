@@ -178,7 +178,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var B = l.datasets[1];
         var Bshape = B.shape;
 
-        var weights = new BarracudaArray(Kshape.length + Bshape.length);//TODO fp16?
+        var weights = new BarracudaArray(Kshape.length + Bshape.length, l.weights.Type);
 
         GetKBWeightsForLayer(l, vars,
             out var kData, out var kOffset,
@@ -270,7 +270,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var B = l.datasets[1];
         var Bshape = B.shape;
 
-        var weights = new BarracudaArray(Kshape.length + Bshape.length);//TODO fp16?
+        var weights = new BarracudaArray(Kshape.length + Bshape.length, l.weights.Type);
 
         GetKBWeightsForLayer(l, vars,
             out var kData, out var kOffset,
@@ -407,7 +407,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         var K = l.datasets[0];
         var B = l.datasets[1];
 
-        var weights = new BarracudaArray(K.length + B.length);//TODO fp16?
+        var weights = new BarracudaArray(K.length + B.length, l.weights.Type);
 
         GetKBWeightsForLayer(l, vars,
             out var kData, out var kOffset,
@@ -611,7 +611,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
                             layer.datasets[1].length = Bd.length;
                             layer.datasets[1].offset = Kd.length;
 
-                            layer.weights = new BarracudaArray(Kd.length + Bd.length);
+                            layer.weights = new BarracudaArray(Kd.length + Bd.length, l.weights.Type);
 
                             BarracudaArray.Copy(Kd.ToReadOnlyArray(), 0, layer.weights, 0, Kd.length);
                             BarracudaArray.Copy(Bd.ToReadOnlyArray(), 0, layer.weights, Kd.length, Bd.length);
@@ -909,7 +909,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             Assert.IsNotNull(instructionActivation.kernel.shader);
 
             var fnActivation = instructionActivation.kernel;
-            var Oactivation = NewOutputTensor(O.shape);
+            var Oactivation = NewOutputTensor(O.dataType, O.shape);
 
             fnActivation.SetTensor("X", O.shape, Pin(O).buffer);
             fnActivation.SetTensor("O", Oactivation.shape, Pin(Oactivation, uploadCache: false).buffer);
@@ -937,7 +937,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (ShouldFlattenInputForDenseLayer(X.shape))
         {
             Assert.IsNotNull(m_Compiled.instructions[1].kernel.shader);
-            var flattenedX = NewTempTensor(m_Compiled.instructions[1].shape);
+            var flattenedX = NewTempTensor(X.dataType, m_Compiled.instructions[1].shape);
             var flattenFn = m_Compiled.instructions[1].kernel;
 
             flattenFn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -948,7 +948,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         }
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, m_Compiled.shape, fusedActivation);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -971,7 +971,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             return base.Dense3(X, W, B);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewOutputTensor(m_Compiled.shape);
+        var O = NewOutputTensor(X.dataType, m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -999,7 +999,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, m_Compiled.shape, fusedActivation);
 
         var fn = m_Compiled.kernel;
 
@@ -1041,7 +1041,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(pad.Length, 4);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, m_Compiled.shape, fusedActivation);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1090,7 +1090,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             Assert.IsNotNull(instruction0PadX.kernel.shader);
 
             var XpaddedShape = instruction0PadX.shape;
-            var Xpadded = NewTempTensor(XpaddedShape);
+            var Xpadded = NewTempTensor(X.dataType, XpaddedShape);
             var fn0PadX = instruction0PadX.kernel;
 
             fn0PadX.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1124,7 +1124,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
 
             Assert.IsNotNull(fnConv.shader);
 
-            var O = NewTensorForFusedActivation(instructionConv.shape, fusedActivation);
+            var O = NewTensorForFusedActivation(X.dataType, instructionConv.shape, fusedActivation);
 
             fnConv.SetTensor("X", Xpadded.shape, Pin(Xpadded, uploadCache: false).buffer);
             fnConv.SetTensor(_DeclO, _DataO, O.shape, Pin(O, uploadCache: false).buffer);
@@ -1154,7 +1154,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         {
             Assert.IsTrue(stride[0] * stride[1] > 4);
             Assert.IsNotNull(m_Compiled.kernel.shader);
-            var O = NewTensorForFusedActivation(m_Compiled.shape, fusedActivation);
+            var O = NewTensorForFusedActivation(X.dataType, m_Compiled.shape, fusedActivation);
             var fn = m_Compiled.kernel;
 
             var padTrans = new int[]
@@ -1191,7 +1191,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(scale.Length, 2);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewOutputTensor(m_Compiled.shape);
+        var O = NewOutputTensor(X.dataType, m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1213,7 +1213,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(stride.Length, 2);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewOutputTensor(m_Compiled.shape);
+        var O = NewOutputTensor(X.dataType, m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1237,7 +1237,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewOutputTensor(m_Compiled.shape);
+        var O = NewOutputTensor(X.dataType, m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1266,7 +1266,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             CompiledInstruction instructionPool = m_Compiled.instructions[i];
             Assert.IsNotNull(instructionPool.kernel.shader);
 
-            var Or = NewTempTensor(instructionPool.shape);
+            var Or = NewTempTensor(X.dataType, instructionPool.shape);
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1283,7 +1283,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         CompiledInstruction instructionGlobalPool = m_Compiled.instructions[m_Compiled.instructions.Length - 1];
         Assert.IsNotNull(instructionGlobalPool.kernel.shader);
 
-        var O = NewOutputTensor(instructionGlobalPool.shape);
+        var O = NewOutputTensor(X.dataType, instructionGlobalPool.shape);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1347,8 +1347,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             CompiledInstruction instructionPool = m_Compiled.instructions[i];
             Assert.IsNotNull(instructionPool.kernel.shader);
 
-            var Or = NewTempTensor(instructionPool.shape);
-            var O2r = NewTempTensor(instructionPool.shape);
+            var Or = NewTempTensor(X.dataType, instructionPool.shape);
+            var O2r = NewTempTensor(X.dataType, instructionPool.shape);
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", Xr.shape, Pin(Xr).buffer);
@@ -1371,7 +1371,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         CompiledInstruction instructionGlobalPool = m_Compiled.instructions[m_Compiled.instructions.Length - 3];
         Assert.IsNotNull(instructionGlobalPool.kernel.shader);
 
-        var meanVariance = NewTempTensor(instructionGlobalPool.shape);
+        var meanVariance = NewTempTensor(X.dataType, instructionGlobalPool.shape);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", Xr.shape, Pin(Xr).buffer);
@@ -1387,7 +1387,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);
         Assert.AreEqual(B.length, B.channels); Assert.AreEqual(S.length, S.channels);
 
-        var O = NewTensorForFusedActivation(X.shape, fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape, fusedActivation);
         var fnNormalize = instructionNormalize.kernel;
         fnNormalize.SetTensor("X", X.shape, Pin(X).buffer);
         fnNormalize.SetTensor("O", O.shape, Pin(O, uploadCache: false).buffer);
@@ -1429,7 +1429,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
             unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-            var Or = NewTempTensor(instructionPool.shape);
+            var Or = NewTempTensor(X.dataType, instructionPool.shape);
             var fnPool = instructionPool.kernel;
 
             fnPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1457,7 +1457,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         unrolledH = flatHeight / ((int)ComputeFunc.SafeDispatchLimit) + 1;
         unrolledW = flatWidth / ((int)ComputeFunc.SafeDispatchLimit) + 1;
 
-        var O = NewTensor(instructionGlobalPool.shape, outputScope);
+        var O = NewTensor(X.dataType, instructionGlobalPool.shape, outputScope);
         var fnGlobalPool = instructionGlobalPool.kernel;
 
         fnGlobalPool.SetTensor("X", X.shape, Pin(X).buffer);
@@ -1479,7 +1479,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
             return base.Activation(kernelName, X, alpha, beta);
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewOutputTensor(m_Compiled.shape);
+        var O = NewOutputTensor(X.dataType, m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1501,7 +1501,7 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         Assert.IsNotNull(m_Compiled.kernel.shader);
-        var O = NewOutputTensor(m_Compiled.shape);
+        var O = NewOutputTensor(X.dataType, m_Compiled.shape);
         var fn = m_Compiled.kernel;
 
         fn.SetTensor(_DeclX, _DataX, X.shape, Pin(X).buffer);
@@ -1524,11 +1524,11 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         Assert.IsTrue(tensors.Length > 0);
         var X = tensors[0];
 
-        Tensor outputTensor = NewOutputTensor(TensorExtensions.MaxShape(tensors));
+        Tensor outputTensor = NewOutputTensor(X.dataType, TensorExtensions.MaxShape(tensors));
         Tensor tempTensor = null;
         if (tensors.Length > 2)
         {
-            tempTensor = NewTempTensor(TensorExtensions.MaxShape(tensors));
+            tempTensor = NewTempTensor(X.dataType, TensorExtensions.MaxShape(tensors));
         }
         Tensor outputTensorOddIndex  = (tensors.Length % 2 == 0) ? outputTensor : tempTensor;
         Tensor outputTensorEvenIndex = (tensors.Length % 2 == 0) ? tempTensor   : outputTensor;
@@ -1582,7 +1582,8 @@ public class PrecompiledComputeOps : ComputeOps, IModelCompiler
         if (!canUsePrecompiledBackend)
             return base.Concat(tensors, axis);
 
-        var O = NewOutputTensor(m_Compiled.shape);
+        var dataType = tensors.Length > 0 ? tensors[0].dataType : DataType.Float;
+        var O = NewOutputTensor(dataType, m_Compiled.shape);
 
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);

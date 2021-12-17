@@ -203,6 +203,8 @@
 #pragma kernel TransposeToChannelFirst
 #pragma kernel Expand_NHWC CHANNELS_FIRST=0
 #pragma kernel Expand_NCHW CHANNELS_FIRST=1
+#pragma kernel ConstantOfShape_NHWC CHANNELS_FIRST=0
+#pragma kernel ConstantOfShape_NCHW CHANNELS_FIRST=1
 #pragma kernel LRN_NHWC CHANNELS_FIRST=0
 #pragma kernel LRN_NCHW CHANNELS_FIRST=1
 #pragma kernel OneHot_NHWC CHANNELS_FIRST=0
@@ -423,7 +425,7 @@ ACTIVATION(Relu6, Relu6Op);
 float EluOp(float v)
 {
     if (v <= 0)
-            v = _Alpha * (exp(v) - 1);
+        v = _Alpha * (exp(v) - 1);
     return v;
 }
 ACTIVATION(Elu, EluOp);
@@ -2682,24 +2684,59 @@ void KERNEL_FUNC(Expand)(uint3 dispatchThreadID : SV_DispatchThreadID)
 }
 
 [numthreads(4, 4, 4)]
+void KERNEL_FUNC(ConstantOfShape)(uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    //DISPATCH ARGS(O.channels, O.width, O.height);
+    TENSOR_ARG_8D_RW(O);
+
+    uint c = dispatchThreadID.x;    uint w = dispatchThreadID.y;    uint h = dispatchThreadID.z;
+    if (c >= O.channels) return;    if (w >= O.width) return;       if (h >= O.height) return;
+
+    for (uint s = 0; s < O.sequenceLength;     ++s)
+    for (uint r = 0; r < O.numberOfDirections; ++r)
+    for (uint n = 0; n < O.batch;              ++n)
+    for (uint t = 0; t < O.extraDimension;     ++t)
+    for (uint d = 0; d < O.depth;              ++d)
+    {
+        float v = _Alpha;
+        uint index = O.IndexSRNCTDHW(s, r, n, t, d, h, w, c);
+        O.FastSet(index, v);
+    }
+}
+
+[numthreads(4, 4, 4)]
 void KERNEL_FUNC(OneHot)(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     //DISPATCH ARGS(X.flatHeight, depth, X.flatWidth);
-    TENSOR_ARGS2_8D(X, O);
+    TENSOR_ARGS2(X, O);
 
     uint depth = _Axis;
-    uint flatWidthX = X.GetFlatWidth();
-    bool isInput1D = (flatWidthX == 1);
+    uint inputRank = _Pad.x;
 
-    uint n = dispatchThreadID.x;    uint j = dispatchThreadID.y; uint i = dispatchThreadID.z;
-    if (n >= X.batch) return;    if (j >= depth) return;       if (i >= flatWidthX) return;
+    uint k = dispatchThreadID.x;    uint j = dispatchThreadID.y; uint i = dispatchThreadID.z;
+    if (k >= X.width) return;    if (j >= depth) return;       if (i >= X.channels) return;
 
-    uint index = (uint)(X.Get(n, i));
-    float v = (j == index) ? _Alpha : _Beta;
-    if(isInput1D)
-        O.Set(n, j, v);
-    else
-        O.Set(n, j, i, v);
+    for (uint n = 0; n < O.batch; ++n)
+    {
+        if (inputRank == 1)
+        {
+            uint index = (uint)(X.FastGet(n));
+            float v = (j == index) ? _Alpha : _Beta;
+            O.Set(n, j, v);
+        }
+        else if (inputRank == 2)
+        {
+            uint index = (uint)(X.Get(n, i));
+            float v = (j == index) ? _Alpha : _Beta;
+            O.Set(n, 0, j, i, v);
+        }
+        else
+        {
+            uint index = (uint)(X.Get(n, 0, k, i));
+            float v = (j == index) ? _Alpha : _Beta;
+            O.Set(n, k, j, i, v);
+        }
+    }
 }
 
 [numthreads(4, 4, 4)]
@@ -2717,7 +2754,7 @@ void KERNEL_FUNC(RoiAlign)(uint3 dispatchThreadID : SV_DispatchThreadID)
     bool aligned = false;
     float offset = aligned ? 0.5f : 0.0f;
 
-    for (int n = 0; n < K.batch; n++)
+    for (int n = 0; n < (int)K.batch; n++)
     {
         float j_begin = K.Get(n, 0) * spatialScale - offset;
         float i_begin = K.Get(n, 1) * spatialScale - offset;
@@ -2744,7 +2781,7 @@ void KERNEL_FUNC(RoiAlign)(uint3 dispatchThreadID : SV_DispatchThreadID)
                 float y = start_h + (iy + 0.5f) * bin_h / grid_h;
                 float x = start_w + (ix + 0.5f) * bin_w / grid_w;
 
-                if (x >= X.width || x < 0 || y >= X.height || y < 0)
+                if (x >= (int)X.width || x < 0 || y >= (int)X.height || y < 0)
                     continue;
 
                 y = clamp(y, 0, X.height - 1);
@@ -2760,13 +2797,13 @@ void KERNEL_FUNC(RoiAlign)(uint3 dispatchThreadID : SV_DispatchThreadID)
                 float wy_l = 1.0f - wy_h;
                 float wx_l = 1.0f - wx_h;
 
-                if (y_low >= 0 && y_low < X.height && x_low >= 0 && x_low < X.width)
+                if (y_low >= 0 && y_low < (int)X.height && x_low >= 0 && x_low < (int)X.width)
                     v += wx_l * wy_l * X.Get(batchIdx, y_low, x_low, c);
-                if (y_low >= 0 && y_low < X.height && x_high >= 0 && x_high < X.width)
+                if (y_low >= 0 && y_low < (int)X.height && x_high >= 0 && x_high < (int)X.width)
                     v += wx_h * wy_l * X.Get(batchIdx, y_low, x_high, c);
-                if (y_high >= 0 && y_high < X.height && x_low >= 0 && x_low < X.width)
+                if (y_high >= 0 && y_high < (int)X.height && x_low >= 0 && x_low < (int)X.width)
                     v += wx_l * wy_h * X.Get(batchIdx, y_high, x_low, c);
-                if (y_high >= 0 && y_high < X.height && x_high >= 0 && x_high < X.width)
+                if (y_high >= 0 && y_high < (int)X.height && x_high >= 0 && x_high < (int)X.width)
                     v += wx_h * wy_h * X.Get(batchIdx, y_high, x_high, c);
             }
 

@@ -56,7 +56,7 @@ namespace Unity.Barracuda.Compiler.Passes
         }
         private bool IsSqueezeTransposeToNHWC(Layer layer, int inputRank)
         {
-            var squeezedRank = IRShapeInferenceHelper.RankInference.InferOutputRank(layer, new[] { inputRank });
+            var squeezedRank = IRShapeInferenceHelper.RankInference.InferOutputRank(layer, new int?[] { inputRank }, new TensorShape?[] { null });
             return (inputRank == 4) && (squeezedRank <= 2);
         }
 

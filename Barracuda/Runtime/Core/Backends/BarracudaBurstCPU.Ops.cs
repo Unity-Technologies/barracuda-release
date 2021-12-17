@@ -65,42 +65,41 @@ public partial class BurstCPUOps
         }
 
         Assert.AreEqual(xw, yh);
-        var O = NewTensor(new TensorShape(xh, yw), outputScope);
+        var O = NewTensor(X.dataType, new TensorShape(xh, yw), outputScope, "");
 
-        var pinX = Pin(X);
-        var pinY = Pin(Y);
-        var pinO = Pin(O, uploadCache: false);
+        using (var ctx = new ForceFloatJobContext(X, Y, null, O))
+        {
+            { // O = broadcast(0)
+                var job = new ZeroBroadcastJob();
+                job.repeat = O.length;
+                job.ScheduleO(ctx.o);
+            }
 
-        { // O = broadcast(0)
-            var job = new ZeroBroadcastJob();
-            job.repeat = O.length;
-            job.ScheduleO(pinO);
+            // O += X * K
+            ScheduleSGEMM(
+                ctx.x, X.flatHeight, X.flatWidth,
+                ctx.w, Y.flatHeight, Y.flatWidth,
+                ctx.o, O.flatHeight, O.flatWidth,
+                blockSizeM: blockSizeM, blockSizeN: blockSizeN, blockSizeK: blockSizeK);
         }
-
-        // O += X * K
-        ScheduleSGEMM(
-            pinX, X.flatHeight, X.flatWidth,
-            pinY, Y.flatHeight, Y.flatWidth,
-            pinO, O.flatHeight, O.flatWidth,
-            blockSizeM: blockSizeM, blockSizeN: blockSizeN, blockSizeK: blockSizeK);
 
         return O;
     }
 
     //O += X x K
     private unsafe void ScheduleSGEMM(
-        BurstTensorData pinX, int XM, int XN,
-        BurstTensorData pinK, int KM, int KN,
-        BurstTensorData pinO, int OM, int ON,
+        IDependableMemoryResource pinX, int XM, int XN,
+        IDependableMemoryResource pinK, int KM, int KN,
+        IDependableMemoryResource pinO, int OM, int ON,
         bool transposeA = false, bool transposeB = false, int kernelOffset = 0,
         int? blockSizeM = null, int? blockSizeN = null, int? blockSizeK = null)
     {
         JobHandle dependOn = Dependencies(pinO.reuse, pinX.fence, pinK.fence);
 
         JobHandle jobFence = new JobHandle();
-        float* ptrX = pinX.array.AddressAt(pinX.offset);
-        float* ptrK = pinK.array.AddressAt(pinK.offset + kernelOffset);
-        float* ptrO = pinO.array.AddressAt(pinO.offset);
+        float* ptrX = (float*)pinX.rawPtr;
+        float* ptrK = (float*)pinK.rawPtr + kernelOffset;
+        float* ptrO = (float*)pinO.rawPtr;
 
         if (PreferBLAS != BLAS.Disabled)
         {
@@ -165,38 +164,24 @@ public partial class BurstCPUOps
         int yw = Y.channels, yh = Y.batch;
 
         Assert.AreEqual(xw, yh);
-        var O = NewOutputTensor(new TensorShape(xb, 1, yw, xh));
+        var O = NewOutputTensor(X.dataType, new TensorShape(xb, 1, yw, xh));
 
-        var pinX = Pin(X);
-        var pinY = Pin(Y);
-        var pinO = Pin(O, uploadCache: false);
+        // O += X * K
+        var job = new MatrixMultiply3x2Job();
+        job.AM = xh;
+        job.AN = xw;
+        job.BM = yh;
+        job.BN = yw;
+        job.CM = xh;
+        job.CN = yw;
 
-        unsafe
+        job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+        job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+        job.dispatchThreadZ = xb;
+
+        using (var ctx = new ForceFloatJobContext(X, Y, null, O))
         {
-            {
-                float* ptrX = pinX.array.AddressAt(pinX.offset);
-                float* ptrY = pinY.array.AddressAt(pinY.offset);
-                float* ptrO = pinO.array.AddressAt(pinO.offset);
-                {   // O += X * K
-                    var job = new MatrixMultiply3x2Job();
-                    job.A = ptrX;
-                    job.AM = xh;
-                    job.AN = xw;
-                    job.B = ptrY;
-                    job.BM = yh;
-                    job.BN = yw;
-                    job.C = ptrO;
-                    job.CM = xh;
-                    job.CN = yw;
-
-                    job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
-                    job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
-                    job.dispatchThreadZ = xb;
-
-                    pinO.fence = pinX.reuse = pinY.reuse =
-                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinY.fence));
-                }
-            }
+            job.ScheduleXBO(ctx.x, ctx.w, ctx.o, job.dispatchThreadX * job.dispatchThreadY * job.dispatchThreadZ, 1);
         }
 
         return O;
@@ -209,46 +194,152 @@ public partial class BurstCPUOps
 
         Assert.AreEqual(xw, yh);
         int ob0 = Mathf.Max(xb0, yb0); int ob1 = Mathf.Max(xb1, yb1);
-        var O = NewOutputTensor(new TensorShape(ob0, xh, yw, ob1));
+        var O = NewOutputTensor(X.dataType, new TensorShape(ob0, xh, yw, ob1));
 
-        var pinX = Pin(X);
-        var pinY = Pin(Y);
-        var pinO = Pin(O, uploadCache: false);
+        // O += X * K
+        var job = new MatrixMultiply4x4Job();
+        job.AB0 = xb0;
+        job.AB1 = xb1;
+        job.AM = xh;
+        job.AN = xw;
+        job.BB0 = yb0;
+        job.BB1 = yb1;
+        job.BM = yh;
+        job.BN = yw;
+        job.CB1 = ob1;
+        job.CM = xh;
+        job.CN = yw;
 
-        unsafe
+        job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+        job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
+        job.dispatchThreadZ = ob0*ob1;
+
+        using (var ctx = new ForceFloatJobContext(X, Y, null, O))
         {
-            {
-                float* ptrX = pinX.array.AddressAt(pinX.offset);
-                float* ptrY = pinY.array.AddressAt(pinY.offset);
-                float* ptrO = pinO.array.AddressAt(pinO.offset);
-                {   // O += X * K
-                    var job = new MatrixMultiply4x4Job();
-                    job.A = ptrX;
-                    job.AB0 = xb0;
-                    job.AB1 = xb1;
-                    job.AM = xh;
-                    job.AN = xw;
-                    job.B = ptrY;
-                    job.BB0 = yb0;
-                    job.BB1 = yb1;
-                    job.BM = yh;
-                    job.BN = yw;
-                    job.C = ptrO;
-                    job.CB1 = ob1;
-                    job.CM = xh;
-                    job.CN = yw;
-
-                    job.dispatchThreadX = ((xh + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
-                    job.dispatchThreadY = ((yw + MatrixMultiply3x2Job.blockSize - 1) / MatrixMultiply3x2Job.blockSize);
-                    job.dispatchThreadZ = ob0*ob1;
-
-                    pinO.fence = pinX.reuse = pinY.reuse =
-                        job.Schedule(Dependencies(pinO.reuse, pinX.fence, pinY.fence));
-                }
-            }
+            job.ScheduleXBO(ctx.x, ctx.w, ctx.o, job.dispatchThreadX * job.dispatchThreadY * job.dispatchThreadZ, 1);
         }
 
         return O;
+    }
+
+    internal struct ForceFloatJobContext : IDisposable
+    {
+        private static Allocator memoryAllocator = Allocator.TempJob;
+
+        //static to avoid GC. TODO try FencedMemoryAlloc as a struct
+        private static FencedMemoryAlloc s_XFloat = new FencedMemoryAlloc();
+        private static FencedMemoryAlloc s_WFloat = new FencedMemoryAlloc();
+        private static FencedMemoryAlloc s_BFloat = new FencedMemoryAlloc();
+        private static FencedMemoryAlloc s_OFloat = new FencedMemoryAlloc();
+
+        public FencedMemoryAlloc xFloat;
+        public FencedMemoryAlloc wFloat;
+        public FencedMemoryAlloc bFloat;
+        public FencedMemoryAlloc oFloat;
+        private BurstTensorData pinO;
+
+        public IDependableMemoryResource x;
+        public IDependableMemoryResource w;
+        public IDependableMemoryResource b;
+        public IDependableMemoryResource o;
+
+        public unsafe bool xConverted => xFloat.rawPtr != null;
+        public unsafe bool wConverted => wFloat.rawPtr != null;
+        public unsafe bool bConverted => bFloat.rawPtr != null;
+        public unsafe bool oNeedConversion => oFloat.rawPtr != null;
+
+        public ForceFloatJobContext(Tensor X, Tensor W, Tensor B, Tensor O)
+        {
+            // input & constants
+            var pinX = Pin(X);
+            var pinW = Pin(W);
+            var pinB = (B!= null)? Pin(B) : null;
+            // output
+            pinO = Pin(O, uploadCache: false);
+
+            xFloat = s_XFloat;
+            wFloat = s_WFloat;
+            bFloat = s_BFloat;
+            oFloat = s_OFloat;
+
+            ScheduleConversionToFloatIfNeeded(pinX, xFloat);
+            ScheduleConversionToFloatIfNeeded(pinW, wFloat);
+            ScheduleConversionToFloatIfNeeded(pinB, bFloat);
+            AllocFencedMemoryIfNeeded(pinO, oFloat);
+
+            unsafe
+            {
+                x = xFloat.rawPtr != null ? (IDependableMemoryResource)xFloat : pinX;
+                w = wFloat.rawPtr != null ? (IDependableMemoryResource)wFloat : pinW;
+                b = bFloat.rawPtr != null ? (IDependableMemoryResource)bFloat : pinB;
+                o = oFloat.rawPtr != null ? (IDependableMemoryResource)oFloat : pinO;
+            }
+
+            if (B != null)
+                Assert.AreEqual(wConverted, bConverted);
+            Assert.AreEqual(xConverted, oNeedConversion);
+        }
+
+        public void Dispose()
+        {
+            //convert output as float to half
+            if (oNeedConversion)
+            {
+                var convertFloatToHalfJob = new ConvertFloatToHalfJob();
+                Assert.AreEqual(DataType.Float, oFloat.type);
+                Assert.AreEqual(DataType.Half, pinO.dataType);
+                Assert.AreEqual(oFloat.elementCount, pinO.count);
+                convertFloatToHalfJob.ScheduleXO(oFloat, pinO, pinO.count, 1024);
+            }
+
+            // free activations buffers
+            if (xConverted || oNeedConversion)
+                unsafe {
+                    var freeJob = new MemFreeJob();
+                    freeJob.allocator = memoryAllocator;
+                    freeJob.buffer0 = xFloat.rawPtr;
+                    freeJob.buffer1 = oFloat.rawPtr;
+                    freeJob.Schedule(pinO.fence);
+                }
+
+            // free weights buffers
+            if (wConverted || bConverted)
+                unsafe {
+                    var freeJob = new MemFreeJob();
+                    freeJob.allocator = memoryAllocator;
+                    freeJob.buffer0 = wFloat.rawPtr;
+                    freeJob.buffer1 = bFloat.rawPtr;
+                    freeJob.Schedule(pinO.fence);
+                }
+
+            xFloat.ClearState();
+            wFloat.ClearState();
+            bFloat.ClearState();
+            oFloat.ClearState();
+        }
+
+        private static bool AllocFencedMemoryIfNeeded(BurstTensorData pin, FencedMemoryAlloc fencedMem)
+        {
+            if (pin != null && pin.dataType == DataType.Half)
+            {
+                fencedMem.Allocate(pin.count, DataType.Float, JobsUtility.CacheLineSize, memoryAllocator);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void ScheduleConversionToFloatIfNeeded(BurstTensorData pinnedTensor, FencedMemoryAlloc destination)
+        {
+            if (AllocFencedMemoryIfNeeded(pinnedTensor, destination))
+            {
+                var convertHalfToFloatJob = new ConvertHalfToFloatJob();
+                Assert.AreEqual(DataType.Half, pinnedTensor.dataType);
+                Assert.AreEqual(DataType.Float, destination.type);
+                Assert.AreEqual(pinnedTensor.count, destination.elementCount);
+                convertHalfToFloatJob.ScheduleXO(pinnedTensor, destination, pinnedTensor.count, 1024);
+            }
+        }
     }
 
     /// <inheritdoc/>
@@ -258,21 +349,24 @@ public partial class BurstCPUOps
         int yw = W.channels, yh = W.batch;
 
         Assert.AreEqual(xw, yh);
-        var O = NewOutputTensor(new TensorShape(xb, 1, yw, xh));
+        var O = NewOutputTensor(X.dataType, new TensorShape(xb, 1, yw, xh));
 
-        var job = new Dense3JobHelper();
-        job.AM = xh;
-        job.AN = xw;
-        job.BM = yh;
-        job.BN = yw;
-        job.SM = xh;
-        job.SN = yw;
+        var job = new Dense3Job_Full_Float();
+        job.data.AM = xh;
+        job.data.AN = xw;
+        job.data.BM = yh;
+        job.data.BN = yw;
+        job.data.SM = xh;
+        job.data.SN = yw;
 
-        job.dispatchThreadX = ((xh + Dense3Job_Full_Float.blockSize - 1) / Dense3Job_Full_Float.blockSize);
-        job.dispatchThreadY = ((yw + Dense3Job_Full_Float.blockSize - 1) / Dense3Job_Full_Float.blockSize);
-        job.dispatchThreadZ = xb;
+        job.data.dispatchThreadX = ((xh + Dense3Job_Full_Float.blockSize - 1) / Dense3Job_Full_Float.blockSize);
+        job.data.dispatchThreadY = ((yw + Dense3Job_Full_Float.blockSize - 1) / Dense3Job_Full_Float.blockSize);
+        job.data.dispatchThreadZ = xb;
 
-        job.ScheduleXSBO(X, W, B, O, job.dispatchThreadX * job.dispatchThreadY * job.dispatchThreadZ, 1);
+        using (var ctx = new ForceFloatJobContext(X, W, B, O))
+        {
+            job.ScheduleXSBO(ctx.x, ctx.w, ctx.b, ctx.o, job.data.dispatchThreadX * job.data.dispatchThreadY * job.data.dispatchThreadZ, 1);
+        }
 
         return O;
     }
@@ -285,44 +379,22 @@ public partial class BurstCPUOps
         Assert.AreEqual(B.flatWidth, B.length);
         Assert.AreEqual(B.flatWidth, W.flatWidth);
         Assert.AreEqual(X.flatWidth, W.flatHeight);
-        var O = NewTensorForFusedActivation(new TensorShape(X.flatHeight, W.flatWidth), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, new TensorShape(X.flatHeight, W.flatWidth), fusedActivation);
 
-        var pinX = Pin(X);
-        var pinW = Pin(W);
-        var pinB = Pin(B);
-        var pinO = Pin(O, uploadCache: false);
-
-        { // O = broadcast(B)
-            // @TODO: move broadcast B directly into MatrixMultiplyJob
-            var job = new VectorBroadcastJob();
-            job.channels = O.flatWidth;
-            job.repeat = O.flatHeight;
-            job.ScheduleXO(pinB, pinO);
-        }
-
-        unsafe
+        using (var ctx = new ForceFloatJobContext(X, W, B, O))
         {
-            float* ptrX = pinX.array.AddressAt(pinX.offset);
-            float* ptrW = pinW.array.AddressAt(pinW.offset);
-            float* ptrO = pinO.array.AddressAt(pinO.offset);
+            { // O = broadcast(B)
+                // @TODO: move broadcast B directly into MatrixMultiplyJob
+                var job = new VectorBroadcastJob();
+                job.channels = O.flatWidth;
+                job.repeat = O.flatHeight;
+                job.ScheduleXO(ctx.b, ctx.o);
+            }
 
-            if (PreferBLAS != BLAS.Disabled)
-            {
-                pinO.fence = pinX.reuse =
-                    blas.ScheduleSGEMM(
-                        Dependencies(pinO.fence, pinX.fence),
-                        ptrX, X.flatHeight, X.flatWidth,
-                        ptrW, W.flatHeight, W.flatWidth,
-                        ptrO, O.flatHeight, O.flatWidth,
-                        16);
-            }
-            else
-            {
-                ScheduleSGEMM(
-                    pinX, X.flatHeight, X.flatWidth,
-                    pinW, W.flatHeight, W.flatWidth,
-                    pinO, O.flatHeight, O.flatWidth);
-            }
+            ScheduleSGEMM(
+                ctx.x, X.flatHeight, X.flatWidth,
+                ctx.w, W.flatHeight, W.flatWidth,
+                ctx.o, O.flatHeight, O.flatWidth);
         }
 
         return ApplyFusedActivation(O, fusedActivation);
@@ -353,9 +425,9 @@ public partial class BurstCPUOps
                                     stride[0] == 1 && stride[1] == 1 &&                         // no strides
                                     pad[0] == 0 && pad[1] == 0 && pad[2] == 0 && pad[3] == 0;   // no padding
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var T = pointwiseConvolution ? null:                       // pointwise convolution is just O=X*K, we can completely skip Im2Col()
-                NewTempTensor(new TensorShape(O.batch, O.height, O.width, inChannels), "Conv2DUsingIm2ColSliced/T"); // T holds slice of Im2Col(X)
+                NewTempTensor(DataType.Float, new TensorShape(O.batch, O.height, O.width, inChannels), "Conv2DUsingIm2ColSliced/T"); // T holds slice of Im2Col(X)
 
         var outElements = O.batch * O.height * O.width;
         var inWidth = X.width;
@@ -364,54 +436,44 @@ public partial class BurstCPUOps
         Assert.AreEqual(O.channels, B.flatWidth);
         Assert.AreEqual(O.channels, outChannels);
 
-        // input & constants
-        var pinX = Pin(X);
-        var pinK = Pin(K);
-        var pinB = Pin(B);
-
-        // temporary slice
-        var pinT  = pointwiseConvolution ? pinX  : Pin(T);
-
-        // output
-        var pinO = Pin(O, uploadCache: false);
-
-        { // O = broadcast(B)
-            // @TODO: move broadcast B directly into MatrixMultiplyJob
-            var job = new VectorBroadcastJob();
-            job.channels = outChannels;
-            job.repeat = outElements;
-            job.ScheduleXO(pinB, pinO);
-        }
-
-        // We can solve convolution by iteratively accumulating
-        // matrix multiplication of X' and K' for each positon in kernel where:
-        //  X' is input X repeatedly shifted according to kernel position,
-        //  K' is slice of weights K according to kernel position.
-        //
-        // Pseudocode:
-        //  X :: Input
-        //  T :: Temporary
-        //  K :: Kernel
-        //  O :: Output
-        //  foreach ky in kernelHeight:
-        //      foreach kx in kernelWidth:
-        //          Temporary = shift(Input, horizontal_shift = kx, vertical_shift = ky)
-        //          Temporary = pad(Temporary)
-        //          Temporary = stride(Temporary)
-        //          Output += Temporary * Kernel[dy, dx, :, :]
-        //
-        // Note for functions above that:
-        //  1) shift() can be implemented by copying data from n to T in a linear fashion.
-        //  2) stride() can be implemented by copying data every Nth pixel in a linear fashion.
-        //  3) pad() can be optimized for top and bottom of the tensor by writing 0s across the whole row.
-
-        // O += conv(X, K)
-        unsafe
+        using (var ctx = new ForceFloatJobContext(X, K, B, O))
         {
-            float* ptrT = pinT.array.AddressAt(pinT.offset);
-            float* ptrK = pinK.array.AddressAt(pinK.offset);
-            float* ptrO = pinO.array.AddressAt(pinO.offset);
+            // temporary slice
+            var pinT  = pointwiseConvolution ? ctx.x  : Pin(T);
+            if (T != null)
+                Assert.AreEqual(DataType.Float, T.dataType);
 
+            { // O = broadcast(B)
+                // @TODO: move broadcast B directly into MatrixMultiplyJob
+                var job = new VectorBroadcastJob();
+                job.channels = outChannels;
+                job.repeat = outElements;
+                job.ScheduleXO(ctx.b, ctx.o);
+            }
+
+            // We can solve convolution by iteratively accumulating
+            // matrix multiplication of X' and K' for each positon in kernel where:
+            //  X' is input X repeatedly shifted according to kernel position,
+            //  K' is slice of weights K according to kernel position.
+            //
+            // Pseudocode:
+            //  X :: Input
+            //  T :: Temporary
+            //  K :: Kernel
+            //  O :: Output
+            //  foreach ky in kernelHeight:
+            //      foreach kx in kernelWidth:
+            //          Temporary = shift(Input, horizontal_shift = kx, vertical_shift = ky)
+            //          Temporary = pad(Temporary)
+            //          Temporary = stride(Temporary)
+            //          Output += Temporary * Kernel[dy, dx, :, :]
+            //
+            // Note for functions above that:
+            //  1) shift() can be implemented by copying data from n to T in a linear fashion.
+            //  2) stride() can be implemented by copying data every Nth pixel in a linear fashion.
+            //  3) pad() can be optimized for top and bottom of the tensor by writing 0s across the whole row.
+
+            // O += conv(X, K)
             int kernelOffset = 0;
             for (int dy = 0; dy < kernelHeight; ++dy)
             for (int dx = 0; dx < kernelWidth; ++dx)
@@ -480,7 +542,7 @@ public partial class BurstCPUOps
                     Assert.AreEqual(numberOfPixelsToPadLeft + numberOfPixelsToCopyFromInputRow + numberOfPixelsToPadRight, T.width);
 
                     // extra clamp for safety since we are in the unsafe code block
-                            numberOfPixelsToPadLeft = Math.Min(Math.Max(0, numberOfPixelsToPadLeft), T.width);
+                            numberOfPixelsToPadLeft  = Math.Min(Math.Max(0, numberOfPixelsToPadLeft), T.width);
                             numberOfPixelsToPadRight = Math.Min(Math.Max(0, numberOfPixelsToPadRight), T.width - numberOfPixelsToPadLeft);
                     numberOfPixelsToSkipFromInputRow = Math.Min(Math.Max(0, numberOfPixelsToSkipFromInputRow), X.width);
                     numberOfPixelsToCopyFromInputRow = Math.Min(Math.Max(0, numberOfPixelsToCopyFromInputRow), X.width - numberOfPixelsToSkipFromInputRow);
@@ -503,15 +565,15 @@ public partial class BurstCPUOps
                     job.skipFromInputRow = numberOfPixelsToSkipFromInputRow;
                     job.copyFromInputRow = numberOfPixelsToCopyFromInputRow;
 
-                    job.ScheduleXO(pinX, pinT, T.height, 16);
+                    job.ScheduleXO(ctx.x, pinT, T.height, 16);
                 }
 
                 // O += slice(T) * slice(K)
                 // With T=im2col(X) if pointwiseConvolution else T=X
                 ScheduleSGEMM(
                     pinT, outElements, inChannels,
-                                pinK, inChannels, outChannels,
-                                pinO, outElements, outChannels, transposeA: false, transposeB: false, kernelOffset);
+                                ctx.w, inChannels, outChannels,
+                                ctx.o, outElements, outChannels, transposeA: false, transposeB: false, kernelOffset);
 
                 kernelOffset += inChannels * outChannels;
             }
@@ -531,7 +593,7 @@ public partial class BurstCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.dataType,X.shape.ApplyPool(pool, stride, pad));
 
         var job = new MaxPool2DJobHelper();
         job.strideX = stride[0];
@@ -568,7 +630,7 @@ public partial class BurstCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.dataType,X.shape.ApplyPool(pool, stride, pad));
 
         var job = new AvgPool2DJobHelper();
         job.strideX = stride[0];
@@ -623,7 +685,7 @@ public partial class BurstCPUOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
 
         var job = new DepthwiseConv2DJobHelper();
 
@@ -829,7 +891,7 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor Softmax(Tensor X, int axis)
     {
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
@@ -841,9 +903,8 @@ public partial class BurstCPUOps
         //Allocate memory
         Allocator memoryAllocator = Allocator.TempJob;
         var reduceOpShape = X.shape.Reduce(axis);
-        var reduceOpMemSize = reduceOpShape.length * sizeof(float);
-        s_maxValues.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator, BarracudaArray.DataType.Float);//TODO fp16
-        s_expSums.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator, BarracudaArray.DataType.Float);//TODO fp16
+        s_maxValues.Allocate(reduceOpShape.length, pinX.dataType, JobsUtility.CacheLineSize, memoryAllocator);
+        s_expSums.Allocate(reduceOpShape.length, pinX.dataType, JobsUtility.CacheLineSize, memoryAllocator);
 
         int offsetReduce = 1;
         for (int i = 7; i >= axis; i--)
@@ -874,8 +935,8 @@ public partial class BurstCPUOps
         unsafe {
             var job = new MemFreeJob();
             job.allocator = memoryAllocator;
-            job.buffer0 = s_maxValues.data;
-            job.buffer1 = s_expSums.data;
+            job.buffer0 = s_maxValues.rawPtr;
+            job.buffer1 = s_expSums.rawPtr;
             job.Schedule(pinO.fence);
         }
 
@@ -888,7 +949,7 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor LogSoftmax(Tensor X, int axis)
     {
-        var O = NewOutputTensor(X.shape);
+        var O = NewOutputTensor(X.dataType, X.shape);
         Assert.AreEqual(O.length, X.length);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
@@ -900,9 +961,8 @@ public partial class BurstCPUOps
         //Allocate memory
         Allocator memoryAllocator = Allocator.TempJob;
         var reduceOpShape = X.shape.Reduce(axis);
-        var reduceOpMemSize = reduceOpShape.length * sizeof(float);
-        s_maxValues.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator, BarracudaArray.DataType.Float);//TODO fp16
-        s_expSums.Malloc(reduceOpMemSize, JobsUtility.CacheLineSize, memoryAllocator, BarracudaArray.DataType.Float);//TODO fp16
+        s_maxValues.Allocate(reduceOpShape.length, pinX.dataType, JobsUtility.CacheLineSize, memoryAllocator);
+        s_expSums.Allocate(reduceOpShape.length, pinX.dataType, JobsUtility.CacheLineSize, memoryAllocator);
 
         int offsetReduce = 1;
         for (int i = 7; i >= axis; i--)
@@ -933,8 +993,8 @@ public partial class BurstCPUOps
         unsafe {
             var job = new MemFreeJob();
             job.allocator = memoryAllocator;
-            job.buffer0 = s_maxValues.data;
-            job.buffer1 = s_expSums.data;
+            job.buffer0 = s_maxValues.rawPtr;
+            job.buffer1 = s_expSums.rawPtr;
             job.Schedule(pinO.fence);
         }
 
@@ -1552,7 +1612,7 @@ public partial class BurstCPUOps
     protected override Tensor CopyAndReshape(Tensor X, TensorShape shape)
     {
         Assert.AreEqual(X.length, shape.length);
-        var O = NewOutputTensor(shape);
+        var O = NewOutputTensor(X.dataType, shape);
 
         var job = new CopyJobHelper();
         job.length = O.length;
@@ -1573,7 +1633,8 @@ public partial class BurstCPUOps
     public override Tensor Concat(Tensor[] tensors, int axis)
     {
         var concatShape = TensorExtensions.Concat(tensors, axis);
-        var O = NewOutputTensor(concatShape);
+        var dataType = tensors.Length > 0 ? tensors[0].dataType : DataType.Float;
+        var O = NewOutputTensor(dataType, concatShape);
 
         unsafe
         {
@@ -1625,7 +1686,7 @@ public partial class BurstCPUOps
             TensorExtensions.Get8DParametersNoAlloc(X.shape, ends4Dor8D, ends, 1);
             TensorExtensions.Get8DParametersNoAlloc(X.shape, strides4Dor8D, strides, 1);
 
-            var O = NewTensor(X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides), outputScope);
+            var O = NewTensor(X.dataType, X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides), outputScope);
 
             int* wrappedStartsIndices = ends; //reuse buffer to save a stack allocation.
             for (int i = 0; i < TensorShape.MaxRank; ++i)
@@ -1692,7 +1753,7 @@ public partial class BurstCPUOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewOutputTensor(X.shape.ApplyBorder(pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyBorder(pad));
 
         int croppedWidth = X.width - Math.Max(0, -pad[3]);
         int croppedHeight = X.height - Math.Max(0, -pad[4]);
@@ -1724,7 +1785,7 @@ public partial class BurstCPUOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewOutputTensor(X.shape.ApplyBorder(pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyBorder(pad));
 
         var job = new Pad2DReflectJobHelper();
 
@@ -1746,7 +1807,7 @@ public partial class BurstCPUOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewOutputTensor(X.shape.ApplyBorder(pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyBorder(pad));
 
         var job = new Pad2DSymmetricJobHelper();
 
@@ -1768,7 +1829,7 @@ public partial class BurstCPUOps
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewOutputTensor(X.shape.ApplyBorder(pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyBorder(pad));
 
         var job = new Pad2DEdgeJobHelper();
 
@@ -1795,7 +1856,7 @@ public partial class BurstCPUOps
 
         var outPermutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(
                                                 X.shape, new NativeArray<int>(permutations, Allocator.Temp));
-        var O = NewTensor(X.shape.Permute(outPermutations), outputScope);
+        var O = NewTensor(X.dataType, X.shape.Permute(outPermutations), outputScope);
 
         var job = new TransposeJobHelper();
         job.shapeX = X.shape;
@@ -1821,7 +1882,7 @@ public partial class BurstCPUOps
     public override Tensor ReduceMean(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
-        var O = NewOutputTensor(X.shape.Reduce(axis));
+        var O = NewOutputTensor(X.dataType, X.shape.Reduce(axis));
 
         int offsetReduce = 1;
         for (int i = TensorShape.MaxRank - 1; i >= axis; i--)
@@ -1839,7 +1900,7 @@ public partial class BurstCPUOps
     public override Tensor ReduceSum(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
-        var O = NewOutputTensor(X.shape.Reduce(axis));
+        var O = NewOutputTensor(X.dataType, X.shape.Reduce(axis));
 
         int offsetReduce = 1;
         for (int i = TensorShape.MaxRank - 1; i >= axis; i--)
@@ -1856,7 +1917,7 @@ public partial class BurstCPUOps
     public override Tensor ReduceMax(Tensor X, int axis)
     {
         axis = X.shape.Axis(axis);
-        var O = NewOutputTensor(X.shape.Reduce(axis));
+        var O = NewOutputTensor(X.dataType, X.shape.Reduce(axis));
 
         int offsetReduce = 1;
         for (int i = TensorShape.MaxRank - 1; i >= axis; i--)
@@ -1873,7 +1934,7 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor Tile(Tensor X, int[] repeats)
     {
-        Tensor O = NewOutputTensor(X.shape.Scale(repeats));
+        Tensor O = NewOutputTensor(X.dataType, X.shape.Scale(repeats));
 
         var job = new TileJobHelper();
         job.shapeX = X.shape;
@@ -1892,7 +1953,7 @@ public partial class BurstCPUOps
         var shape = X.shape;
         shape[axis] = indices.length;
 
-        var O = NewOutputTensor(shape);
+        var O = NewOutputTensor(X.dataType, shape);
 
         Assert.AreEqual(TensorShape.MaxRank, 8);
 
@@ -1906,25 +1967,27 @@ public partial class BurstCPUOps
     }
 
     /// <inheritdoc/>
-    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
+    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank=-1)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+        if (inputRank == -1)
+            inputRank = X.dimensions;
+
+        if (inputRank >= 4)
             throw new NotImplementedException();
 
-        bool isInput1D = (X.flatWidth == 1);
-
         Tensor O;
-        if (isInput1D)
-            O = NewOutputTensor(new TensorShape(X.flatHeight, depth));
+        if (inputRank == 1)
+            O = NewOutputTensor(X.dataType, new TensorShape(X.flatHeight, depth));
+        else if (inputRank == 2)
+            O = NewOutputTensor(X.dataType, new TensorShape(X.flatHeight, 1, depth, X.flatWidth));
         else
-            O = NewOutputTensor(new TensorShape(X.flatHeight, 1, depth, X.flatWidth));
-
+            O = NewOutputTensor(X.dataType, new TensorShape(X.batch, X.width, depth, X.channels));
 
         var job = new OneHotJobHelper();
         job.depth = depth;
         job.shapeX = X.shape;
         job.shapeO = O.shape;
-        job.isInput1D = isInput1D;
+        job.inputRank = inputRank;
         job.onValue = onValue;
         job.offValue = offValue;
 
@@ -1938,7 +2001,9 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
     {
-        var O = NewOutputTensor(s);
+        var O = NewOutputTensor(DataType.Float, s);
+        //TODO fp16: RandomNormal should be able to select output type
+        //see dtype here https://github.com/onnx/onnx/blob/master/docs/Operators.md#RandomNormal
 
         var pinO = Pin(O, uploadCache: false);
 
@@ -1956,7 +2021,9 @@ public partial class BurstCPUOps
     /// <inheritdoc/>
     public override Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
     {
-        var O = NewOutputTensor(s);
+        var O = NewOutputTensor(DataType.Float, s);
+        //TODO fp16: RandomNormal should be able to select output type
+        //see dtype here https://github.com/onnx/onnx/blob/master/docs/Operators.md#RandomUniform
 
         var pinO = Pin(O, uploadCache: false);
 
@@ -1978,7 +2045,7 @@ public partial class BurstCPUOps
         int yh = W.batch, yw = W.channels;
 
         Assert.AreEqual(xw, yh);
-        var Otemp = NewTempTensor(new TensorShape(xb, 1, xh, yw));
+        var Otemp = NewTempTensor(X.dataType, new TensorShape(xb, 1, xh, yw));
 
         var pinX = Pin(X);
         var pinW = Pin(W);
@@ -2023,7 +2090,7 @@ public partial class BurstCPUOps
         int yw = W.channels, yh = W.batch;
 
         Assert.AreEqual(xw, yh);
-        var Otemp = NewTempTensor(new TensorShape(xh, yw));
+        var Otemp = NewTempTensor(X.dataType, new TensorShape(xh, yw));
 
         var pinX = Pin(X);
         var pinW = Pin(W);
@@ -2072,11 +2139,11 @@ public partial class BurstCPUOps
         int inputSize = xShape.width;
         int hiddenSize = cell.channels;
 
-        Tensor O = NewOutputTensor(new TensorShape(sequenceLength, batchSize, hiddenSize, 1));
+        Tensor O = NewOutputTensor(X.dataType, new TensorShape(sequenceLength, batchSize, hiddenSize, 1));
         var pinO = Pin(O, uploadCache: false);
 
-        var cell_out = NewOutputTensor(new TensorShape(batchSize, hiddenSize));  //TODO this can create fragmentation in ping pong buffer
-        var hidden_out = NewOutputTensor(new TensorShape(batchSize, hiddenSize));//TODO this can create fragmentation in ping pong buffer
+        var cell_out = NewOutputTensor(X.dataType, new TensorShape(batchSize, hiddenSize));  //TODO this can create fragmentation in ping pong buffer
+        var hidden_out = NewOutputTensor(X.dataType, new TensorShape(batchSize, hiddenSize));//TODO this can create fragmentation in ping pong buffer
         var pinCellOut = Pin(cell_out, uploadCache: false); var pinHiddenOut = Pin(hidden_out, uploadCache: false);
 
         Tensor i_mad_w_tmp = null;

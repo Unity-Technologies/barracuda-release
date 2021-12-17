@@ -252,6 +252,16 @@ namespace Unity.Barracuda.Compiler.Passes
                 constX.Dispose();
                 return true;
             });
+            rewritersNHWC.Add(Layer.Type.OneHot, (layer, net) =>
+            {
+                string input0 = layer.inputs[0];
+                if (!m_RanksByName.TryGetValue(input0, out int? input0Rank) || !input0Rank.HasValue)
+                    throw new Exception($"Must have input rank for {input0} in order to convert axis for NHWC op");
+                
+                layer.axis = input0Rank.Value;
+                
+                return true;
+            });
             rewritersNHWC.Add(Layer.Type.MatMul, (layer, net) =>
             {
                 string input0 = layer.inputs[0];

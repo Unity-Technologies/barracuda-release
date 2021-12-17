@@ -4,6 +4,24 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2021-12-14
+### Added
+- Added `ModelLoader.LoadAsync` methods for coroutine-based model loading
+- Added support for Model weights as half on disk and in memory for CPU backend.
+- Vastly improved operator coverage for PixelShader worker.
+- Added YoloV3Tiny demo to [Starter Kit](https://github.com/Unity-Technologies/barracuda-starter-kit)
+
+### Changed
+- Added `flipY` as an optional parameter to `TensorToRenderTexture`
+- Download from texture use pixel shader when compute shader are not available.
+- Improved support for dynamic input shape and rank inference.
+
+### Fixed
+- Fixed `Resample2D` when using input tensor as size parameter.
+- Fixed `OneHot` when using rank 2 input tensor.
+- Fix TextureToTensor for PixelShader backend.
+- Fix Added importer support for ConvTranspose with 1D spatial inputs.
+
 ## [2.3.1] - 2021-10-26
 ### Fixed
 - Fixed `CSharpBurst` backend failure on `RandomNormal` and `RandomUniform` ops

@@ -27,7 +27,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 inputShapes[i.name] = new TensorShape(i.shape);
             }
 
-            IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(model, inputShapes, ranksByName, out shapesByName);
+            IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(model, inputShapes, ref ranksByName, out shapesByName);
 
             var nchw = model.ShallowCopy();
             nchw.layers.Clear();
@@ -211,6 +211,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 string originalLayerName = layer.name;
                 layer.name = $"{layer.name}_NHWC";
                 layer.inputs[0] = input0Transposed.name;
+                layer.axis = input0Info.rank;
                 net.model.layers.Add(layer);
 
                 // OneHot outputRank = inputRank + 1

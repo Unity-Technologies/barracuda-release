@@ -54,7 +54,7 @@ namespace Unity.Barracuda.Compiler.Passes
             IDictionary<string, int?> ranksByName;
             IRShapeInferenceHelper.RankInference.ListTemporaryTensorRanks(modelTemp, out ranksByName);
             IDictionary<string, TensorShape?> shapesByName;
-            IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(modelTemp, inputShapes, ranksByName, out shapesByName);
+            IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(modelTemp, inputShapes, ref ranksByName, out shapesByName);
 
             int negativeRanks = ranksByName.Values.Count(x => x < 0);
             ValidationHelper.AppendWarning(negativeRanks == 0, "model", $"StaticRankInference: {negativeRanks} negative rank(s) found!", ref warnings, MessageType.Warning);

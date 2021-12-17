@@ -182,7 +182,7 @@ internal class ModelAnalyzer
             else if (
                 l.type == Layer.Type.Upsample2D)
             {
-                if(inputShapes.Count > 1)
+                if(l.pool.Length != 2)
                 {
                     O = null;
                 }
@@ -197,7 +197,7 @@ internal class ModelAnalyzer
             else if (
                 l.type == Layer.Type.Upsample3D)
             {
-                if(inputShapes.Count > 1)
+                if(l.pool.Length != 2)
                 {
                     O = null;
                 }
@@ -212,7 +212,7 @@ internal class ModelAnalyzer
             else if (
                 l.type == Layer.Type.Resample2D)
             {
-                if(inputShapes.Count > 1)
+                if(l.pool.Length != 2)
                 {
                     O = null;
                 }
@@ -323,13 +323,16 @@ internal class ModelAnalyzer
             {
                 Assert.IsNotNull(l.pool);
                 Assert.AreEqual(l.pool.Length, 1);
-                int features = X.flatWidth;
                 int depth = l.pool[0];
+                int inputRank = l.axis;
+                inputRank = inputRank < 0 ? X.dimensions : inputRank;
 
-                if (X.flatWidth == 1) // 1D input
-                    O = new TensorShape(X.batch, depth);
+                if (inputRank == 1)
+                    O = new TensorShape(X.flatHeight, depth);
+                else if (inputRank == 2)
+                    O = new TensorShape(X.flatHeight, 1, depth, X.flatWidth);
                 else
-                    O = new TensorShape(X.batch, 1, depth, features);
+                    O = new TensorShape(X.batch, X.height, depth, X.channels);
             }
             else if (l.type == Layer.Type.RoiAlign)
             {
@@ -845,23 +848,36 @@ internal class ModelAnalyzer
     public static bool IsLayerBroacastable(Layer layer)
     {
         return layer.type == Layer.Type.Add ||
-                layer.type == Layer.Type.Sub ||
-                layer.type == Layer.Type.Mul ||
-                layer.type == Layer.Type.Div ||
-                layer.type == Layer.Type.Pow ||
-                layer.type == Layer.Type.Min ||
-                layer.type == Layer.Type.Max ||
-                layer.type == Layer.Type.Mean ||
-                layer.type == Layer.Type.Greater ||
-                layer.type == Layer.Type.GreaterEqual ||
-                layer.type == Layer.Type.Less ||
-                layer.type == Layer.Type.LessEqual ||
-                layer.type == Layer.Type.Equal ||
-                layer.type == Layer.Type.LogicalOr ||
-                layer.type == Layer.Type.LogicalAnd ||
-                layer.type == Layer.Type.LogicalXor ||
-                layer.type == Layer.Type.Where ||
-                layer.type == Layer.Type.Concat;
+               layer.type == Layer.Type.Sub ||
+               layer.type == Layer.Type.Mul ||
+               layer.type == Layer.Type.Div ||
+               layer.type == Layer.Type.Pow ||
+               layer.type == Layer.Type.Min ||
+               layer.type == Layer.Type.Max ||
+               layer.type == Layer.Type.Mean ||
+               layer.type == Layer.Type.Greater ||
+               layer.type == Layer.Type.GreaterEqual ||
+               layer.type == Layer.Type.Less ||
+               layer.type == Layer.Type.LessEqual ||
+               layer.type == Layer.Type.Equal ||
+               layer.type == Layer.Type.LogicalOr ||
+               layer.type == Layer.Type.LogicalAnd ||
+               layer.type == Layer.Type.LogicalXor ||
+               layer.type == Layer.Type.Where ||
+               layer.type == Layer.Type.Concat;
+    }
+    public static bool IsLayerBroadcastSkippable(Layer layer)
+    {
+        if(layer.type == Layer.Type.ConstantOfShape)
+        {
+            // dynamic shape support
+            if (layer.axis != 1)
+                return true;
+            else
+                return false;
+        }
+
+        return false;
     }
 
     // Allow some unknown input dimension for shape inference pass

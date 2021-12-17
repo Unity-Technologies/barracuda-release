@@ -21,8 +21,8 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleXO(BurstTensorData pinX, FencedMemoryAlloc pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -48,8 +48,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -97,8 +97,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -146,8 +146,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -189,9 +189,9 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleXBO(BurstTensorData pinX, FencedMemoryAlloc pinB, FencedMemoryAlloc pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.type == DataType.Half;
+            bool OHalf = pinO.type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf && WHalf)
             {
@@ -246,10 +246,10 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleXSBO(BurstTensorData pinX, FencedMemoryAlloc pinS, FencedMemoryAlloc pinB, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinS.type == BarracudaArray.DataType.Half;
-            bool BHalf = pinB.type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinS.type == DataType.Half;
+            bool BHalf = pinB.type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(WHalf, BHalf);
             if (AHalf && WHalf)
@@ -300,10 +300,10 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleXSBO(BurstTensorData pinX, FencedMemoryAlloc pinS, FencedMemoryAlloc pinB, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinS.type == BarracudaArray.DataType.Half;
-            bool BHalf = pinB.type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinS.type == DataType.Half;
+            bool BHalf = pinB.type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(WHalf, BHalf);
             if (AHalf && WHalf)
@@ -360,8 +360,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -461,8 +461,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {

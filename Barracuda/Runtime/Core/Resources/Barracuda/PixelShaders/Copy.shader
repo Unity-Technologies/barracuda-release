@@ -21,48 +21,31 @@ Shader "Barracuda/Copy"
 
             TENSOR_DECL_O(O)
             TENSOR_DECL(X)
-            TENSOR_DECL(OPred)
-
-            uint4 _Pad;
-            uint _IsFirstPass;
 
             fixed4 frag (v2f i) : SV_Target
             {
-                TENSOR_ARGS3(X, OPred, O);
+                TENSOR_ARGS2(X, O);
 				
                 uint n, h, w, c4;
                 O.GetPositionFromUV(i.uv, n, h, w, c4);
 
-                uint c;
-
-                float4 v = 0;
-
-                if (_IsFirstPass == 1)
-                    v = 0;
-                else
-                    v = OPred.Get4(n, h, w, c4);
-
-                if ((n >= _Pad.x && n - _Pad.x < X.batch) &&
-                    (h >= _Pad.y && h - _Pad.y < X.height) &&
-                    (w >= _Pad.z && w - _Pad.z < X.width))
+                float4 v = 0.0f;
+                [unroll]
+                for (uint cc = 0; cc < 4; cc++)
                 {
-                    c = 4 * c4 + 0;
-                    if (c >= _Pad.w && c - _Pad.w < X.channels)
-                        v.x = X.Get(n - _Pad.x, h - _Pad.y, w - _Pad.z, c - _Pad.w);
+                    if (c4 * 4 + cc >= O.channels)
+                        break;
 
-                    c = 4 * c4 + 1;
-                    if (c >= _Pad.w && c - _Pad.w < X.channels)
-                        v.y = X.Get(n - _Pad.x, h - _Pad.y, w - _Pad.z, c - _Pad.w);
+                    uint index = n * O.height * O.width * O.channels + h * O.width * O.channels + w * O.channels + (4 * c4 + cc);
 
-                    c = 4 * c4 + 2;
-                    if (c >= _Pad.w && c - _Pad.w < X.channels)
-                        v.z = X.Get(n - _Pad.x, h - _Pad.y, w - _Pad.z, c - _Pad.w);
+                    uint cX = index % X.channels;
+                    uint wX = (index / X.channels) % X.width;
+                    uint hX = (index / X.channels / X.width) % X.height;
+                    uint nX = (index / X.channels / X.width / X.height);
 
-                    c = 4 * c4 + 3;
-                    if (c >= _Pad.w && c - _Pad.w < X.channels)
-                        v.w = X.Get(n - _Pad.x, h - _Pad.y, w - _Pad.z, c - _Pad.w);
+                    v[cc] = X.Get(nX, hX, wX, cX);
                 }
-               
+
                 return v;
             }
             ENDCG

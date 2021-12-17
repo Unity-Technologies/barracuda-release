@@ -29,10 +29,10 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXSBO(BurstTensorData pinX, BurstTensorData pinS, BurstTensorData pinB, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinS.array.Type == BarracudaArray.DataType.Half;
-            bool BHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinS.array.Type == DataType.Half;
+            bool BHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(WHalf, BHalf);
             if (AHalf && WHalf)
@@ -94,9 +94,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -135,9 +135,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -176,9 +176,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -217,9 +217,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -258,9 +258,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -299,9 +299,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -340,9 +340,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -381,9 +381,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -422,9 +422,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -463,9 +463,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -504,9 +504,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -545,9 +545,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -590,9 +590,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -640,9 +640,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -690,9 +690,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -740,9 +740,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -790,9 +790,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -840,9 +840,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)

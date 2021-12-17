@@ -171,13 +171,16 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 return axis;
         }
 
-        static public TensorShape? InferOutputShapeNCHW(Layer layer, int[] inputRanks, TensorShape[] inputShapes)
+        static public TensorShape? InferOutputShapeNCHW(Layer layer, int?[] inputRanks, TensorShape?[] inputShapes)
         {
             switch (layer.type)
             {
                 case Layer.Type.Conv3D:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     // N C D H W, constructor is N D H W C
                     // => N = N C = D, D = H, H = W, W = C
                     // TODO helper function for that
@@ -194,7 +197,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.Conv2D:
                 case Layer.Type.DepthwiseConv2D:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     // N C H W, constructor is N H W C
                     // => N = N C = H, H = W, H = C
                     // TODO helper function for that
@@ -210,7 +216,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Conv2DTrans:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     // N C H W, constructor is N H W C
                     // => N = N C = H, H = W, H = C
                     // TODO helper function for that
@@ -228,8 +237,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.GlobalMaxPool2D:
                 case Layer.Type.GlobalAvgPool2D:
                 {
-                    TensorShape X = inputShapes[0];
-                    int rankX = inputRanks[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rankX = inputRanks[0].Value;
                     List<int> xShape = ShapeToOnnxLayout(X, rankX);
 
                     for (int i = 2; i < xShape.Count; i++)
@@ -238,7 +250,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Dense:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     X = new TensorShape(X.batch, X.width, X.channels, X.height);
                     Assert.IsNotNull(layer.datasets);
                     var W = layer.datasets[0].shape;
@@ -247,12 +262,15 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.MatMul:
                 {
-                    TensorShape X = inputShapes[0];
-                    int rankX = inputRanks[0];
+                    if(inputShapes[0] == null || inputShapes[1] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rankX = inputRanks[0].Value;
                     List<int> xShape = ShapeToOnnxLayout(X, rankX);
 
-                    TensorShape Y = inputShapes[1];
-                    int rankY = inputRanks[1];
+                    TensorShape Y = inputShapes[1].Value;
+                    int rankY = inputRanks[1].Value;
                     List<int> yShape = ShapeToOnnxLayout(Y, rankY);
 
                     int rankO = Mathf.Max(rankX, rankY);
@@ -276,8 +294,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
-                    TensorShape X = inputShapes[0];
-                    int rankX = inputRanks[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rankX = inputRanks[0].Value;
                     List<int> xShape = ShapeToOnnxLayout(X, rankX);
 
 
@@ -293,7 +314,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+
                     // pool size is treated as upsample coefficient here
                     Assert.IsNotNull(layer.pool);
                     Assert.AreEqual(layer.pool.Length, 4);
@@ -304,7 +329,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+
                     // pool size is treated as upsample coefficient here
                     Assert.IsNotNull(layer.pool);
                     Assert.AreEqual(layer.pool.Length, 5);
@@ -312,19 +341,19 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Resample2D:
                 {
-                    TensorShape X = inputShapes[0];
                     if (inputShapes.Length > 1)
-                    {
                         return null;
-                    }
-                    else
-                    {
-                        // pool is treated as resample size here
-                        var size = layer.pool;
-                        Assert.IsNotNull(size);
-                        Assert.AreEqual(size.Length, 4);
-                        return new TensorShape(size[0], size[1], size[2], size[3]);
-                    }
+
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+
+                    // pool is treated as resample size here
+                    var size = layer.pool;
+                    Assert.IsNotNull(size);
+                    Assert.AreEqual(size.Length, 4);
+                    return new TensorShape(size[0], size[1], size[2], size[3]);
                 }
                 case Layer.Type.TopKIndices:
                 case Layer.Type.TopKValues:
@@ -366,15 +395,19 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.LogicalAnd:
                 case Layer.Type.LogicalXor:
                 {
-                    int rankO = inputRanks.Max();
+                    if(inputShapes.Any(x => x == null))
+                        return null;
+
+
+                    int rankO = inputRanks.Max().Value;
 
                     var O = new List<int>();
                     for (int i = 0; i < rankO; i++)
                         O.Add(1);
                     for (int i = 0; i < inputShapes.Length; i++)
                     {
-                        TensorShape X = inputShapes[i];
-                        int rankX = inputRanks[i];
+                        TensorShape X = inputShapes[i].Value;
+                        int rankX = inputRanks[i].Value;
                         List<int> xShape = ShapeToOnnxLayout(X, rankX);
 
                         for (int k = 0; k < rankO - rankX; k++)
@@ -403,9 +436,12 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.ArgMax:
                 case Layer.Type.ArgMin:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
 
-                    int rank = inputRanks[0];
+                    TensorShape X = inputShapes[0].Value;
+
+                    int rank = inputRanks[0].Value;
                     var xShape = ShapeToOnnxLayout(X, rank);
 
                     var axis = layer.axis;
@@ -420,13 +456,16 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Transpose:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     var permutations = layer.pool;
                     if (permutations == null)
                         return new TensorShape(X.batch, X.width);
                     else
                     {
-                        int rank = inputRanks[0];
+                        int rank = inputRanks[0].Value;
                         List<int> xShape = ShapeToOnnxLayout(X, rank);
 
                         // Permutations may already be in padded form for op purposes, so strip down to match rank
@@ -439,7 +478,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.MaxPool2D:
                 case Layer.Type.AvgPool2D:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     X = new TensorShape(X.batch, X.width, X.channels, X.height);
                     Assert.IsNotNull(layer.pool);
                     Assert.IsNotNull(layer.stride);
@@ -454,7 +496,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.DepthToSpace:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     X = new TensorShape(X.batch, X.width, X.channels, X.height);
                     // pool size is treated as blocksize here
                     Assert.IsNotNull(layer.pool);
@@ -465,7 +510,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.SpaceToDepth:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     X = new TensorShape(X.batch, X.width, X.channels, X.height);
                     // pool size is treated as blocksize here
                     Assert.IsNotNull(layer.pool);
@@ -486,34 +534,43 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Multinomial:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     Assert.IsNotNull(layer.pool);
                     Assert.AreEqual(layer.pool.Length, 1);
                     return new TensorShape(X.batch, layer.pool[0]);
                 }
                 case Layer.Type.OneHot:
                 {
-                    TensorShape X = inputShapes[0];
-                    int rank = inputRanks[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rank = inputRanks[0].Value;
                     var nchwShape = ShapeToOnnxLayout(X, rank);
                     int depth = layer.pool[0];
                     nchwShape.Add(depth);
 
-                    for (int i = 0; i < 4 - rank - 1; i++)
-                        nchwShape.Add(1);
-
-                    return new TensorShape(nchwShape[0], nchwShape[1], nchwShape[2], nchwShape[3]);
+                    return OnnxLayoutToTensorShape(nchwShape.ToArray());
                 }
                 case Layer.Type.RoiAlign:
                 {
-                    TensorShape X = inputShapes[0];
-                    TensorShape rois = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    TensorShape rois = inputShapes[0].Value;
 
                     return new TensorShape(rois.batch, X.height, layer.pool[0], layer.pool[1]);
                 }
                 case Layer.Type.LSTM:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     var nchwShape = new List<int> { X.batch, X.height, X.width, X.channels };
                     int hiddenSize = layer.pool[0];
 
@@ -522,7 +579,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Flatten:
                 {
-                    TensorShape X = inputShapes[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
                     return X.Flatten();
                 }
                 case Layer.Type.Tile:
@@ -530,7 +590,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
-                    var inputShape = ShapeToOnnxLayout(inputShapes[0], inputRanks[0]);
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    var inputShape = ShapeToOnnxLayout(inputShapes[0].Value, inputRanks[0].Value);
                     var scale = layer.pool.ToArray();
                     Assert.IsNotNull(scale);
                     Assert.AreEqual(scale.Length, inputShape.Count);
@@ -555,9 +618,12 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
+                    if (inputShapes[0] == null)
+                        return null;
+
                     // TODO shape to onnx shape given rank
-                    TensorShape X = inputShapes[0];
-                    int rank = inputRanks[0];
+                    TensorShape X = inputShapes[0].Value;
+                    int rank = inputRanks[0].Value;
                     var nchwShape = ShapeToOnnxLayout(X, rank);
 
                     var unknownIndex = -1;
@@ -584,8 +650,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
+                    if(inputShapes[0] == null)
+                        return null;
+
                     var size = layer.pool.ToList();
-                    var inputShape = ShapeToOnnxLayout(inputShapes[0], inputRanks[0]);
+                    var inputShape = ShapeToOnnxLayout(inputShapes[0].Value, inputRanks[0].Value);
 
                     int rankO = Math.Max(size.Count, inputShape.Count);
                     for (int i = 0; i < rankO - size.Count; i++)
@@ -601,16 +670,19 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Concat:
                 {
-                    int maxRank = inputRanks.Max();
+                    if(inputShapes.Any(x => x == null))
+                        return null;
 
-                    var shape = ShapeToOnnxLayout(inputShapes[0], maxRank);
+                    int maxRank = inputRanks.Max().Value;
+
+                    var shape = ShapeToOnnxLayout(inputShapes[0].Value, maxRank);
                     var axis = layer.axis;
                     if (axis < 0)
                         axis += maxRank;
 
                     for (int i = 1; i < inputShapes.Length; i++)
                     {
-                        var shapei = ShapeToOnnxLayout(inputShapes[i], maxRank);
+                        var shapei = ShapeToOnnxLayout(inputShapes[i].Value, maxRank);
                         shape[axis] += shapei[axis];
                     }
 
@@ -618,12 +690,15 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Gather:
                 {
-                    var input0Shape = inputShapes[0];
-                    var input1Shape = inputShapes[1];
+                    if(inputShapes[0] == null || inputShapes[1] == null)
+                        return null;
+
+                    var input0Shape = inputShapes[0].Value;
+                    var input1Shape = inputShapes[1].Value;
 
 
-                    int rank0 = inputRanks[0];
-                    int rank1 = inputRanks[1];
+                    int rank0 = inputRanks[0].Value;
+                    int rank1 = inputRanks[1].Value;
                     var shape = ShapeToOnnxLayout(input0Shape, rank0);
                     var indicies = ShapeToOnnxLayout(input1Shape, rank1);
 
@@ -653,8 +728,6 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Activation:
                 {
-                    TensorShape X = inputShapes[0];
-
                     // LSTMs have multiple outputs, so deal with those separately
                     if (layer.activation == Layer.Activation.None && layer.pad.Length > 0
                         && layer.name.IndexOf("lstm", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -664,27 +737,38 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                         {
                             case 4:
                                 // Y
-                                return X;
+                                return inputShapes[0];
 
                             case 3:
+                            {
+                                if (inputShapes[0] == null)
+                                    return null;
+
+                                TensorShape X = inputShapes[0].Value;
                                 // Y_h, Y_c: seq_length is stripped off
                                 return new TensorShape(X[1], X[2], X[3]);
+                            }
                         }
                     }
 
                     // works in place, keeps the same shape size
-                    return X;
+                    return inputShapes[0];
                 }
                 case Layer.Type.Shape:
                 {
-                    TensorShape X = inputShapes[0];
-                    int rank = inputRanks[0];
+                    if(inputRanks[0] == null)
+                        return null;
+
+                    int rank = inputRanks[0].Value;
                     return new TensorShape(rank);
                 }
                 case Layer.Type.Squeeze:
                 {
-                    TensorShape X = inputShapes[0];
-                    int rank = inputRanks[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rank = inputRanks[0].Value;
 
                     if (inputShapes.Length > 1)
                         return null;
@@ -702,8 +786,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 }
                 case Layer.Type.Unsqueeze:
                 {
-                    TensorShape X = inputShapes[0];
-                    int rank = inputRanks[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rank = inputRanks[0].Value;
 
                     if (inputShapes.Length > 1)
                         return null;
@@ -733,8 +820,11 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputShapes.Length > 1)
                         return null;
 
-                    TensorShape X = inputShapes[0];
-                    int rank = inputRanks[0];
+                    if(inputShapes[0] == null)
+                        return null;
+
+                    TensorShape X = inputShapes[0].Value;
+                    int rank = inputRanks[0].Value;
                     var nchwShape = ShapeToOnnxLayout(X, rank);
 
                     var starts = layer.pad.ToArray();
@@ -792,35 +882,36 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
         }
 
         // TODO merge that with NHWC : flank by transpose shape and call InferOutputShapeNHWC
-        public static void UpdateKnownTensorShapesNCHW(Model model, IDictionary<string, int?> ranksByName, ref IDictionary<string, TensorShape?> shapesByName)
+        public static void UpdateKnownTensorShapesNCHW(Model model, ref IDictionary<string, int?> ranksByName, ref IDictionary<string, TensorShape?> shapesByName)
         {
             foreach (var l in model.layers)
             {
-                if (shapesByName.ContainsKey(l.name) && shapesByName[l.name] != null)
-                    continue;
+                TensorShape?[] layerInputShapes = new TensorShape?[l.inputs.Length];
+                int?[] layerInputShapeRanks = new int?[l.inputs.Length];
 
-                TensorShape[] layerInputShapes = new TensorShape[l.inputs.Length];
-                int[] layerInputShapeRanks = new int[l.inputs.Length];
-
-                bool allshapesAreKnown = true;
                 for (int i = 0; i < l.inputs.Length; i++)
                 {
                     shapesByName.TryGetValue(l.inputs[i], out TensorShape? ishape);
+                    ranksByName.TryGetValue(l.inputs[i], out int? irank);
 
-                    if (ishape == null || !ranksByName.ContainsKey(l.inputs[i]) || ranksByName[l.inputs[i]] == null)
-                    {
-                        allshapesAreKnown = false;
-                        break;
-                    }
-
-                    layerInputShapes[i] = ishape.Value;
-                    layerInputShapeRanks[i] = ranksByName[l.inputs[i]].Value;
+                    layerInputShapes[i] = ishape;
+                    layerInputShapeRanks[i] = irank;
                 }
-                TensorShape? outputShape = allshapesAreKnown ? InferOutputShapeNCHW(l, layerInputShapeRanks, layerInputShapes) : null;
+
+                // knowing rank might imply knowing shape:
+                // + compute rank first
+                // + compute shape
+                // knowing shape might imply knowing rank:
+                // + compute rank
+                int? outputRank = RankInference.InferOutputRank(l, layerInputShapeRanks, layerInputShapes);
+                ranksByName[l.name] = outputRank;
+                TensorShape? outputShape = InferOutputShapeNCHW(l, layerInputShapeRanks, layerInputShapes);
+                outputRank = RankInference.InferOutputRank(l, layerInputShapeRanks, layerInputShapes);
+                ranksByName[l.name]  = outputRank;
                 shapesByName[l.name] = outputShape;
             }
         }
-        public static TensorShape?[] ListTemporaryTensorShapesNCHW(Model model, IDictionary<string, TensorShape> inputShapes, IDictionary<string, int?> ranksByName,
+        public static TensorShape?[] ListTemporaryTensorShapesNCHW(Model model, IDictionary<string, TensorShape> inputShapes, ref IDictionary<string, int?> ranksByName,
             out IDictionary<string, TensorShape?> shapesByName)
         {
             Profiler.BeginSample("Barracuda.ListTemporaryTensorShapesNCHW");
@@ -831,24 +922,24 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 
             foreach (var l in model.layers)
             {
-                TensorShape[] layerInputShapes = new TensorShape[l.inputs.Length];
-                int[] layerInputShapeRanks = new int[l.inputs.Length];
+                TensorShape?[] layerInputShapes = new TensorShape?[l.inputs.Length];
+                int?[] layerInputShapeRanks = new int?[l.inputs.Length];
 
-                bool allshapesAreKnown = true;
                 for (int i = 0; i < l.inputs.Length; i++)
                 {
                     shapesByName.TryGetValue(l.inputs[i], out TensorShape? ishape);
+                    ranksByName.TryGetValue(l.inputs[i], out int? irank);
 
-                    if (ishape == null || !ranksByName.ContainsKey(l.inputs[i]) || ranksByName[l.inputs[i]] == null)
-                    {
-                        allshapesAreKnown = false;
-                        break;
-                    }
-
-                    layerInputShapes[i] = ishape.Value;
-                    layerInputShapeRanks[i] = ranksByName[l.inputs[i]].Value;
+                    layerInputShapes[i] = ishape;
+                    layerInputShapeRanks[i] = irank;
                 }
-                TensorShape? outputShape = allshapesAreKnown ? InferOutputShapeNCHW(l, layerInputShapeRanks, layerInputShapes) : null;
+
+
+                int? outputRank = RankInference.InferOutputRank(l, layerInputShapeRanks, layerInputShapes);
+                ranksByName[l.name] = outputRank;
+                TensorShape? outputShape = InferOutputShapeNCHW(l, layerInputShapeRanks, layerInputShapes);
+                outputRank = RankInference.InferOutputRank(l, layerInputShapeRanks, layerInputShapes);
+                ranksByName[l.name] = outputRank;
 
                 shapes.Add(outputShape);
                 shapesByName.Add(l.name, outputShape);

@@ -23,8 +23,8 @@ public partial class BurstCPUOps
         {
             var pinX = Pin(X);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -57,8 +57,8 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleXO(BurstTensorData pinX, int offsetX, BurstTensorData pinO, int offsetY, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -99,8 +99,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -152,8 +152,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -203,8 +203,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -262,8 +262,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -316,8 +316,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -370,8 +370,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -446,8 +446,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -522,8 +522,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -572,9 +572,9 @@ public partial class BurstCPUOps
             var pinX = Pin(X);
             var pinB = Pin(B);
             var pinO = Pin(O, uploadCache: false);
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool WHalf = pinB.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool WHalf = pinB.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             UnityEngine.Assertions.Assert.AreEqual(AHalf, WHalf);
             if (AHalf)
@@ -627,8 +627,8 @@ public partial class BurstCPUOps
         }
         public JobHandle ScheduleXO(BurstTensorData pinX, BurstTensorData pinO, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool AHalf = pinX.array.Type == BarracudaArray.DataType.Half;
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool AHalf = pinX.array.Type == DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             UnityEngine.Assertions.Assert.AreEqual(AHalf, OHalf);
             if (AHalf)
             {
@@ -653,18 +653,40 @@ public partial class BurstCPUOps
 
         public void Execute(int idx)
         {
-            int i = idx % data.shapeX.flatWidth;
-            int j = (idx / data.shapeX.flatWidth) % data.depth;
-            int n = ((idx / data.shapeX.flatWidth) / data.depth) % data.shapeX.flatHeight;
+            // rank1: X = n,_,_,_
+            // rank2: X = n,_,_,c
+            // rank3: X = n,_,w,c
 
-            int index = (int)Xptr[n * data.shapeX.flatWidth + i];
-            float v = (j == index) ? data.onValue: data.offValue;
+            if (data.inputRank == 1) // TensorShape(X.flatHeight, depth)
+            {
+                int j = idx % data.depth;
+                int n = (idx / data.depth) % data.shapeX.flatHeight;
 
-            //TODO understand and fix (+test?)
-            if (data.isInput1D)
+                int index = (int)Xptr[n];
+                float v = (j == index) ? data.onValue: data.offValue;
                 Optr[idx] = (float)(v);
-            else
+            }
+            else if (data.inputRank == 2) // TensorShape(X.flatHeight, 1, depth, X.channels));
+            {
+                int i = idx % data.shapeX.channels;
+                int j = (idx / data.shapeX.channels) % data.depth;
+                int n = ((idx / data.shapeX.channels) / data.depth) % data.shapeX.flatHeight;
+
+                int index = (int)Xptr[data.shapeX.Index(n, i)];
+                float v = (j == index) ? data.onValue: data.offValue;
                 Optr[idx] = (float)(v);
+            }
+            else // TensorShape(X.batch, X.width, depth, X.channels))
+            {
+                int i = idx % data.shapeX.channels;
+                int j = (idx / data.shapeX.channels) % data.depth;
+                int k = ((idx / data.shapeX.channels) / data.depth) % data.shapeX.width;
+                int n = (((idx / data.shapeX.channels) / data.depth) / data.shapeX.width) % data.shapeX.batch;
+
+                int index = (int)Xptr[data.shapeX.Index(n, 0, k, i)];
+                float v = (j == index) ? data.onValue: data.offValue;
+                Optr[idx] = (float)(v);
+            }
         }
     }
 
@@ -672,7 +694,7 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleO(BurstTensorData pinO, int offset, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             if (OHalf)
             {
                 var job = new RandomNormalJob_Full_Half();
@@ -715,7 +737,7 @@ public partial class BurstCPUOps
     {
         public JobHandle ScheduleO(BurstTensorData pinO, int offset, int arrayLength, int innerBatchCount, FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            bool OHalf = pinO.array.Type == BarracudaArray.DataType.Half;
+            bool OHalf = pinO.array.Type == DataType.Half;
             if (OHalf)
             {
                 var job = new RandomUniformJob_Full_Half();
@@ -1086,18 +1108,40 @@ public partial class BurstCPUOps
 
         public void Execute(int idx)
         {
-            int i = idx % data.shapeX.flatWidth;
-            int j = (idx / data.shapeX.flatWidth) % data.depth;
-            int n = ((idx / data.shapeX.flatWidth) / data.depth) % data.shapeX.flatHeight;
+            // rank1: X = n,_,_,_
+            // rank2: X = n,_,_,c
+            // rank3: X = n,_,w,c
 
-            int index = (int)Xptr[n * data.shapeX.flatWidth + i];
-            float v = (j == index) ? data.onValue: data.offValue;
+            if (data.inputRank == 1) // TensorShape(X.flatHeight, depth)
+            {
+                int j = idx % data.depth;
+                int n = (idx / data.depth) % data.shapeX.flatHeight;
 
-            //TODO understand and fix (+test?)
-            if (data.isInput1D)
+                int index = (int)Xptr[n];
+                float v = (j == index) ? data.onValue: data.offValue;
                 Optr[idx] = (half)(v);
-            else
+            }
+            else if (data.inputRank == 2) // TensorShape(X.flatHeight, 1, depth, X.channels));
+            {
+                int i = idx % data.shapeX.channels;
+                int j = (idx / data.shapeX.channels) % data.depth;
+                int n = ((idx / data.shapeX.channels) / data.depth) % data.shapeX.flatHeight;
+
+                int index = (int)Xptr[data.shapeX.Index(n, i)];
+                float v = (j == index) ? data.onValue: data.offValue;
                 Optr[idx] = (half)(v);
+            }
+            else // TensorShape(X.batch, X.width, depth, X.channels))
+            {
+                int i = idx % data.shapeX.channels;
+                int j = (idx / data.shapeX.channels) % data.depth;
+                int k = ((idx / data.shapeX.channels) / data.depth) % data.shapeX.width;
+                int n = (((idx / data.shapeX.channels) / data.depth) / data.shapeX.width) % data.shapeX.batch;
+
+                int index = (int)Xptr[data.shapeX.Index(n, 0, k, i)];
+                float v = (j == index) ? data.onValue: data.offValue;
+                Optr[idx] = (half)(v);
+            }
         }
     }
 

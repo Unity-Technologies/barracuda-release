@@ -61,7 +61,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 inputShapes.Add(i.name, new TensorShape(i.shape));
             }
 
-            IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(model, inputShapes, m_RanksByName, out m_ShapesByName);
+            IRShapeInferenceHelper.ShapeInference.ListTemporaryTensorShapesNCHW(model, inputShapes, ref m_RanksByName, out m_ShapesByName);
 
             var nhwc = model.ShallowCopy();
             nhwc.layers.Clear();

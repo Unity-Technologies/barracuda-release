@@ -112,7 +112,8 @@ public interface IWorker : IDisposable
     /// Useful to initialize execution device ahead of the first call to `Execute`.
     /// </summary>
     /// <param name="inputShapes">Dictionary of tensor name -> input shapes</param>
-    void PrepareForInput(IDictionary<string, TensorShape> inputShapes);
+    /// <param name="dataType">expected type of the inputs</param>
+    void PrepareForInput(IDictionary<string, TensorShape> inputShapes, DataType dataType = DataType.Float);
 
     /// <summary>
     /// Specify single tensor `x` as the only input for the network.
@@ -331,11 +332,15 @@ public interface IDependableMemoryResource
 
     /// <summary>
     /// Write fence
-    /// Write fence
     /// Returns job handle that can be used as `dependsOn` argument when scheduling data producer job.
     /// Producer job will start execution once Tensor data is ready for write access.
     /// </summary>
     Unity.Jobs.JobHandle reuse { get; set; }
+
+    /// <summary>
+    /// Raw memory pointer for the resource
+    /// </summary>
+    unsafe void* rawPtr { get; }
 }
 
 /// <summary>

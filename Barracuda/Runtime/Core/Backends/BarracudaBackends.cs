@@ -304,8 +304,9 @@ public interface IOps : IOpsStatistics
     /// <param name="depth">output depth</param>
     /// <param name="onValue">on value</param>
     /// <param name="offValue">off value</param>
+    /// <param name="inputRank">input rank helper</param>
     /// <returns>output Tensor</returns>
-    Tensor OneHot(Tensor x, int depth, float onValue, float offValue);
+    Tensor OneHot(Tensor x, int depth, float onValue, float offValue, int inputRank=-1);
 
     /// <summary>
     /// RoiAlign
@@ -929,8 +930,9 @@ public interface IOps : IOpsStatistics
     /// </summary>
     /// <param name="X">input shape</param>
     /// <param name="value">value</param>
+    /// <param name="type">Tensor DataType</param>
     /// <returns>output Tensor</returns>
-    Tensor ConstantOfShape(TensorShape X, float value = 0.0f);
+    Tensor ConstantOfShape(TensorShape X, DataType type, float value = 0.0f);
 
     /// <summary>
     /// Copy
@@ -1019,7 +1021,8 @@ public interface IVars : IDisposable
     /// <param name="optionalOpsToPrepareTensors">`IOps` to prepare tensors</param>
     /// <param name="optionalInputShapes">input shapes dictionary</param>
     /// <param name="takeoverWeights">takeoverWeights flag</param>
-    void PrepareStorage(Model model, IOps optionalOpsToPrepareTensors = null, IDictionary<string, TensorShape> optionalInputShapes = null, bool takeoverWeights = false);
+    /// <param name="dataType">expect activation data type</param>
+    void PrepareStorage(Model model, IOps optionalOpsToPrepareTensors = null, IDictionary<string, TensorShape> optionalInputShapes = null, bool takeoverWeights = false, DataType dataType = DataType.Float);
 
     /// <summary>
     /// Gather layer inputs
@@ -1170,6 +1173,10 @@ public interface ITensorDataStatistics : IUniqueResource
     /// Returns the maximum number of element this tensorData can contain.
     /// </summary>
     int maxCapacity { get; }
+    /// <summary>
+    /// Returns the type of the elements this tensorData can contain.
+    /// </summary>
+    DataType dataType { get; }
 #if ENABLE_BARRACUDA_STATS
     /// <summary>
     /// Returns true if this tensor data is attached to any tensor.
@@ -1236,6 +1243,11 @@ public interface ITensorStatistics: IUniqueResource
     /// Return the shape of this tensor.
     /// </summary>
     TensorShape shape  { get; }
+
+    /// <summary>
+    /// Return the data type of this tensor.
+    /// </summary>
+    DataType dataType  { get; }
 
     /// <summary>
     /// Return amount of internal tensor cache in bytes.
@@ -1322,8 +1334,9 @@ public interface ITensorAllocator : IDisposable
     /// </summary>
     /// <param name="shape">shape</param>
     /// <param name="scope">tensor lifetime scope</param>
+    /// <param name="dataType">tensor data type</param>
     /// <returns>allocated Tensor</returns>
-    Tensor Alloc(TensorShape shape, AllocScope scope = AllocScope.LayerOutput);
+    Tensor Alloc(TensorShape shape, AllocScope scope = AllocScope.LayerOutput, DataType dataType = DataType.Float);
 
     /// <summary>
     /// Allocate with existing `ITensorData` buffer
@@ -1332,7 +1345,7 @@ public interface ITensorAllocator : IDisposable
     /// <param name="buffer">buffer</param>
     /// <param name="scope">tensor lifetime scope</param>
     /// <returns>allocated Tensor</returns>
-    Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope = AllocScope.LayerOutput);
+    Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope = AllocScope.LayerOutput, DataType dataType = DataType.Float);
 
     /// <summary>
     /// Allows ITensorAllocator to run cleanup operations such as clearing

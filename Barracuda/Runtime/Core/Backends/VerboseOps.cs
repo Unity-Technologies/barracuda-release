@@ -325,10 +325,10 @@ public class VerboseOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue)
+    Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank)
     {
         LogLayerSummary(X.shape + " Ω n=" + depth + " 1=" + onValue + " 0=" + offValue);
-        var O = m_Ops.OneHot(X, depth, onValue, offValue);
+        var O = m_Ops.OneHot(X, depth, onValue, offValue, inputRank);
         LogOutputTensorSummary(O, Prefix + "OneHot");
         return O;
     }
@@ -1041,10 +1041,10 @@ public class VerboseOps : IOps, IModelCompiler
 
 
     /// <inheritdoc/>
-    Tensor IOps.ConstantOfShape(TensorShape X, float value)
+    Tensor IOps.ConstantOfShape(TensorShape X, DataType type, float value)
     {
         LogLayerSummary($"ConstantOfShape {value}");
-        var O = m_Ops.ConstantOfShape(X, value);
+        var O = m_Ops.ConstantOfShape(X, type, value);
         LogOutputTensorSummary(O, Prefix + nameof(IOps.ConstantOfShape));
         return O;
     }

@@ -1,7 +1,6 @@
 using System;
 using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
-using System.Security;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
@@ -100,17 +99,17 @@ public class BarracudaArrayFromManagedArray : BarracudaArray
     public override unsafe void* RawPtr => (byte*) base.RawPtr + m_PinnedMemoryByteOffset;
 }
 
+public enum DataType
+{
+    Float,
+    Half
+}
+
 /// <summary>
 /// A BarracudaArray exposes a buffer of native memory to managed code.
 /// </summary>
 public class BarracudaArray : IDisposable
 {
-    public enum DataType
-    {
-        Float,
-        Half
-    }
-
     protected readonly SafeHandle m_SafeHandle;
     private readonly Allocator m_Allocator;
     private readonly int m_Length;

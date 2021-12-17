@@ -22,7 +22,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     /// Create `UnsafeArrayTensorData` with new array
     /// </summary>
     /// <param name="count">element count to reserve</param>
-    public UnsafeArrayTensorData(int count) : base(new BarracudaArray(count))
+    public UnsafeArrayTensorData(int count, DataType dataType) : base(new BarracudaArray(count, dataType))
     {
     }
 
@@ -30,7 +30,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
     /// Create `UnsafeArrayTensorData` with new array
     /// </summary>
     /// <param name="shape">shape</param>
-    public UnsafeArrayTensorData(TensorShape shape) : this(shape.length)
+    public UnsafeArrayTensorData(TensorShape shape, DataType dataType) : this(shape.length, dataType)
     {
     }
 
@@ -91,7 +91,7 @@ public class UnsafeArrayTensorData : SharedArrayTensorData
 
         if (count > maxCapacity)
         {
-            m_Array = new BarracudaArray(count);//TODO fp16
+            m_Array = new BarracudaArray(count, m_Array.Type);
             m_Offset = 0;
             m_Count = m_Array.Length;
         }
@@ -175,9 +175,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
             else
             {
                 if (uploadCache)
-                    X.UploadToDevice(new UnsafeArrayTensorData(X.shape)); // device is not compatible, create new array and upload
+                    X.UploadToDevice(new UnsafeArrayTensorData(X.shape, X.dataType)); // device is not compatible, create new array and upload
                 else
-                    X.AllocateOnDevice(new UnsafeArrayTensorData(X.shape)); // device is not compatible, create new array and upload
+                    X.AllocateOnDevice(new UnsafeArrayTensorData(X.shape, X.dataType)); // device is not compatible, create new array and upload
             }
         }
 
@@ -200,6 +200,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Neg(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Neg(X);
+
         // f(x) = -x
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
@@ -236,6 +239,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Relu(Tensor X)
     {
+        if (X.dataType != DataType.Float)
+            return base.Relu(X);
+
         // f(x) = max(x,0.0)
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
@@ -273,6 +279,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Relu6(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Relu6(X);
+
         // f(x) = min(max(x, 0), 6)
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
@@ -310,6 +319,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LeakyRelu(Tensor X, float alpha)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.LeakyRelu(X, alpha);
+
         // f(x) = alpha * x for x < 0, f(x) = x for x >= 0.
         Assert.IsTrue(alpha <= 1);
 
@@ -354,6 +366,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Elu(Tensor X, float alpha)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Elu(X, alpha);
+
         // f(x) = alpha * (exp(x) - 1.) for x < 0, f(x) = x for x >= 0
         // "Fast and Accurate Deep Network Learning by Exponential Linear Units (ELUs)", DA Clevert, 2015
         // https://arxiv.org/abs/1511.07289
@@ -394,6 +409,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor PRelu(Tensor X, Tensor S)
     {
+        if (AreAnyTensorsHalf(X, S))
+            return base.PRelu(X, S);
+
         Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
 
         // f(x) = x for x >= 0, f(x) = slope*x for x <= 0
@@ -435,6 +453,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Softplus(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Softplus(X);
+
         // f(x) = 1 / (1 + exp(-x))
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
@@ -472,6 +493,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sigmoid(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Sigmoid(X);
+
         // f(x) = 1 / (1 + exp(-x))
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
@@ -509,6 +533,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         /// <inheritdoc/>
     public override Tensor HardSigmoid(Tensor X, float alpha, float beta)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.HardSigmoid(X, alpha, beta);
+
         // f(x) = 1 / (1 + exp(-x))
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
@@ -546,6 +573,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Swish(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Swish(X);
+
         // f(x) = sigmoid(x) * x = x / (1 + exp(-x))
         // "Searching for Activation Functions". P Ramachandran, 2017
         // https://arxiv.org/abs/1710.05941
@@ -586,6 +616,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Exp(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Exp(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -622,6 +655,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sqrt(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Sqrt(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -658,6 +694,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Tanh(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Tanh(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -694,6 +733,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Acos(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Acos(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -730,6 +772,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Acosh(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Acosh(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -766,6 +811,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Asin(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Asin(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -802,6 +850,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Asinh(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Asinh(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -838,6 +889,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Atan(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Atan(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -874,6 +928,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Atanh(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Atanh(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -910,6 +967,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Cos(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Cos(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -946,6 +1006,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Cosh(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Cosh(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -982,6 +1045,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sin(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Sin(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -1018,6 +1084,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sinh(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Sinh(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -1054,6 +1123,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Tan(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Tan(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -1090,6 +1162,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Erf(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Erf(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
         var end = X.length;
         const int unrollSize = 4;
@@ -1167,7 +1242,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float,float,float> opRemainder, Action<long> opInnerLoop, Action<long> opInnerLoopNoBroadcast)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             throw new NotImplementedException();
 
         var O = NewTensorLike(tensors, AllocScope.LayerOutput);
@@ -1216,7 +1291,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Add(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             return base.Add(tensors);
 
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_addOpDelegate, m_InnerLoop.m_addInnerLoopDelegate, m_InnerLoop.m_addInnerLoopDelegateNoBroadcast);
@@ -1225,7 +1300,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sub(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             return base.Sub(tensors);
 
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_subOpDelegate, m_InnerLoop.m_subInnerLoopDelegate, m_InnerLoop.m_subInnerLoopDelegateNoBroadcast);
@@ -1234,7 +1309,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Mul(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             return base.Mul(tensors);
 
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_mulOpDelegate, m_InnerLoop.m_mulInnerLoopDelegate, m_InnerLoop.m_mulInnerLoopDelegateNoBroadcast);
@@ -1243,7 +1318,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Div(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             return base.Div(tensors);
 
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_divOpDelegate, m_InnerLoop.m_divInnerLoopDelegate, m_InnerLoop.m_divInnerLoopDelegateNoBroadcast);
@@ -1252,7 +1327,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Min(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             return base.Min(tensors);
 
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_minOpDelegate, m_InnerLoop.m_minInnerLoopDelegate, m_InnerLoop.m_minInnerLoopDelegateNoBroadcast);
@@ -1261,7 +1336,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Max(Tensor[] tensors)
     {
-        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors))
+        if (!TensorExtensions.AreAllTensorsConvertibleTo4D(tensors) || AreAnyTensorsHalf(tensors))
             return base.Max(tensors);
 
         return ApplyElementwiseWithBroadcast(tensors, m_InnerLoop.m_maxOpDelegate, m_InnerLoop.m_maxInnerLoopDelegate, m_InnerLoop.m_maxInnerLoopDelegateNoBroadcast);
@@ -1270,7 +1345,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Greater(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.Greater(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_greaterOpDelegate, m_InnerLoop.m_greaterInnerLoopDelegate, m_InnerLoop.m_greaterInnerLoopDelegateNoBroadcast);
@@ -1279,7 +1354,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor GreaterEqual(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.GreaterEqual(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_greaterEqualOpDelegate, m_InnerLoop.m_greaterEqualInnerLoopDelegate, m_InnerLoop.m_greaterEqualInnerLoopDelegateNoBroadcast);
@@ -1288,7 +1363,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Less(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.Less(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_lessOpDelegate, m_InnerLoop.m_lessInnerLoopDelegate, m_InnerLoop.m_lessInnerLoopDelegateNoBroadcast);
@@ -1297,7 +1372,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LessEqual(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.LessEqual(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_lessEqualOpDelegate, m_InnerLoop.m_lessEqualInnerLoopDelegate, m_InnerLoop.m_lessEqualInnerLoopDelegateNoBroadcast);
@@ -1306,7 +1381,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Equal(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.Equal(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_equalOpDelegate, m_InnerLoop.m_equalInnerLoopDelegate, m_InnerLoop.m_equalInnerLoopDelegateNoBroadcast);
@@ -1315,7 +1390,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LogicalOr(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.LogicalOr(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalOrOpDelegate, m_InnerLoop.m_logicalOrInnerLoopDelegate, m_InnerLoop.m_logicalOrInnerLoopDelegateNoBroadcast);
@@ -1324,7 +1399,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LogicalAnd(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.LogicalAnd(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalAndOpDelegate, m_InnerLoop.m_logicalAndInnerLoopDelegate, m_InnerLoop.m_logicalAndInnerLoopDelegateNoBroadcast);
@@ -1333,7 +1408,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LogicalXor(Tensor A, Tensor B)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             return base.LogicalXor(A,B);
 
         return ApplyLogicalOperator(A, B, m_InnerLoop.m_logicalXorOpDelegate, m_InnerLoop.m_logicalXorInnerLoopDelegate, m_InnerLoop.m_logicalXorInnerLoopDelegateNoBroadcast);
@@ -1342,6 +1417,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor LogicalNot(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.LogicalNot(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
 
         unsafe
@@ -1364,6 +1442,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Sign(Tensor X)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.Sign(X);
+
         var O = NewTensorLike(X, AllocScope.LayerOutput);
 
         unsafe
@@ -1386,7 +1467,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        if (!C.shape.Is4D() || !C.shape.Is4D() || !B.shape.Is4D())
+        if (!C.shape.Is4D() || !C.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(C,A,B))
             return base.Where(C,A,B);
 
         var O = NewTensorLike(new [] { C, A, B }, AllocScope.LayerOutput);
@@ -1420,7 +1501,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor ApplyLogicalOperator(Tensor A, Tensor B, Func<float,float,float> logicalOpRemainder, Action<long> logicalOpInnerLoop, Action<long> logicalOpInnerLoopNoBroadcast)
     {
-        if (!A.shape.Is4D() || !B.shape.Is4D())
+        if (!A.shape.Is4D() || !B.shape.Is4D() || AreAnyTensorsHalf(A, B))
             throw new NotImplementedException();
 
         var O = NewTensorLike(new Tensor[] { A, B }, AllocScope.LayerOutput);
@@ -1454,6 +1535,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
     {
+        if (AreAnyTensorsHalf(X,Y))
+            return base.MatMul(X, xTranspose, Y, yTranspose);
+
         Assert.IsTrue(X.dimensions <= 2);
         Assert.IsTrue(Y.dimensions <= 2);
 
@@ -1470,7 +1554,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         }
 
         Assert.AreEqual(xw, yh);
-        var O = NewOutputTensor(new TensorShape(xh, yw));
+        var O = NewOutputTensor(X.dataType, new TensorShape(xh, yw));
 
         unsafe
         {
@@ -1495,12 +1579,15 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor Dense(Tensor X, Tensor W, Tensor B, Layer.FusedActivation fusedActivation)
     {
+        if (AreAnyTensorsHalf(X,W,B))
+            return base.Dense(X, W, B, fusedActivation);
+
         //D.Log(string.Format("X = {0}", X.shape));
         Assert.IsTrue(W.dimensions <= 2);
         Assert.AreEqual(B.flatWidth, B.length);
         Assert.AreEqual(B.flatWidth, W.flatWidth);
         Assert.AreEqual(X.flatWidth, W.flatHeight);
-        var O = NewTensorForFusedActivation(new TensorShape(X.flatHeight, W.flatWidth), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, new TensorShape(X.flatHeight, W.flatWidth), fusedActivation);
 
         var pinX = Pin(X);
         var pinW = Pin(W);
@@ -1597,12 +1684,15 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor MaxPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.MaxPool2D(X, pool, stride, pad);
+
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyPool(pool, stride, pad));
 
         int xnMult = X.height * X.width * X.channels;
         int xyMult = X.width * X.channels;
@@ -1666,12 +1756,15 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor AvgPool2D(Tensor X, int[] pool, int[] stride, int[] pad)
     {
+        if (AreAnyTensorsHalf(X))
+            return base.AvgPool2D(X, pool, stride, pad);
+
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(pool.Length, 2);
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewOutputTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewOutputTensor(X.dataType, X.shape.ApplyPool(pool, stride, pad));
 
         int xnMult = X.height * X.width * X.channels;
         int xyMult = X.width * X.channels;
@@ -1781,7 +1874,10 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         //   Mobilenet    <<<Exec #10:  129.3 ms, cpu: 133.6 ms, avg: 133.6 ms, result:OK
         //   CNN@16       <<<Exec #10:   17.0 ms, cpu:  16.2 ms, avg:  16.2 ms, result:OK
 
-        return Conv2DUsingIm2ColSlicedHelper(X, K, B, stride, pad, fusedActivation);
+        if (AreAnyTensorsHalf(X,K,B))
+            return base.Conv2D(X, K, B, stride, pad, fusedActivation);
+        else
+            return Conv2DUsingIm2ColSlicedHelper(X, K, B, stride, pad, fusedActivation);
 
         // Slightly faster, but much more memory
         // Requires temporary tensor of input shape (X) multiple of kernel width & height and divided by stride
@@ -1958,6 +2054,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
 
     private Tensor Conv2DUsingIm2ColSlicedHelper(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
+        Assert.IsFalse(AreAnyTensorsHalf(X,K,B));
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(X.channels, K.kernelDepth);
         Assert.AreEqual(K.kernelCount, B.flatWidth);
@@ -1975,9 +2072,9 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
                                     stride[0] == 1 && stride[1] == 1 &&                         // no strides
                                     pad[0] == 0 && pad[1] == 0 && pad[2] == 0 && pad[3] == 0;   // no padding
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
         var T = pointwiseConvolution ? null:                       // pointwise convolution is just O=X*K, we can completely skip Im2Col()
-                NewTempTensor(new TensorShape(O.batch, O.height, O.width, inChannels)); // holds slice of Im2Col(X)
+                NewTempTensor(X.dataType, new TensorShape(O.batch, O.height, O.width, inChannels)); // holds slice of Im2Col(X)
 
         var outElements = O.batch * O.height * O.width;
 
@@ -2185,7 +2282,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     /// <inheritdoc/>
     public override Tensor DepthwiseConv2D(Tensor X, Tensor K, Tensor B, int[] stride, int[] pad, Layer.FusedActivation fusedActivation)
     {
-        if (K.kernelDepth != 1 || IsTensorHalf(K))
+        if (K.kernelDepth != 1 || AreAnyTensorsHalf(X,K,B))
             return base.DepthwiseConv2D(X, K, B, stride, pad, fusedActivation);
 
         Assert.IsTrue(X.shape.Is4D());
@@ -2205,7 +2302,7 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
         //      input [b, i + di, j + dj, k] *
         //      filter[di, dj, k, q] *
 
-        var O = NewTensorForFusedActivation(X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
+        var O = NewTensorForFusedActivation(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad), fusedActivation);
 
         int xnMult = X.height * X.width * X.channels;
         int xyMult = X.width * X.channels;
@@ -2678,21 +2775,40 @@ public class UnsafeArrayCPUOps : ReferenceCPUOps
     protected override Tensor CopyAndReshape(Tensor X, TensorShape shape)
     {
         Assert.AreEqual(X.length, shape.length);
-        var O = NewOutputTensor(shape);
+        var O = NewOutputTensor(X.dataType, shape);
         var pinO = Pin(O, uploadCache: false);
         BarracudaArray.Copy(Pin(X).array, Pin(X).offset, pinO.array, pinO.offset, X.length);
         return O;
     }
 
-    private bool IsTensorHalf(Tensor tensor)
+    private bool AreAnyTensorsHalf(Tensor[] tensors)
     {
-        return Pin(tensor).array.Type == BarracudaArray.DataType.Half;
+        for (int i = 0; i != tensors.Length; ++i)
+        {
+            if (tensors[i].dataType == DataType.Half)
+                return true;
+        }
+        return false;
+    }
+
+    private bool AreAnyTensorsHalf(Tensor tensor0, Tensor tensor1 = null, Tensor tensor2 = null, Tensor tensor3 = null)
+    {
+        if (tensor0.dataType == DataType.Half)
+            return true;
+        if (tensor1 != null && tensor1.dataType == DataType.Half)
+            return true;
+        if (tensor2 != null && tensor2.dataType == DataType.Half)
+            return true;
+        if (tensor3 != null && tensor3.dataType == DataType.Half)
+            return true;
+
+        return false;
     }
 
     /// <inheritdoc/>
     public override Tensor ScaleBias(Tensor X, Tensor S, Tensor B)
     {
-        if (!X.shape.Is4D() || IsTensorHalf(S))
+        if (!X.shape.Is4D() || AreAnyTensorsHalf(X,S,B))
             return base.ScaleBias(X, S, B);
 
         Assert.AreEqual(X.channels, B.channels); Assert.AreEqual(X.channels, S.channels);

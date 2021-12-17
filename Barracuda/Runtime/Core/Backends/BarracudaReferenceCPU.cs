@@ -25,16 +25,16 @@ public class ArrayTensorData : UniqueResourceId, ITensorData
     /// Create `ArrayTensorData` and allocate storage for `count` elements
     /// </summary>
     /// <param name="count">number of elements to pre-allocate</param>
-    public ArrayTensorData(int count)
+    public ArrayTensorData(int count, DataType dataType = DataType.Float)
     {
-        m_Array = new BarracudaArray(count);
+        m_Array = new BarracudaArray(count, dataType);
     }
 
     /// <summary>
     /// Create `ArrayTensorData` and allocate storage for `Tensor` described by `shape`
     /// </summary>
     /// <param name="shape">shape</param>
-    public ArrayTensorData(TensorShape shape) : this(shape.length)
+    public ArrayTensorData(TensorShape shape, DataType dataType = DataType.Float) : this(shape.length, dataType)
     {
     }
 
@@ -58,7 +58,7 @@ public class ArrayTensorData : UniqueResourceId, ITensorData
     public virtual void Reserve(int count)
     {
         if (count > m_Array.Length)
-            m_Array = new BarracudaArray(count);
+            m_Array = new BarracudaArray(count, m_Array.Type);
     }
 
     /// <inheritdoc/>
@@ -106,6 +106,12 @@ public class ArrayTensorData : UniqueResourceId, ITensorData
     public virtual int maxCapacity { get
     {
         return m_Array.Length;
+    } }
+
+    /// <inheritdoc/>
+    public virtual DataType dataType { get
+    {
+        return m_Array.Type;
     } }
 
     /// <inheritdoc/>
@@ -280,6 +286,12 @@ public class SharedArrayTensorData : UniqueResourceId, ITensorData
     } }
 
     /// <inheritdoc/>
+    public virtual DataType dataType { get
+    {
+        return m_Array.Type;
+    } }
+
+    /// <inheritdoc/>
     public virtual bool inUse { get
     {
         return true;
@@ -335,13 +347,14 @@ public class ReferenceCPUOps : IOps
     /// Should only be used on reference backend, production backends should use explicit
     /// allocation scope for better peak mem usage.
     /// </summary>
+    /// <param name="dataType">data type</param>
     /// <param name="s">shape</param>
     /// <param name="scope">tensor lifetime scope</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    private Tensor NewTensor(TensorShape s)
+    private Tensor NewTensor(DataType dataType, TensorShape s)
     {
-        return NewTensor(s, AllocScope.LayerOutput);
+        return NewTensor(dataType, s, AllocScope.LayerOutput);
     }
 
     /// <summary>
@@ -361,13 +374,14 @@ public class ReferenceCPUOps : IOps
     /// Should only be used on reference backend, production backends should use explicit
     /// allocation scope for better peak mem usage.
     /// </summary>
+    /// <param name="dataType">data type</param>
     /// <param name="b">batch</param>
     /// <param name="ch">channels</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    private Tensor NewTensor(int b, int ch, string name = "")
+    private Tensor NewTensor(DataType dataType, int b, int ch, string name = "")
     {
-        return NewTensor(new TensorShape(b, ch), AllocScope.LayerOutput, name);
+        return NewTensor(dataType, new TensorShape(b, ch), AllocScope.LayerOutput, name);
     }
 
     /// <summary>
@@ -375,15 +389,16 @@ public class ReferenceCPUOps : IOps
     /// Should only be used on reference backend, production backends should use explicit
     /// allocation scope for better peak mem usage.
     /// </summary>
+    /// <param name="dataType">data type</param>
     /// <param name="b">batch</param>
     /// <param name="h">height</param>
     /// <param name="w">width</param>
     /// <param name="ch">channels</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    private Tensor NewTensor(int b, int h, int w, int ch, string name = "")
+    private Tensor NewTensor(DataType dataType, int b, int h, int w, int ch, string name = "")
     {
-        return NewTensor(new TensorShape(b, h, w, ch), AllocScope.LayerOutput, name);
+        return NewTensor(dataType, new TensorShape(b, h, w, ch), AllocScope.LayerOutput, name);
     }
 
     #endregion
@@ -391,16 +406,17 @@ public class ReferenceCPUOps : IOps
     /// <summary>
     /// Allocate new `Tensor` via allocator
     /// </summary>
+    /// <param name="dataType">data type</param>
     /// <param name="s">shape</param>
     /// <param name="scope">tensor lifetime scope</param>
     /// <param name="name">name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensor(TensorShape s, AllocScope scope, string name = "")
+    protected Tensor NewTensor(DataType dataType, TensorShape s, AllocScope scope, string name = "")
     {
         if (name == "")
             name = (scope == AllocScope.LayerOutput ? "LayerOutput" : "InternalToLayer");
 
-        var tensor = m_Allocator.Alloc(s, scope);
+        var tensor = m_Allocator.Alloc(s, scope, dataType);
         tensor.name = name;
 
         return tensor;
@@ -414,7 +430,7 @@ public class ReferenceCPUOps : IOps
     /// <returns>new `Tensor`</returns>
     protected Tensor NewTensorLike(Tensor t, AllocScope scope)
     {
-        return NewTensor(t.shape, scope);
+        return NewTensor(t.dataType, t.shape, scope);
     }
 
     /// <summary>
@@ -422,14 +438,17 @@ public class ReferenceCPUOps : IOps
     /// </summary>
     /// <param name="tensors">tensors</param>
     /// <param name="scope">tensor lifetime scope</param>
+    /// <param name="validateType">should this method validate that all tensors are the same type</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensorLike(Tensor[] tensors, AllocScope scope)
+    protected Tensor NewTensorLike(Tensor[] tensors, AllocScope scope, bool validateType = true)
     {
         Assert.IsTrue(tensors.Length > 0);
 
-        var O = NewTensor(TensorExtensions.MaxShape(tensors), scope);
+        var O = NewTensor(tensors[0].dataType, TensorExtensions.MaxShape(tensors), scope);
         foreach (var t in tensors)
         {
+            if (validateType)
+                Assert.AreEqual(O.dataType, t.dataType);
             for (int i = 0; i < TensorShape.MaxRank; ++i)
             {
                 Assert.IsTrue((t.shape[i] == 1) || (t.shape[i] == O.shape[i]));
@@ -459,37 +478,40 @@ public class ReferenceCPUOps : IOps
     /// Allocate new `Tensor` via allocator
     /// tensor lifetime will be OutputLayer if activation is supported in place, InternalToLayer otherwise.
     /// </summary>
+    /// <param name="dataType">data type</param>
     /// <param name="shape">shape of the tensor to be created</param>
     /// <param name="fusedActivation">fused activation type</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTensorForFusedActivation(TensorShape shape, Layer.FusedActivation fusedActivation)
+    protected Tensor NewTensorForFusedActivation(DataType dataType, TensorShape shape, Layer.FusedActivation fusedActivation)
     {
         if (IsFusedActivationSupported(fusedActivation))
-            return NewOutputTensor(shape);
+            return NewOutputTensor(dataType, shape);
         else
-            return NewTempTensor(shape);
+            return NewTempTensor(dataType, shape);
     }
 
     /// <summary>
     /// Allocate new `Tensor` via allocator using AllocScope.LayerOutput scope
     /// </summary>
+    /// <param name="type">data type</param>
     /// <param name="s">shape of the tensor to be created</param>
     /// <param name="name">tensor name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewOutputTensor(TensorShape s, string name = "")
+    protected Tensor NewOutputTensor(DataType type, TensorShape s, string name = "")
     {
-        return NewTensor(s, AllocScope.LayerOutput, name);
+        return NewTensor(type, s, AllocScope.LayerOutput, name);
     }
 
     /// <summary>
     /// Allocate new `Tensor` via allocator using AllocScope.InternalToLayer scope
     /// </summary>
+    /// <param name="type">data type</param>
     /// <param name="s">shape of the tensor to be created</param>
     /// <param name="name">tensor name</param>
     /// <returns>new `Tensor`</returns>
-    protected Tensor NewTempTensor(TensorShape s, string name = "")
+    protected Tensor NewTempTensor(DataType type, TensorShape s, string name = "")
     {
-        return NewTensor(s, AllocScope.InternalToLayer, name);
+        return NewTensor(type, s, AllocScope.InternalToLayer, name);
     }
 
 #if ENABLE_BARRACUDA_STATS
@@ -673,7 +695,7 @@ public class ReferenceCPUOps : IOps
             matC = Math.Max(xC, yC);
             matH = onnxXshape[1];
             matW = onnxYshape[2];
-            O = NewTensor(new TensorShape(matC, 1, matW, matH));
+            O = NewTensor(X.dataType, new TensorShape(matC, 1, matW, matH));
         }
         else
         {
@@ -687,7 +709,7 @@ public class ReferenceCPUOps : IOps
             matC = Math.Max(xC, yC);
             matH = onnxXshape[2];
             matW = onnxYshape[3];
-            O = NewTensor(new TensorShape(matN, matH, matW, matC));
+            O = NewTensor(X.dataType, new TensorShape(matN, matH, matW, matC));
         }
 
         var Xt = Transpose(X, new[] { 0, 3, 1, 2 });
@@ -790,7 +812,7 @@ public class ReferenceCPUOps : IOps
             Y = Transpose(Y);
 
         Assert.AreEqual(X.flatWidth, Y.flatHeight);
-        var O = NewTensor(X.flatHeight, Y.flatWidth);
+        var O = NewTensor(X.dataType, X.flatHeight, Y.flatWidth);
 
         for (int y = 0; y < O.flatHeight; ++y)
             for (int x = 0; x < O.flatWidth; ++x)
@@ -812,7 +834,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(B.flatWidth, B.length);
         Assert.AreEqual(X.flatWidth, W.flatHeight);
 
-        var O = NewTensor(X.flatHeight, W.flatWidth);
+        var O = NewTensor(X.dataType, X.flatHeight, W.flatWidth);
 
         for (int y = 0; y < O.flatHeight; ++y)
             for (int x = 0; x < O.flatWidth; ++x)
@@ -837,7 +859,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensor(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad));
 
         for (var n = 0; n < O.batch; ++n)
             for (var y = 0; y < O.height; ++y)
@@ -881,7 +903,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(stride.Length, 3);//WHD
         Assert.AreEqual(pad.Length, 6);
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensor(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad));
 
         for (var n = 0; n < O.batch; ++n)
         for (var d = 0; d < O.depth; ++d)
@@ -944,7 +966,7 @@ public class ReferenceCPUOps : IOps
         //      input [b, i + di, j + dj, k] *
         //      filter[di, dj, k, q] *
 
-        var O = NewTensor(X.shape.ApplyKernel(K.shape, stride, pad));
+        var O = NewTensor(X.dataType, X.shape.ApplyKernel(K.shape, stride, pad));
 
         for (var n = 0; n < O.batch; ++n)
             for (var y = 0; y < O.height; ++y)
@@ -984,7 +1006,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(pad[0],pad[2]);
         Assert.AreEqual(pad[1],pad[3]);
 
-        var O = NewTensor(X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment));
+        var O = NewTensor(X.dataType, X.shape.ApplyKernelInverse(K.shape, stride, pad, outputAdjustment));
         int prePadW = K.kernelWidth  - pad[0] - 1;
         int prePadH = K.kernelHeight - pad[1] - 1;
         int strideH = 1;
@@ -1042,7 +1064,7 @@ public class ReferenceCPUOps : IOps
         float scaleY = (float)scale[1];
         float scaleD = (float)scale[2];
 
-        var O = NewTensor(new TensorShape(1, 1,X.batch, 1, X.depth*scale[2], X.height*scale[1], X.width*scale[0], X.channels));
+        var O = NewTensor(X.dataType, new TensorShape(1, 1,X.batch, 1, X.depth*scale[2], X.height*scale[1], X.width*scale[0], X.channels));
 
         for (int b = 0; b < O.batch; ++b)
             for (int d = 0; d < O.depth; ++d)
@@ -1095,7 +1117,7 @@ public class ReferenceCPUOps : IOps
         float scaleY = (float)scale[1];
 
         Assert.IsTrue(X.shape.Is4D());
-        var O = NewTensor(X.batch, X.height*scale[1], X.width*scale[0], X.channels);
+        var O = NewTensor(X.dataType, X.batch, X.height*scale[1], X.width*scale[0], X.channels);
 
         for (int b = 0; b < O.batch; ++b)
             for (int y = 0; y < O.height; ++y)
@@ -1133,7 +1155,7 @@ public class ReferenceCPUOps : IOps
     {
         Assert.IsTrue(X.shape.Is4D());
         Assert.AreEqual(size.Length, 2);
-        var O = NewTensor(X.batch, size[1], size[0], X.channels);
+        var O = NewTensor(X.dataType, X.batch, size[1], size[0], X.channels);
 
         float scaleX = O.width / (float) X.width;
         float scaleY = O.height / (float) X.height;
@@ -1183,7 +1205,7 @@ public class ReferenceCPUOps : IOps
 
         Assert.AreEqual(X.channels % (bsX * bsY), 0);
 
-        var O = NewTensor(X.batch, X.height * bsY, X.width * bsX, X.channels / (bsX * bsY));
+        var O = NewTensor(X.dataType, X.batch, X.height * bsY, X.width * bsX, X.channels / (bsX * bsY));
 
         for (int b = 0; b < O.batch; ++b)
             for (int y = 0; y < O.height; ++y)
@@ -1219,7 +1241,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(X.height % bsY, 0);
         Assert.AreEqual(X.width % bsX, 0);
 
-        var O = NewTensor(X.batch, X.height / bsY, X.width / bsX, X.channels * (bsX * bsY));
+        var O = NewTensor(X.dataType, X.batch, X.height / bsY, X.width / bsX, X.channels * (bsX * bsY));
 
         for (int b = 0; b < O.batch; ++b)
         for (int y = 0; y < O.height; ++y)
@@ -1246,7 +1268,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewTensor(X.dataType, X.shape.ApplyPool(pool, stride, pad));
 
         for (int b = 0; b < O.batch; ++b)
             for (int y = 0; y < O.height; ++y)
@@ -1294,7 +1316,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(stride.Length, 2);
         Assert.AreEqual(pad.Length, 4);
 
-        var O = NewTensor(X.shape.ApplyPool(pool, stride, pad));
+        var O = NewTensor(X.dataType, X.shape.ApplyPool(pool, stride, pad));
 
         for (int b = 0; b < O.batch; ++b)
             for (int y = 0; y < O.height; ++y)
@@ -1340,7 +1362,7 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor GlobalMaxPool2D(Tensor X)
     {
         Assert.IsTrue(X.shape.Is4D());
-        var O = NewTensor(X.batch, 1, 1, X.channels);
+        var O = NewTensor(X.dataType, X.batch, 1, 1, X.channels);
 
         for (int b = 0; b < X.batch; ++b)
             for (int c = 0; c < X.channels; ++c)
@@ -1371,7 +1393,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor GlobalAvgPool2D(Tensor X)
     {
-        var O = NewTensor(X.batch, 1, 1, X.channels);
+        var O = NewTensor(X.dataType, X.batch, 1, 1, X.channels);
 
         for (int b = 0; b < X.batch; ++b)
             for (int c = 0; c < X.channels; ++c)
@@ -1403,7 +1425,7 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor GlobalAvgVariancePool2D(Tensor X)
     {
         Assert.IsTrue(X.shape.Is4D());
-        var O = NewTensor(X.batch, 2, 1, X.channels);
+        var O = NewTensor(X.dataType, X.batch, 2, 1, X.channels);
 
         for (int b = 0; b < X.batch; ++b)
             for (int c = 0; c < X.channels; ++c)
@@ -1447,7 +1469,7 @@ public class ReferenceCPUOps : IOps
         Assert.IsTrue(X.shape.IsNDHWC());
         Assert.IsTrue(pad.Length == 6 || pad.Length == 8);
 
-        var O = NewTensor(X.shape.ApplyBorder(pad));
+        var O = NewTensor(X.dataType, X.shape.ApplyBorder(pad));
 
         int prePadW  = pad[0];
         int prePadH  = pad[1];
@@ -1789,7 +1811,9 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor RandomNormal(TensorShape s, float mean, float scale, int seed)
     {
-        var O = NewTensor(s);
+        var O = NewTensor(DataType.Float, s);
+        //TODO fp16: RandomNormal should be able to select output type
+        //see dtype here https://github.com/onnx/onnx/blob/master/docs/Operators.md#RandomNormal
 
         using (var seedOverride = new Seed(ref m_RandomNormalSeed, seed))
         {
@@ -1805,7 +1829,9 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor RandomUniform(TensorShape s, float mean, float scale, int seed)
     {
-        var O = NewTensor(s);
+        var O = NewTensor(DataType.Float, s);
+        //TODO fp16: RandomNormal should be able to select output type
+        //see dtype here https://github.com/onnx/onnx/blob/master/docs/Operators.md#RandomUniform
 
         using (var seedOverride = new Seed(ref m_RandomUniformSeed, seed))
         {
@@ -1824,7 +1850,7 @@ public class ReferenceCPUOps : IOps
         if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
             throw new NotImplementedException();
 
-        var O = NewTensor(X.flatHeight, count);
+        var O = NewTensor(X.dataType, X.flatHeight, count);
 
         // Tensorflow Multinomial for reference
         // See: https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/kernels/multinomial_op.cc
@@ -1862,31 +1888,53 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
-    public virtual Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
+    public virtual Tensor OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank=-1)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+        if (inputRank == -1)
+            inputRank = X.dimensions;
+
+        if (inputRank >= 4)
             throw new NotImplementedException();
 
-        bool isInput1D = (X.flatWidth == 1);
-
         Tensor O;
-        if (isInput1D)
-            O = NewTensor(X.flatHeight, depth);
+        if (inputRank == 1)
+            O = NewOutputTensor(X.dataType, new TensorShape(X.flatHeight, depth));
+        else if (inputRank == 2)
+            O = NewOutputTensor(X.dataType, new TensorShape(X.flatHeight, 1, depth, X.channels));
         else
-            O = NewTensor(X.flatHeight, 1, depth, X.flatWidth);
+            O = NewOutputTensor(X.dataType, new TensorShape(X.batch, X.width, depth, X.channels));
 
-        for (int n = 0; n < X.flatHeight; ++n)
+        // rank1: X = n,_,_,_
+        // rank2: X = n,_,_,c
+        // rank3: X = n,_,w,c
+
+        for (int n = 0; n < X.batch; ++n)
         {
             for (int j = 0; j < depth; ++j)
             {
-                for (int i = 0; i < X.flatWidth; ++i)
+                for (int k = 0; k < X.width; ++k)
                 {
-                    int index = (int)X[n, i];
-                    float v = (j == index) ? onValue: offValue;
-                    if (isInput1D)
-                        O[n, j] = v;
-                    else
-                        O[n, 0, j, i] = v;
+                    for (int i = 0; i < X.channels; ++i)
+                    {
+                        if (inputRank == 1)
+                        {
+                            int index = (int)X[n];
+                            float v = (j == index) ? onValue: offValue;
+                            O[n, j] = v;
+                        }
+                        else if (inputRank == 2)
+                        {
+                            int index = (int)X[n, i];
+                            float v = (j == index) ? onValue: offValue;
+                            O[n, 0, j, i] = v;
+                        }
+                        else
+                        {
+                            int index = (int)X[n, 0, k, i];
+                            float v = (j == index) ? onValue: offValue;
+                            O[n, k, j, i] = v;
+                        }
+                    }
                 }
             }
         }
@@ -1934,7 +1982,7 @@ public class ReferenceCPUOps : IOps
         Assert.AreEqual(Rois.flatHeight, Indices.batch);
         Assert.AreEqual(Rois.flatWidth, 4);
 
-        Tensor O = NewTensor(Rois.flatHeight, outputHeight, outputWidth, X.channels);
+        Tensor O = NewTensor(X.dataType, Rois.flatHeight, outputHeight, outputWidth, X.channels);
 
         bool aligned = false;
         float offset = aligned ? 0.5f : 0.0f;
@@ -2003,7 +2051,7 @@ public class ReferenceCPUOps : IOps
 
         int[] outputShape = xShape.ToArray();
         outputShape[axis] = Mathf.Min(k, outputShape[axis]); // Can't have more elements then there are in the original input tensor
-        var O = NewTensor(new TensorShape(outputShape));
+        var O = NewTensor(X.dataType, new TensorShape(outputShape));
         TensorShape oShape = O.shape;
 
         // Determine the iteration order, so that the selected axis is the final loop; Everything else is shifted accordingly
@@ -2099,7 +2147,7 @@ public class ReferenceCPUOps : IOps
             }
         }
 
-        var O = NewTensor(new TensorShape(X.dimensions,nonZeroIndices.Count));
+        var O = NewTensor(X.dataType, new TensorShape(X.dimensions,nonZeroIndices.Count));
         for(int i = 0; i < nonZeroIndices.Count; ++i)
         {
             int destinationTensorDim = 0;
@@ -2128,7 +2176,7 @@ public class ReferenceCPUOps : IOps
         TensorShape iShape = I.shape;
         int[] indicesShape = iShape.ToArray();
 
-        var O = NewTensor(iShape);
+        var O = NewTensor(X.dataType, iShape);
         // Determine the iteration order, so that the selected axis is the final loop; Everything else is shifted accordingly
         int[] iterators = new int[4];         // initialized to all 0s
         int[] iteratorAxes = new int[4];      // initialized below
@@ -2222,7 +2270,7 @@ public class ReferenceCPUOps : IOps
     {
         TensorShape xShape = X.shape;
         axis = xShape.Axis(axis); // Adjust for negative axis values
-        var O = NewTensor(xShape);
+        var O = NewTensor(X.dataType, xShape);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         int height = 1;
@@ -2279,7 +2327,7 @@ public class ReferenceCPUOps : IOps
     {
         TensorShape xShape = X.shape;
         axis = xShape.Axis(axis); // Adjust for negative axis values
-        var O = NewTensor(xShape);
+        var O = NewTensor(X.dataType, xShape);
         Assert.AreEqual(O.flatWidth, X.flatWidth);
 
         int height = 1;
@@ -2865,7 +2913,8 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor Concat(Tensor[] tensors, int axis)
     {
         var concatShape = TensorExtensions.Concat(tensors, axis);
-        var O = NewTensor(concatShape);
+        var dataType = tensors.Length > 0 ? tensors[0].dataType : DataType.Float;
+        var O = NewTensor(dataType, concatShape);
 
         unsafe
         {
@@ -2904,6 +2953,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor StridedSlice(Tensor X, int[] starts4Dor8D, int[] ends4Dor8D, int[] strides4Dor8D)
     {
+
         unsafe
         {
             int* starts = stackalloc int[TensorShape.MaxRank];
@@ -2913,7 +2963,7 @@ public class ReferenceCPUOps : IOps
             TensorExtensions.Get8DParametersNoAlloc(X.shape, ends4Dor8D, ends, 1);
             TensorExtensions.Get8DParametersNoAlloc(X.shape, strides4Dor8D, strides, 1);
 
-            var O = NewTensor(X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides));
+            var O = NewTensor(X.dataType, X.shape.ApplyStridedSlice8DUnsafeNoAlloc(starts, ends, strides));
 
             int* wrappedStartsIndices = ends;//reuse buffer to save a stack allocation.
             for (int i = 0; i < TensorShape.MaxRank; ++i)
@@ -2941,7 +2991,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Tile(Tensor X, int[] repeats)
     {
-        Tensor O = NewTensor(X.shape.Scale(repeats));
+        Tensor O = NewTensor(X.dataType, X.shape.Scale(repeats));
 
         for (var it = new TensorIterator(O); it.IsValid(); it.Next())
         {
@@ -2959,9 +3009,9 @@ public class ReferenceCPUOps : IOps
     }
 
     /// <inheritdoc/>
-    public Tensor ConstantOfShape(TensorShape X, float value)
+    public virtual Tensor ConstantOfShape(TensorShape X, DataType type, float value = 0.0f)
     {
-        Tensor O = NewTensor(X);
+        Tensor O = NewTensor(type, X);
         for (int i = 0; i < O.length; ++i)
             O[i] = value;
 
@@ -2974,7 +3024,7 @@ public class ReferenceCPUOps : IOps
         int[] shape = X.shape.ToArray();
 
         int shapeRank = axis > 0 ? 1 : shape.Length;
-        var O = NewTensor(new TensorShape(shapeRank, 1, 1, 1));
+        var O = NewTensor(X.dataType, new TensorShape(shapeRank, 1, 1, 1));
         if (axis > 0)
         {
             O[0] = shape[axis];
@@ -2992,7 +3042,7 @@ public class ReferenceCPUOps : IOps
 
     private Tensor ApplyElementwiseWithBroadcast(Tensor[] tensors, Func<float, float, float> operation)
     {
-        var O = NewTensorLike(tensors, AllocScope.LayerOutput);
+        var O = NewTensorLike(tensors, AllocScope.LayerOutput, false);
         var A = tensors[0];
         for (int t = 1; t < tensors.Length; ++t)
         {
@@ -3088,7 +3138,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceMin(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3106,7 +3156,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceMax(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3124,7 +3174,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ArgMax(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3145,7 +3195,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ArgMin(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3166,7 +3216,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceSum(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3183,7 +3233,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceMean(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3204,7 +3254,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor ReduceProd(Tensor X, int axis)
     {
-        var O = NewTensor(X.shape.Reduce(axis));
+        var O = NewTensor(X.dataType, X.shape.Reduce(axis));
 
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
@@ -3221,7 +3271,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     private Tensor ApplyLogicalOperator(Tensor tensorA, Tensor tensorB, Func<float, float, float> logicOp)
     {
-        var O = NewTensorLike(new Tensor[] { tensorA, tensorB }, AllocScope.LayerOutput);
+        var O = NewTensorLike(new Tensor[] { tensorA, tensorB }, AllocScope.LayerOutput, false);
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
             var A = tensorA[tensorA.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
@@ -3311,7 +3361,7 @@ public class ReferenceCPUOps : IOps
     /// <inheritdoc/>
     public virtual Tensor Where(Tensor C, Tensor A, Tensor B)
     {
-        var O = NewTensorLike(new [] { C, A, B }, AllocScope.LayerOutput);
+        var O = NewTensorLike(new [] { C, A, B }, AllocScope.LayerOutput, false);
         for (var itO = new TensorIterator(O.shape); itO.IsValid(); itO.Next())
         {
             var x = A[A.IndexWithBroadcast(itO.d0, itO.d1, itO.d2, itO.d3, itO.d4, itO.d5, itO.d6, itO.d7)];
@@ -3332,7 +3382,7 @@ public class ReferenceCPUOps : IOps
     protected virtual Tensor CopyAndReshape(Tensor X, TensorShape shape)
     {
         Assert.AreEqual(X.length, shape.length);
-        var O = NewTensor(shape);
+        var O = NewTensor(X.dataType, shape);
         for (int i = 0; i < X.length; ++i)
             O[i] = X[i];
         return O;
@@ -3401,7 +3451,7 @@ public class ReferenceCPUOps : IOps
             Assert.IsTrue(s[i] == 0 || s[i] == 1);
         }
 
-        var O = NewTensor(newShape);
+        var O = NewTensor(X.dataType, newShape);
         Assert.AreEqual(8, TensorShape.MaxRank);
         for (var it = new TensorIterator(newShape); it.IsValid(); it.Next())
         {
@@ -3421,7 +3471,7 @@ public class ReferenceCPUOps : IOps
         var shape = X.shape;
         shape[axis] = indices.length;
 
-        var O = NewTensor(shape);
+        var O = NewTensor(X.dataType, shape);
 
         Assert.AreEqual(TensorShape.MaxRank, 8);
         for (var it = new TensorIterator(shape); it.IsValid(); it.Next())
@@ -3446,7 +3496,7 @@ public class ReferenceCPUOps : IOps
         Assert.IsTrue(updates.width == X.width && updates.height == X.height);
         var outputShape = X.shape;
 
-        var O = NewTensor(outputShape);
+        var O = NewTensor(X.dataType, outputShape);
 
         for (var n = 0; n < O.batch; ++n)
         for (var h = 0; h < O.height; ++h)
@@ -3463,7 +3513,7 @@ public class ReferenceCPUOps : IOps
                     continue;
 
                 float vw = updates[n % updates.batch, h % updates.height, w % updates.width, idx % updates.channels];
-                
+
                 int indexWrite = O.Index(n, h, w, indexRemap);
                 if (reduction == Layer.ScatterNDReductionMode.None)
                 {
@@ -3561,7 +3611,7 @@ public class ReferenceCPUOps : IOps
             }
         }
 
-        var O = NewTensor(new TensorShape(new [] {selectedIndices.Count, 1, 1, 3}));
+        var O = NewTensor(boxes.dataType, new TensorShape(new [] {selectedIndices.Count, 1, 1, 3}));
         if (selectedIndices.Count > 0)
         {
             for (var i = 0; i < selectedIndices.Count; i++)
@@ -3717,7 +3767,7 @@ public class ReferenceCPUOps : IOps
         Assert.IsTrue(X.dimensions <= 2);
         X = Flatten(X);
 
-        var O = NewTensor(X.flatWidth, X.flatHeight);
+        var O = NewTensor(X.dataType, X.flatWidth, X.flatHeight);
 
         for (int y = 0; y < O.flatHeight; ++y)
             for (int x = 0; x < O.flatWidth; ++x)
@@ -3730,7 +3780,7 @@ public class ReferenceCPUOps : IOps
     public virtual Tensor Transpose(Tensor X, int[] permutations)
     {
         permutations = TensorExtensions.Get8DPermutationsForNHWCPermutationsAndShape(X.shape, permutations);
-        var O = NewTensor(X.shape.Permute(permutations));
+        var O = NewTensor(X.dataType, X.shape.Permute(permutations));
 
         Assert.AreEqual(TensorShape.MaxRank, 8);
         for (var it = new TensorIterator(X); it.IsValid(); it.Next())

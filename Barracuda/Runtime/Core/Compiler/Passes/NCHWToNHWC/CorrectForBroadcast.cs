@@ -161,6 +161,15 @@ namespace Unity.Barracuda.Compiler.Passes
 
         void CorrectDynamicInputsForBroadCast(ref Model nhwc)
         {
+            // for dynamic shape layers, we cannot insert transpose as we are generating correct output
+            Dictionary<string, bool> broadcastSkippableLayers = new Dictionary<string, bool>();
+            for (int l = 0; l < nhwc.layers.Count; l++)
+            {
+                Layer layer = nhwc.layers[l];
+                if (ModelAnalyzer.IsLayerBroadcastSkippable(layer))
+                    broadcastSkippableLayers.Add(layer.name, true);
+            }
+
             // insert transposes before broadcastalbe ops
             for (int l = 0; l < nhwc.layers.Count; l++)
             {
@@ -185,6 +194,9 @@ namespace Unity.Barracuda.Compiler.Passes
                     int inputRank = m_RanksByName[input].Value;
 
                     if (inputRank < 1 || inputRank == maxRank)
+                        continue;
+
+                    if (broadcastSkippableLayers.ContainsKey(input) && broadcastSkippableLayers[input])
                         continue;
 
                     int[] permutations = GetPermutationForBroadcast(maxRank, inputRank, (m_isModelExportedFromNHWC && (m_layersChannelOrder[layer.name] == LayoutTransposeRemovalHelper.ChannelsOrder.NHWC)));

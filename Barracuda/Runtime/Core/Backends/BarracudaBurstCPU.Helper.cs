@@ -160,177 +160,89 @@ internal static class BurstSchedulingHelper
     }
 
     internal static unsafe JobHandle ScheduleXSBO<T>(this T jobData,
-        BurstTensorData pinX,
-        BurstTensorData pinS,
-        BurstTensorData pinB,
-        BurstTensorData pinO,
+        IDependableMemoryResource rX,
+        IDependableMemoryResource rS,
+        IDependableMemoryResource rB,
+        IDependableMemoryResource rO,
         int arrayLength, int innerloopBatchCount,
         FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXSBO
     {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXSBO(pinX, pinS, pinB, pinO);
+        var fenceBeforeJobStart = GetFenceBeforeJobStartXSBO(rX, rS, rB, rO);
 
         JobHandle jobFence;
         {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            void* ptrS = pinS.array.RawAddressAt(pinS.offset);
-            void* ptrB = pinB.array.RawAddressAt(pinB.offset);
-            void* ptrO = pinO.array.RawAddressAt(pinO.offset);
-
-            jobFence = ScheduleXSBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrS, ptrB, ptrO, arrayLength, innerloopBatchCount);
+            jobFence = ScheduleXSBOInternal(jobData, fenceBeforeJobStart, rX.rawPtr, rS.rawPtr, rB.rawPtr, rO.rawPtr, arrayLength, innerloopBatchCount);
         }
 
         if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            jobFence.SetXSBOFences(pinX, pinS, pinB, pinO);
-        }
-
-        return jobFence;
-    }
-
-    internal static unsafe JobHandle ScheduleXSBO<T>(this T jobData,
-        BurstTensorData pinX,
-        FencedMemoryAlloc pinS,
-        FencedMemoryAlloc pinB,
-        BurstTensorData pinO,
-        int arrayLength, int innerloopBatchCount,
-        FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXSBO
-    {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXSBO(pinX, pinS, pinB, pinO);
-
-        JobHandle jobFence;
-        {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            void* ptrO = pinO.array.RawAddressAt(pinO.offset);
-            var ptrS = pinS.data;
-            var ptrB = pinB.data;
-            jobFence = ScheduleXSBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrS, ptrB, ptrO, arrayLength, innerloopBatchCount);
-        }
-
-        if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        {
-            jobFence.SetXSBOFences(pinX, pinS, pinB, pinO);
+            jobFence.SetXSBOFences(rX, rS, rB, rO);
         }
 
         return jobFence;
     }
 
     internal static unsafe JobHandle ScheduleXBO<T>(this T jobData,
-        BurstTensorData pinX,
-        BurstTensorData pinB,
-        BurstTensorData pinO,
+        IDependableMemoryResource X,
+        IDependableMemoryResource B,
+        IDependableMemoryResource O,
         int arrayLength, int innerloopBatchCount,
         FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXBO
     {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXBO(pinX, pinB, pinO);
+        var fenceBeforeJobStart = GetFenceBeforeJobStartXBO(X, B, O);
 
         JobHandle jobFence;
         {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            void* ptrB = pinB.array.RawAddressAt(pinB.offset);
-            void* ptrO = pinO.array.RawAddressAt(pinO.offset);
-            jobFence = ScheduleXBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrB, ptrO, arrayLength, innerloopBatchCount);
+            jobFence = ScheduleXBOInternal(jobData, fenceBeforeJobStart, X.rawPtr, B.rawPtr, O.rawPtr, arrayLength, innerloopBatchCount);
         }
 
         if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            jobFence.SetXBOFences(pinX, pinB, pinO);
-        }
-
-        return jobFence;
-    }
-
-    internal static unsafe JobHandle ScheduleXBO<T>(this T jobData,
-        BurstTensorData pinX,
-        FencedMemoryAlloc pinB,
-        FencedMemoryAlloc pinO,
-        int arrayLength, int innerloopBatchCount,
-        FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXBO
-    {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXBO(pinX, pinB, pinO);
-
-        JobHandle jobFence;
-        {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            var ptrB = pinB.data;
-            var ptrO = pinO.data;
-            jobFence = ScheduleXBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrB, ptrO, arrayLength, innerloopBatchCount);
-        }
-
-        if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        {
-            jobFence.SetXBOFences(pinX, pinB, pinO);
-        }
-
-        return jobFence;
-    }
-
-    internal static unsafe JobHandle ScheduleXBO<T>(this T jobData,
-        FencedMemoryAlloc pinX,
-        FencedMemoryAlloc pinB,
-        FencedMemoryAlloc pinO,
-        int arrayLength, int innerloopBatchCount,
-        FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXBO
-    {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXBO(pinX, pinB, pinO);
-
-        var ptrX = pinX.data;
-        var ptrB = pinB.data;
-        var ptrO = pinO.data;
-        JobHandle jobFence = ScheduleXBOInternal(jobData, fenceBeforeJobStart, ptrX, ptrB, ptrO, arrayLength, innerloopBatchCount);
-
-        if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        {
-            jobFence.SetXBOFences(pinX, pinB, pinO);
+            jobFence.SetXBOFences(X, B, O);
         }
 
         return jobFence;
     }
 
     internal static unsafe JobHandle ScheduleO<T>(this T jobData,
-        BurstTensorData pinO,
+        IDependableMemoryResource O,
         FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         where T : struct, IJob, BurstCPUOps.IJobResourceDeclarationO
     {
-        var fenceBeforeJobStart = pinO.reuse;
+        var fenceBeforeJobStart = O.reuse;
 
         JobHandle jobFence;
         {
-            void* ptrO = pinO.array.RawAddressAt(pinO.offset);
-            jobFence = ScheduleOInternal(jobData, fenceBeforeJobStart, ptrO);
+            jobFence = ScheduleOInternal(jobData, fenceBeforeJobStart, O.rawPtr);
         }
 
         if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            pinO.fence = jobFence;
+            O.fence = jobFence;
         }
 
         return jobFence;
     }
 
     internal static unsafe JobHandle ScheduleXO<T>(this T jobData,
-        BurstTensorData pinX,
-        BurstTensorData pinO,
+        IDependableMemoryResource X,
+        IDependableMemoryResource O,
         int arrayLength, int innerloopBatchCount,
         FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXO
     {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
+        var fenceBeforeJobStart = GetFenceBeforeJobStartXO(X, O);
 
         JobHandle jobFence;
         {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            void* ptrO = pinO.array.RawAddressAt(pinO.offset);
-            jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO, arrayLength, innerloopBatchCount);
+            jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, X.rawPtr, O.rawPtr, arrayLength, innerloopBatchCount);
         }
 
         if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            jobFence.SetXOFences(pinX, pinO);
+            jobFence.SetXOFences(X, O);
         }
 
         return jobFence;
@@ -354,27 +266,6 @@ internal static class BurstSchedulingHelper
         if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
             pinO.fence = jobFence;
-        }
-
-        return jobFence;
-    }
-
-    internal static unsafe JobHandle ScheduleXO<T>(this T jobData,
-        FencedMemoryAlloc pinX,
-        FencedMemoryAlloc pinO,
-        int arrayLength, int innerloopBatchCount,
-        FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXO
-    {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
-
-        var ptrX = pinX.data;
-        var ptrO = pinO.data;
-        JobHandle jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO, arrayLength, innerloopBatchCount);
-
-        if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        {
-            jobFence.SetXOFences(pinX, pinO);
         }
 
         return jobFence;
@@ -406,89 +297,26 @@ internal static class BurstSchedulingHelper
     }
 
     internal static unsafe JobHandle ScheduleXO<T>(this T jobData,
-        BurstTensorData pinX,
-        BurstTensorData pinO,
+        IDependableMemoryResource X,
+        IDependableMemoryResource O,
         FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
         where T : struct, IJob, BurstCPUOps.IJobResourceDeclarationXO
     {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
+        var fenceBeforeJobStart = GetFenceBeforeJobStartXO(X, O);
 
         JobHandle jobFence;
         {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            void* ptrO = pinO.array.RawAddressAt(pinO.offset);
-            jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO);
+            jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, X.rawPtr, O.rawPtr);
         }
 
         if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
         {
-            jobFence.SetXOFences(pinX, pinO);
+            jobFence.SetXOFences(X, O);
         }
 
         return jobFence;
     }
 
-    internal static unsafe JobHandle ScheduleXO<T>(this T jobData,
-        BurstTensorData pinX,
-        FencedMemoryAlloc pinO,
-        int arrayLength, int innerloopBatchCount,
-        FencingHelperMode fencingMode=FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXO
-    {
-        var fenceBeforeJobStart = GetFenceBeforeJobStartXO(pinX, pinO);
-
-        JobHandle jobFence;
-        {
-            void* ptrX = pinX.array.RawAddressAt(pinX.offset);
-            var ptrO = pinO.data;
-            jobFence = ScheduleXOInternal(jobData, fenceBeforeJobStart, ptrX, ptrO, arrayLength, innerloopBatchCount);
-        }
-
-        if (fencingMode==FencingHelperMode.UpdateResourcesFencesOnScheduling)
-        {
-            jobFence.SetXOFences(pinX, pinO);
-        }
-
-        return jobFence;
-    }
-
-    internal static void ScheduleXO<T>(this T jobData, Tensor X, Tensor O)
-        where T : struct, IJob, BurstCPUOps.IJobResourceDeclarationXO
-    {
-        var pinX = BurstCPUOps.Pin(X);
-        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
-        jobData.ScheduleXO(pinX, pinO);
-    }
-
-    internal static void ScheduleXO<T>(this T jobData, Tensor X, Tensor O,
-        int arrayLength, int innerloopBatchCount)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXO
-    {
-        var pinX = BurstCPUOps.Pin(X);
-        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
-        jobData.ScheduleXO(pinX, pinO, arrayLength, innerloopBatchCount);
-    }
-
-    internal static void ScheduleXBO<T>(this T jobData, Tensor X, Tensor B, Tensor O,
-        int arrayLength, int innerloopBatchCount)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXBO
-    {
-        var pinX = BurstCPUOps.Pin(X);
-        var pinB = BurstCPUOps.Pin(B);
-        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
-        jobData.ScheduleXBO(pinX, pinB, pinO, arrayLength, innerloopBatchCount);
-    }
-
-    internal static void ScheduleXSBO<T>(this T jobData, Tensor X, Tensor S, Tensor B, Tensor O,
-        int arrayLength, int innerloopBatchCount)
-        where T : struct, IJobParallelFor, BurstCPUOps.IJobResourceDeclarationXSBO
-    {
-        var pinX = BurstCPUOps.Pin(X);
-        var pinS = BurstCPUOps.Pin(S);
-        var pinB = BurstCPUOps.Pin(B);
-        var pinO = BurstCPUOps.Pin(O, uploadCache: false);
-        jobData.ScheduleXSBO(pinX, pinS, pinB, pinO, arrayLength, innerloopBatchCount);
-    }
     #endregion
 }
 
@@ -595,10 +423,13 @@ internal unsafe class FencedMemoryAlloc : IDependableMemoryResource
 {
     private JobHandle m_ReadFence;
     private JobHandle m_WriteFence;
-    public float* data;
-    public half* halfdata { get { Assert.AreEqual(BarracudaArray.DataType.Half, type); return (half*) data; } }
-    public float* floatdata { get { Assert.AreEqual(BarracudaArray.DataType.Float, type);return data; } }
-    public BarracudaArray.DataType type;
+    private void* data;
+    public void* rawPtr => data;
+    public half* halfdata { get { Assert.AreEqual(DataType.Half, type); return (half*) data; } }
+    public float* floatdata { get { Assert.AreEqual(DataType.Float, type);return (float*) data; } }
+    public DataType type;
+    public int elementCount;
+    public int elementSize;
 
     /// <inheritdoc/>
     public JobHandle fence { get { return m_ReadFence; }  set { m_ReadFence = value; m_WriteFence = value; } }
@@ -606,19 +437,26 @@ internal unsafe class FencedMemoryAlloc : IDependableMemoryResource
     /// <inheritdoc/>
     public JobHandle reuse { get { return m_WriteFence; } set { m_WriteFence = value; } }
 
-    public void Malloc(long size, int alignment, Allocator allocator, BarracudaArray.DataType dataType)
+    public void Allocate(int numElement, DataType dataType, int alignment, Allocator allocator)
     {
-        Assert.IsTrue(data == null, "Please call ClearState() when freeing underlying memory.");
         m_ReadFence = new JobHandle();
         m_WriteFence = new JobHandle();
-        data = (float*)UnsafeUtility.Malloc(size, alignment, allocator);
+        elementCount = numElement;
+        elementSize = BarracudaArray.DataItemSize(dataType);
         type = dataType;
+        Assert.IsTrue(data == null, "Please call ClearState() when freeing underlying memory.");
+        Assert.IsTrue(alignment % elementSize == 0);
+        data = UnsafeUtility.Malloc(elementCount * elementSize, alignment, allocator);
+        Assert.IsTrue(data != null);
     }
 
     public void ClearState()
     {
         m_ReadFence = new JobHandle();
         m_WriteFence = new JobHandle();
+        elementCount = 0;
+        elementSize = 0;
+        type = DataType.Float;
         data = null;
     }
 

@@ -396,26 +396,20 @@ public class ComputeTensorData : UniqueResourceId, ITensorData
     public virtual BarracudaArray SharedAccess(out int offset)
     {
         offset = 0;
-        return new BarracudaArrayFromManagedArray(Download(new TensorShape(0, 0, 0, maxCapacity)));//fp16?
+        return new BarracudaArrayFromManagedArray(Download(new TensorShape(0, 0, 0, maxCapacity)));//TODO fp16
     }
 
     /// <inheritdoc/>
-    public virtual int maxCapacity { get
-    {
-        return m_Shape.length;
-    } }
+    public virtual int maxCapacity => m_Shape.length;
 
     /// <inheritdoc/>
-    public virtual bool inUse { get
-    {
-        return true;
-    } }
+    public virtual DataType dataType => DataType.Float; //todo fp16
 
     /// <inheritdoc/>
-    public virtual bool isGPUMem { get
-    {
-        return true;
-    } }
+    public virtual bool inUse => true;
+
+    /// <inheritdoc/>
+    public virtual bool isGPUMem => true;
 
     /// <summary>
     /// Summary
@@ -697,16 +691,16 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.SetTensor(name, X.shape, XonDevice.buffer, XonDevice.offset);
     }
 
-    internal Tensor NewTensor(ComputeFunc fn, string name, TensorShape shape, AllocScope scope = AllocScope.LayerOutput)
+    internal Tensor NewTensor(ComputeFunc fn, string name, DataType dataType, TensorShape shape, AllocScope scope = AllocScope.LayerOutput)
     {
-        var o = NewTensor(shape, scope, name);
+        var o = NewTensor(dataType, shape, scope, name);
         fn.SetTensor(name, shape, Pin(o).buffer);
         return o;
     }
 
-    internal Tensor Dispatch(ComputeFunc fn, TensorShape outputShape, int workItemsX, int workItemsY, int workItemsZ, string outputName = "O")
+    internal Tensor Dispatch(ComputeFunc fn, DataType dataType, TensorShape outputShape, int workItemsX, int workItemsY, int workItemsZ, string outputName = "O")
     {
-        var o = NewTensor(fn, outputName, outputShape);
+        var o = NewTensor(fn, outputName, dataType, outputShape);
         fn.Dispatch(workItemsX, workItemsY, workItemsZ);
         return o;
     }
@@ -767,7 +761,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
     /// <param name="scale">scale</param>
     /// <param name="bias">bias</param>
     /// <param name="lut">LUT table</param>
-    public void TensorToRenderTexture(Tensor X, RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut)
+    /// <param name="flipY">flips the texture along the Y dimension (optional, default: true)</param>
+    public void TensorToRenderTexture(Tensor X, RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut, bool flipY = true)
     {
         if (!target.enableRandomWrite || !target.IsCreated())
         {
@@ -782,7 +777,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetVector("_Scale", scale);
         fn.shader.SetVector("_Bias", bias);
         fn.shader.SetInts("_Pad", new int[] { batch, 0, 0, fromChannel });
-        fn.shader.SetBool("_FlipY", true);
+        fn.shader.SetBool("_FlipY", flipY);
         if (lut != null)
         {
             fn.SetTexture("X", lut);
@@ -853,7 +848,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         // MatMul implementation in terms of Dense
         var A = (xTranspose) ? Transpose(X): X;
         var B = (yTranspose) ? Transpose(Y): Y;
-        var C = NewTempTensor(new TensorShape(1, B.flatWidth));
+        var C = NewTempTensor(X.dataType, new TensorShape(1, B.flatWidth));
         var Z = Sub(new[] { C, C }); // initialize bias with zeros, TODO will fragment ping pong allocator
 
         var O = Dense(A, B, Z, Layer.FusedActivation.None);
@@ -884,7 +879,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "B", B);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, Oshape.flatWidth, Oshape.flatHeight, 1);
+        var O = Dispatch(fn, X.dataType, Oshape, Oshape.flatWidth, Oshape.flatHeight, 1);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -903,7 +898,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "W", W);
         SetTensor(fn, "B", B);
 
-        var O = Dispatch(fn, Oshape, Oshape.width, Oshape.channels, Oshape.batch);
+        var O = Dispatch(fn, X.dataType, Oshape, Oshape.width, Oshape.channels, Oshape.batch);
 
         return O;
     }
@@ -938,7 +933,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, K.kernelCount, ComputeHelper.IDivC(Oshape.width, 2), ComputeHelper.IDivC(Oshape.height, 2));
+        var O = Dispatch(fn, X.dataType, Oshape, K.kernelCount, ComputeHelper.IDivC(Oshape.width, 2), ComputeHelper.IDivC(Oshape.height, 2));
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -967,7 +962,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad.Take(3).ToArray());
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
+        var O = Dispatch(fn, X.dataType, Oshape, K.kernelCount, Oshape.width, Oshape.height);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -1002,7 +997,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
+        var O = Dispatch(fn, X.dataType, Oshape, K.kernelCount, Oshape.width, Oshape.height);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -1035,7 +1030,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
+        var O = Dispatch(fn, X.dataType, Oshape, K.kernelCount, Oshape.width, Oshape.height);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -1071,7 +1066,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pad", pad);
         fn.shader.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(fn, Oshape, K.kernelCount, Oshape.width, Oshape.height);
+        var O = Dispatch(fn, X.dataType, Oshape, K.kernelCount, Oshape.width, Oshape.height);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -1094,9 +1089,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pool", scale);
 
         if (bilinear) // dispatches over output dimensions (O)
-            return Dispatch(fn, O, O.channels, O.width, O.height);
+            return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
         else // dispatches over input dimensions (X)
-            return Dispatch(fn, O, X.channels, X.width, X.height);
+            return Dispatch(fn, X.dataType, O, X.channels, X.width, X.height);
     }
 
     /// <inheritdoc/>
@@ -1114,9 +1109,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Pool", scale);
 
         if (trilinear) // dispatches over output dimensions (O)
-            return Dispatch(fn, O, O.channels, O.width, O.height);
+            return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
         else // dispatches over input dimensions (X)
-            return Dispatch(fn, O, X.channels, X.width, X.height);
+            return Dispatch(fn, X.dataType, O, X.channels, X.width, X.height);
     }
 
     /// <inheritdoc/>
@@ -1131,7 +1126,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1148,7 +1143,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         fn.shader.SetInts("_Pool", blocksize);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1165,7 +1160,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         fn.shader.SetInts("_Pool", blocksize);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1184,7 +1179,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_Stride", stride);
         fn.shader.SetInts("_Pad", pad);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1214,7 +1209,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.channels, 1, 1);
+        return Dispatch(fn, X.dataType, O, O.channels, 1, 1);
     }
 
     /// <inheritdoc/>
@@ -1239,7 +1234,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.channels, 1, 1);
+        return Dispatch(fn, X.dataType, O, O.channels, 1, 1);
     }
 
     /// <summary>
@@ -1278,7 +1273,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             fn.shader.SetFloat("_Beta", constant);
         }
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
 
@@ -1321,7 +1316,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             fn.shader.SetFloat("_Beta", constant);
         }
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1367,7 +1362,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "W", S);
         SetTensor(fn, "B", B);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1394,7 +1389,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "W", S);
         SetTensor(fn, "B", B);
 
-        var O = Dispatch(fn, Oshape, Oshape.channels, 1, 1);
+        var O = Dispatch(fn, X.dataType, Oshape, Oshape.channels, 1, 1);
 
         if (!IsFusedActivationSupported(fusedActivation))
             O = Activation(fusedActivation.ToString(), O);
@@ -1414,7 +1409,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetFloat("_Epsilon",  bias);
         fn.shader.SetInt("_Axis", size);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     // @TODO: debug & fix
@@ -1435,7 +1430,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             fn.shader.SetFloat("_Seed", UnityEngine.Random.value);
         }
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <summary>
@@ -1455,7 +1450,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetFloat("_Alpha", alpha);
         fn.shader.SetFloat("_Beta",  beta);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1475,7 +1470,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "X", X);
         SetTensor(fn, "W", S);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -1514,7 +1509,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        var O =  Dispatch(fn, Oshape, height, width, 1);
+        var O =  Dispatch(fn, X.dataType, Oshape, height, width, 1);
 
         return O;
     }
@@ -1555,7 +1550,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         SetTensor(fn, "X", X);
 
-        var O =  Dispatch(fn, Oshape, height, width, 1);
+        var O =  Dispatch(fn, X.dataType, Oshape, height, width, 1);
 
         return O;
     }
@@ -1753,6 +1748,15 @@ public class ReferenceComputeOps : ReferenceCPUOps
     }
 
     /// <inheritdoc/>
+    public override Tensor ConstantOfShape(TensorShape X, DataType type, float value = 0.0f)
+    {
+        var fn = new ComputeFunc(ComputeShaderContext.Reference, "ConstantOfShape", GetModelExecutionsReporter());
+        fn.shader.SetFloat("_Alpha", value);
+
+        return Dispatch(fn, type, X, X.channels, X.width, X.height);
+    }
+
+    /// <inheritdoc/>
     public override Tensor Expand(Tensor X, TensorShape newShape)
     {
         Assert.IsTrue(newShape.sequenceLength == X.sequenceLength || X.sequenceLength == 1);
@@ -1764,10 +1768,12 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.IsTrue(newShape.width == X.width || X.width == 1);
         Assert.IsTrue(newShape.channels == X.channels || X.channels == 1);
 
+        X = GetTensorInCurrentMemoryLayoutHelper(X);
+
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Expand", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, newShape, newShape.channels, newShape.width, newShape.height);
+        return Dispatch(fn, X.dataType, newShape, newShape.channels, newShape.width, newShape.height);
     }
 
     internal static Tensor[] s_ElementwiseBroadcastTensors = new Tensor[2];
@@ -1802,7 +1808,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
             fn.shader.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
             fn.shader.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
-            X = Dispatch(fn, O, O.channels, O.width, O.height);
+            X = Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
             isFirstDispatch = false;
         }
 
@@ -1897,7 +1903,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var fn = new ComputeFunc(ComputeShaderContext.Reference, s_ReduceRefKernelNames[kernelName], GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
 
-        var O = Dispatch(fn, oShape, oShape.width, oShape.height, 1);
+        var O = Dispatch(fn, X.dataType, oShape, oShape.width, oShape.height, 1);
 
         if (needTranpose)
             O = Transpose(O, s_ReducePermute);
@@ -2034,22 +2040,25 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "W", A);
         SetTensor(fn, "K", B);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, C.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
-    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue)
+    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank=-1)
     {
-        if (X.shape.sequenceLength != 1 || X.shape.numberOfDirections != 1)
+        if (inputRank == -1)
+            inputRank = X.dimensions;
+
+        if (inputRank >= 4)
             throw new NotImplementedException();
 
-        bool isInput1D = (X.flatWidth == 1);
-
         TensorShape O = new TensorShape();
-        if (isInput1D)
+        if (inputRank == 1)
             O = new TensorShape(X.flatHeight, depth);
+        else if (inputRank == 2)
+            O = new TensorShape(X.flatHeight, 1, depth, X.channels);
         else
-            O = new TensorShape(X.flatHeight, 1, depth, X.flatWidth);
+            O = new TensorShape(X.batch, X.width, depth, X.channels);
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "OneHot", GetModelExecutionsReporter());
 
@@ -2057,8 +2066,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetFloat("_Alpha", onValue);
         fn.shader.SetFloat("_Beta", offValue);
         fn.shader.SetInt("_Axis", depth);
+        fn.shader.SetInts("_Pad", new int[] { inputRank, 0, 0, 0 });
 
-        return Dispatch(fn, O, X.flatHeight, depth, X.flatWidth);
+        return Dispatch(fn, X.dataType, O, X.width, depth, X.channels);
     }
 
     /// <inheritdoc/>
@@ -2078,7 +2088,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetFloat("_Alpha", spatialScale);
         fn.shader.SetInt("_Axis", samplingRatio);
 
-        return Dispatch(fn, O, outputHeight, outputWidth, X.channels);
+        return Dispatch(fn, X.dataType, O, outputHeight, outputWidth, X.channels);
     }
 
     /// <summary>
@@ -2092,7 +2102,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         Assert.AreEqual(X.length, newShape.length);
         Assert.AreEqual(ComputeInfo.ChannelsOrder.NCHW, ComputeInfo.channelsOrder);
 
-        var O = NewTensor(newShape, AllocScope.LayerOutput, "O");
+        var O = NewTensor(X.dataType, newShape, AllocScope.LayerOutput, "O");
 
         if (X.shape.Is4D() && newShape.Is4D())
         {
@@ -2131,7 +2141,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         // However here in CopyAndReshape we want to both copy and change the shape,
         // To be able to piggyback "Copy" kernel we specify new shape when allocating destination tensor,
         // but use shape identical to source when copying.
-        var O = NewTensor(newShape, AllocScope.LayerOutput, "O");
+        var O = NewTensor(X.dataType, newShape, AllocScope.LayerOutput, "O");
         var fn = new ComputeFunc(ComputeShaderContext.Reference, isNHWCCopy?"Copy":"Copy8D", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         var copyShape = X.shape;
@@ -2183,7 +2193,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose2D", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
-        return Dispatch(fn, O, O.flatWidth, O.flatHeight, 1);
+        return Dispatch(fn, X.dataType, O, O.flatWidth, O.flatHeight, 1);
     }
 
     /// <summary>
@@ -2265,9 +2275,9 @@ public class ReferenceComputeOps : ReferenceCPUOps
         fn.shader.SetInts("_ChannelWriteMask", outStride4_7);
 
         if (ComputeInfo.channelsOrder == ComputeInfo.ChannelsOrder.NCHW)
-            return Dispatch(fn, Oshape, X.width, X.height, X.depth);
+            return Dispatch(fn, X.dataType, Oshape, X.width, X.height, X.depth);
         else
-            return Dispatch(fn, Oshape, X.channels, X.width, X.height);
+            return Dispatch(fn, X.dataType, Oshape, X.channels, X.width, X.height);
 
     }
 
@@ -2285,7 +2295,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Transpose", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         fn.shader.SetInts("_Pool", permutations);
-        return Dispatch(fn, O, X.channels, X.width, X.height);
+        return Dispatch(fn, X.dataType, O, X.channels, X.width, X.height);
     }
 
     internal Tensor GetTensorInCurrentMemoryLayoutHelper(Tensor tensor)
@@ -2306,7 +2316,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
         var O = X.shape;
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "TransposeToChannelFirst", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
-        return Dispatch(fn, O, X.channels, X.width, X.height);
+        return Dispatch(fn, X.dataType, O, X.channels, X.width, X.height);
     }
 
     internal static int[] s_ConcatOffsets = new int[4];
@@ -2321,7 +2331,8 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Copy", GetModelExecutionsReporter());
 
-        var O = NewTensor(TensorExtensions.Concat(tensors, axis), AllocScope.LayerOutput);
+        var dataType = tensors.Length > 0 ? tensors[0].dataType : DataType.Float;
+        var O = NewTensor(dataType, TensorExtensions.Concat(tensors, axis), AllocScope.LayerOutput);
 
         var offsets = s_ConcatOffsets;
         Array.Clear(offsets, 0, offsets.Length);
@@ -2409,18 +2420,20 @@ public class ReferenceComputeOps : ReferenceCPUOps
             fn.shader.SetInts("_Pad", s_StridedSliceStart);
             fn.shader.SetInts("_Pool", s_StridedSliceStart8D);
 
-            return Dispatch(fn, O, O.channels, O.width, O.height);
+            return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
         }
     }
 
     /// <inheritdoc/>
     public override Tensor Tile(Tensor X, int[] repeats)
     {
+        X = GetTensorInCurrentMemoryLayoutHelper(X);
+
         var O = X.shape.Scale(repeats);
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "Tile", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
 
-        return Dispatch(fn, O, O.channels, O.width, O.height);
+        return Dispatch(fn, X.dataType, O, O.channels, O.width, O.height);
     }
 
     /// <inheritdoc/>
@@ -2437,16 +2450,17 @@ public class ReferenceComputeOps : ReferenceCPUOps
         SetTensor(fn, "K", indices);
         fn.shader.SetInt("_Axis", axis);
 
-        return Dispatch(fn, outputShape, outputShape.channels, outputShape.width, outputShape.height);
+        return Dispatch(fn, X.dataType, outputShape, outputShape.channels, outputShape.width, outputShape.height);
     }
 
+    /// <inheritdoc/>
     public override Tensor ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
     {
         // only support for scattering on C for now
         Assert.IsTrue(indices.batch == X.batch);
         Assert.IsTrue(updates.width == X.width && updates.height == X.height);
         var outputShape = X.shape;
-           
+
         var fn = new ComputeFunc(ComputeShaderContext.Reference, "ScatterND", GetModelExecutionsReporter());
         SetTensor(fn, "X", X);
         SetTensor(fn, "K", indices);
@@ -2454,7 +2468,7 @@ public class ReferenceComputeOps : ReferenceCPUOps
 
         fn.shader.SetInt("_Axis", (int)reduction);
 
-        return Dispatch(fn, outputShape, outputShape.channels, outputShape.width, outputShape.height);
+        return Dispatch(fn, X.dataType, outputShape, outputShape.channels, outputShape.width, outputShape.height);
     }
 
     /// <inheritdoc/>

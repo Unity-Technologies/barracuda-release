@@ -1,9 +1,10 @@
+// #define DEBUG_TIMING
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.Profiling;
@@ -31,6 +32,29 @@ public static class ModelLoader
     }
 
     /// <summary>
+    /// Return an object oriented representation (aka: `Model`) of a neural network from a binary representation of type `NNModel`.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
+    /// </summary>
+    /// <param name="nnModel">binary representation of model</param>
+    /// <param name="model">object-oriented representation of model (must initialize before calling method)</param>
+    /// <param name="verbose">verbose</param>
+    /// <param name="skipWeights">skip loading weights (fast loading, metadata only)</param>
+    /// <param name="maxTimePerYield">the maximum amount of time to spend between in computation before yielding</param>
+    /// <returns>IEnumerator (use with StartCoroutine)</returns>
+    public static IEnumerator LoadAsync(NNModel nnModel, Model model, bool verbose = false, bool skipWeights = false, float maxTimePerYield = 0.01f)
+    {
+        Assert.IsNotNull(model);
+        var enumerator = LoadAsync(Open(nnModel.modelData.Value), model, verbose, true, skipWeights, maxTimePerYield);
+
+        while (enumerator.MoveNext())
+        {
+            model = (Model)enumerator.Current;
+            if (model != null)
+                yield return null;
+        }
+    }
+
+    /// <summary>
     /// Return an object oriented representation (aka: `Model`) of a neural network from a `.bc` file from the the streaming asset folder.
     /// By default details are not logged to the console, set `verbose` to true to see loading details.
     /// </summary>
@@ -41,6 +65,29 @@ public static class ModelLoader
     public static Model LoadFromStreamingAssets(string filename, bool verbose = false, bool skipWeights = false)
     {
         return Load(Path.Combine(Application.streamingAssetsPath, filename), verbose, skipWeights);
+    }
+
+    /// <summary>
+    /// Return an object oriented representation (aka: `Model`) of a neural network from a `.bc` file from the the streaming asset folder.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
+    /// </summary>
+    /// <param name="filename">file name</param>
+    /// <param name="model">object-oriented representation of model (must initialize before calling method)</param>
+    /// <param name="verbose">verbose</param>
+    /// <param name="skipWeights">skip loading weights (fast loading, metadata only)</param>
+    /// <param name="maxTimePerYield">the maximum amount of time to spend between in computation before yielding</param>
+    /// <returns>IEnumerator (use with StartCoroutine)</returns>
+    public static IEnumerator LoadAsyncFromStreamingAssets(string filename, Model model, bool verbose = false, bool skipWeights = false, float maxTimePerYield = 0.01f)
+    {
+        Assert.IsNotNull(model);
+        var enumerator = LoadAsync(Open(Path.Combine(Application.streamingAssetsPath, filename)), model, verbose, true, skipWeights, maxTimePerYield);
+
+        do
+        {
+            model = (Model)enumerator.Current;
+            if (model != null)
+                yield return null;
+        } while (enumerator.MoveNext());
     }
 
     /// <summary>
@@ -57,16 +104,63 @@ public static class ModelLoader
     }
 
     /// <summary>
+    /// Return an object oriented representation (aka: `Model`) of a neural network from a `.bc` file.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
+    /// </summary>
+    /// <param name="filepath">file name</param>
+    /// <param name="model">object-oriented representation of model (must initialize before calling method)</param>
+    /// <param name="verbose">verbose</param>
+    /// <param name="skipWeights">skip loading weights (fast loading, metadata only)</param>
+    /// <param name="maxTimePerYield">the maximum amount of time to spend between in computation before yielding</param>
+    /// <returns>IEnumerator (use with StartCoroutine)</returns>
+    public static IEnumerator LoadAsync(string filepath, Model model, bool verbose = false, bool skipWeights = false, float maxTimePerYield = 0.01f)
+    {
+        Assert.IsNotNull(model);
+        var enumerator = LoadAsync(Open(filepath), model, verbose, true, skipWeights, maxTimePerYield);
+
+        while (enumerator.MoveNext())
+        {
+            model = (Model)enumerator.Current;
+            if (model != null)
+                yield return null;
+        }
+    }
+
+
+    /// <summary>
     /// Return an object oriented representation (aka: `Model`) of a neural network from a byte[] array.
     /// By default details are not logged to the console, set `verbose` to true to see loading details.
     /// </summary>
-    /// <param name="stream">file name</param>
+    /// <param name="stream">binary representation of model as a byte array</param>
     /// <param name="verbose">verbose</param>
     /// <param name="skipWeights">skip loading weights (fast loading, metadata only)</param>
-    /// <returns></returns>
+    /// <returns>loaded Model</returns>
     public static Model Load(byte[] stream, bool verbose = false, bool skipWeights = false)
     {
         return Load(Open(stream), verbose, true, skipWeights);
+    }
+
+    /// <summary>
+    /// Return an object oriented representation (aka: `Model`) of a neural network from a byte[] array.
+    /// By default details are not logged to the console, set `verbose` to true to see loading details.
+    /// </summary>
+    /// <param name="stream">binary representation of model as a byte array</param>
+    /// <param name="model">object-oriented representation of model (must initialize before calling method)</param>
+    /// <param name="verbose">verbose</param>
+    /// <param name="skipWeights">skip loading weights (fast loading, metadata only)</param>
+    /// <param name="maxTimePerYield">the maximum amount of time to spend between in computation before yielding</param>
+    /// <returns>IEnumerator (use with StartCoroutine)</returns>
+    public static IEnumerator LoadAsync(byte[] stream, Model model, bool verbose = false, bool skipWeights = false, float maxTimePerYield = 0.01f)
+    {
+        Assert.IsNotNull(model);
+        var enumerator = LoadAsync(Open(stream), model, verbose, true, skipWeights, maxTimePerYield);
+
+        while (enumerator.MoveNext())
+        {
+            model = (Model)enumerator.Current;
+            if (model != null)
+                yield return null;
+        }
     }
 
     #region Private and internal
@@ -98,13 +192,30 @@ public static class ModelLoader
         return axis;
     }
 
-    private static Model Load(BinaryReader fileReader, bool verbose = true, bool applyPatching = true, bool skipWeights = false)
+    static Model Load(BinaryReader fileReader, bool verbose = true, bool applyPatching = true, bool skipWeights = false)
+    {
+        Model model = null;
+        var enumerator = LoadAsync(fileReader, null, verbose, applyPatching, skipWeights);
+
+        while (enumerator.MoveNext())
+        {
+            model = (Model)enumerator.Current;
+            if (model != null)
+                break;
+        }
+
+        return model;
+    }
+
+    static IEnumerator LoadAsync(BinaryReader fileReader, Model model, bool verbose = true, bool applyPatching = true, bool skipWeights = false, float maxTimePerYield = 0f)
     {
         using (BinaryReader file = fileReader)
         {
             Profiler.BeginSample("Barracuda.LoadLayers");
+            float timeStart = Time.realtimeSinceStartup;
 
-            Model model = new Model();
+            if (model == null)
+                model = new Model();
             List<Layer> layers = new List<Layer>();
 
             long version = file.ReadInt64() % 0xff; // magic
@@ -116,6 +227,15 @@ public static class ModelLoader
             for (var i = 0; i < count; ++i)
             {
                 model.inputs.Add(new Model.Input {name = ReadString(file), shape = ReadInt32Array(file)});
+
+                if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                {
+#if DEBUG_TIMING
+                    UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                    yield return null;
+                    timeStart = Time.realtimeSinceStartup;
+                }
             }
 
             model.outputs = ReadStringArray(file).ToList();
@@ -130,6 +250,15 @@ public static class ModelLoader
                     input = ReadString(file),
                     output = ReadString(file)
                 });
+
+                if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                {
+#if DEBUG_TIMING
+                    UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                    yield return null;
+                    timeStart = Time.realtimeSinceStartup;
+                }
             }
 
             int numberOfLayers = file.ReadInt32();
@@ -151,9 +280,27 @@ public static class ModelLoader
 
                 layer.inputs        = ReadStringArray(file);
 
+                if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                {
+#if DEBUG_TIMING
+                    UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                    yield return null;
+                    timeStart = Time.realtimeSinceStartup;
+                }
+
                 layer.datasets      = new Layer.DataSet[file.ReadInt32()];
                 for (var i = 0; i < layer.datasets.Length; ++i)
                 {
+                    if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                    {
+#if DEBUG_TIMING
+                        UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                        yield return null;
+                        timeStart = Time.realtimeSinceStartup;
+                    }
+
                     layer.datasets[i].name            = ReadString(file);
                     layer.datasets[i].shape           = new TensorShape(ReadInt32Array(file));
                     layer.datasets[i].offset          = file.ReadInt64();
@@ -175,21 +322,43 @@ public static class ModelLoader
 
                 if (applyPatching)
                     PatchLayer(layers, layer);
+
+                if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                {
+#if DEBUG_TIMING
+                    UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart + ": " + l);
+#endif
+                    yield return null;
+                    timeStart = Time.realtimeSinceStartup;
+                }
             }
             model.layers = layers;
 
             Int64 numWeightsToRead = 0;
             for (var l = 0; l < model.layers.Count; ++l)
+            {
                 for (var d = 0; d < model.layers[l].datasets.Length; ++d)
+                {
                     numWeightsToRead += model.layers[l].datasets[d].length;
+
+                    if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                    {
+#if DEBUG_TIMING
+                        UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                        yield return null;
+                        timeStart = Time.realtimeSinceStartup;
+                    }
+                }
+            }
 
             Profiler.EndSample();
 
-            BarracudaArray.DataType weightsDataType = BarracudaArray.DataType.Float;
+            DataType weightsDataType = DataType.Float;
             if (version >= 20)
             {
                 //Version 20 introduce weights type but full model need to be in the same type. Per layer no supported yet.
-                weightsDataType = (BarracudaArray.DataType)file.ReadInt32();
+                weightsDataType = (DataType)file.ReadInt32();
             }
 
             if (version >= 19)
@@ -204,11 +373,31 @@ public static class ModelLoader
                 SkipLargeByteArray(file, numWeightsToRead * BarracudaArray.DataItemSize(weightsDataType));
             else
             {
-                var sharedWeightsArray = ReadLargeWeightArray(file, numWeightsToRead, weightsDataType);
-                Assert.AreEqual(weightsDataType, sharedWeightsArray.Type);
+                if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                {
+#if DEBUG_TIMING
+                    UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                    yield return null;
+                    timeStart = Time.realtimeSinceStartup;
+                }
 
+                var sharedWeightsArray = ReadLargeWeightArray(file, numWeightsToRead, weightsDataType);
+
+                Assert.AreEqual(weightsDataType, sharedWeightsArray.Type);
                 for (var l = 0; l < model.layers.Count; ++l)
+                {
                     model.layers[l].weights = sharedWeightsArray;
+
+                    if (maxTimePerYield > 0 && Time.realtimeSinceStartup - timeStart > maxTimePerYield)
+                    {
+#if DEBUG_TIMING
+                        UnityEngine.Debug.Log(Time.realtimeSinceStartup - timeStart);
+#endif
+                        yield return null;
+                        timeStart = Time.realtimeSinceStartup;
+                    }
+                }
             }
 
             // Importer Reporting
@@ -237,7 +426,7 @@ public static class ModelLoader
                 //Do nothing Importer Reporting data might not be present for backward compatibility reasons
             }
 
-            return model;
+            yield return model;
         }
     }
 
@@ -298,7 +487,7 @@ public static class ModelLoader
         file.BaseStream.Seek(count, SeekOrigin.Current);
     }
 
-    private static BarracudaArray ReadLargeWeightArray(BinaryReader file, Int64 count, BarracudaArray.DataType dataType)
+    private static BarracudaArray ReadLargeWeightArray(BinaryReader file, Int64 count, DataType dataType)
     {
         int bytesToRead;
         Int64 bytesToReadInt64 = count * BarracudaArray.DataItemSize(dataType);
@@ -322,10 +511,14 @@ public static class ModelLoader
             int currentPosition = (int)memoryStream?.Position;
             remappedWeights = new BarracudaArrayFromManagedArray(sourceBuffer, currentPosition, dataType, (int) count);
         }
-        catch (Exception e)
+        #if UNITY_EDITOR
+        catch (InvalidOperationException e)
         {
             UnityEngine.Debug.Log("ModelLoader: Can't remap memory stream to underlying data type, allocation and copy will occurs. Exception: " + e);
         }
+        #else
+        catch (InvalidOperationException) {}
+        #endif
         if (remappedWeights != null)
         {
             //We remapped memory. Need to advance stream position to be consistent with read behavior.

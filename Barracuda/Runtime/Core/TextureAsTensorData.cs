@@ -344,6 +344,7 @@ public class TextureAsTensorData : UniqueResourceId, ITensorData
         }
     }
 
+    // TODO@: expose now that Download necesarrily goes via the gpu (compute/pixel) ?
     private float[] TextureToTensorDataCache(TensorShape shape)
     {
         float[] tensorDataCache = new float[shape.length];
@@ -382,33 +383,34 @@ public class TextureAsTensorData : UniqueResourceId, ITensorData
             }
         }
         else
-            return TextureToTensorDataCache(shape);
+        {
+            var gpuBackend = new PixelShaderOps(null);
+            using (var pixelShaderTensorData =
+                gpuBackend.TextureToTensorData(this, "__internalDownloadTextureToTensorData"))
+            {
+                return pixelShaderTensorData.Download(shape);
+            }
+        }
     }
 
     /// <inheritdoc/>
     public virtual BarracudaArray SharedAccess(out int offset)
     {
         offset = 0;
-        return new BarracudaArrayFromManagedArray(Download(shape)); //fp16?
+        return new BarracudaArrayFromManagedArray(Download(shape)); //TODO fp16
     }
 
     /// <inheritdoc/>
-    public virtual int maxCapacity
-    {
-        get { return m_Shape.length; }
-    }
+    public virtual int maxCapacity => m_Shape.length;
 
     /// <inheritdoc/>
-    public virtual bool inUse
-    {
-        get { return true; }
-    }
+    public virtual DataType dataType => DataType.Float; //todo fp16
 
     /// <inheritdoc/>
-    public virtual bool isGPUMem
-    {
-        get { return true; }
-    }
+    public virtual bool inUse => true;
+
+    /// <inheritdoc/>
+    public virtual bool isGPUMem => true;
 
     /// <summary>
     /// Dispose

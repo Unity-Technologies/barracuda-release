@@ -65,9 +65,9 @@ namespace Unity.Barracuda
             var model = converter.Convert(ctx.assetPath);
 
             if (weightsTypeMode == ONNXModelConverter.DataTypeMode.ForceHalf)
-                model.ConvertWeights(BarracudaArray.DataType.Half);
+                model.ConvertWeights(DataType.Half);
             else if (weightsTypeMode == ONNXModelConverter.DataTypeMode.ForceFloat)
-                model.ConvertWeights(BarracudaArray.DataType.Float);
+                model.ConvertWeights(DataType.Float);
 
             NNModelData assetData = ScriptableObject.CreateInstance<NNModelData>();
             using (var memoryStream = new MemoryStream())

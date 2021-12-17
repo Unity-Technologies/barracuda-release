@@ -12,7 +12,7 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 {
     internal class RankInference
     {
-        static public int? InferOutputRank(Layer layer, int[] inputRanks)
+        static public int? InferOutputRank(Layer layer, int?[] inputRanks, TensorShape?[] inputShapes)
         {
             switch (layer.type)
             {
@@ -25,47 +25,70 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     if (inputRanks.Length != 2)
                         return null;
+                    if (inputRanks.Any(x => x == null))
+                        return null;
                     return inputRanks.Max();
                 }
                 case Layer.Type.Conv3D:
                 {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.*Conv3D* inputRanks.Length"); Assert.IsTrue(inputRanks[0] >= 2 && inputRanks[0] <= 5, "InferOutputRank.*Conv3D* inputRanks");
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.*Conv3D* inputRanks.Length"); Assert.IsTrue(inputRanks[0].Value >= 2 && inputRanks[0].Value <= 5, "InferOutputRank.*Conv3D* inputRanks");
                     return inputRanks[0];
                 }
                 case Layer.Type.Conv2D:
                 case Layer.Type.DepthwiseConv2D:
                 case Layer.Type.Conv2DTrans:
                 {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.*Conv2D* inputRanks.Length"); Assert.IsTrue(inputRanks[0] >= 2 && inputRanks[0] <= 4, "InferOutputRank.*Conv2D* inputRanks"); // conv1D/2D are done via conv2D
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.*Conv2D* inputRanks.Length"); Assert.IsTrue(inputRanks[0].Value >= 2 && inputRanks[0].Value <= 4, "InferOutputRank.*Conv2D* inputRanks"); // conv1D/2D are done via conv2D
                     return inputRanks[0];
                 }
                 case Layer.Type.DepthToSpace:
                 case Layer.Type.SpaceToDepth:
                 {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.ToDepth/Space inputRanks.Length"); Assert.AreEqual(inputRanks[0], 4, "InferOutputRank.ToDepth/Space inputRanks");
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.ToDepth/Space inputRanks.Length"); Assert.AreEqual(inputRanks[0].Value, 4, "InferOutputRank.ToDepth/Space inputRanks");
                     return 4;
                 }
                 case Layer.Type.Upsample3D:
                 {
-                    Assert.AreEqual(inputRanks[0], 5, "InferOutputRank.*Upsample3D inputRanks");
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.AreEqual(inputRanks[0].Value, 5, "InferOutputRank.*Upsample3D inputRanks");
                     return 5;
                 }
                 case Layer.Type.Upsample2D:
                 case Layer.Type.Resample2D:
                 {
-                    Assert.AreEqual(inputRanks[0], 4, "InferOutputRank.*Upsample2D inputRanks");
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.AreEqual(inputRanks[0].Value, 4, "InferOutputRank.*Upsample2D inputRanks");
                     return 4;
                 }
                 case Layer.Type.MaxPool2D:
                 case Layer.Type.AvgPool2D:
                 {
-                    Assert.IsTrue(inputRanks[0] == 4 || inputRanks[0] == 3, "InferOutputRank.*Pool2D inputRanks");
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.IsTrue(inputRanks[0].Value == 4 || inputRanks[0].Value == 3, "InferOutputRank.*Pool2D inputRanks");
                     return inputRanks[0];
                 }
                 case Layer.Type.GlobalMaxPool2D:
                 case Layer.Type.GlobalAvgPool2D:
                 {
-                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.Global*Pool2D inputRanks.Length"); Assert.IsTrue(inputRanks[0] == 4 || inputRanks[0] == 3, "InferOutputRank.Global*Pool2D inputRanks");
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.Global*Pool2D inputRanks.Length"); Assert.IsTrue(inputRanks[0].Value == 4 || inputRanks[0].Value == 3, "InferOutputRank.Global*Pool2D inputRanks");
                     return inputRanks[0];
                 }
                 case Layer.Type.Pad:
@@ -85,6 +108,9 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     return 2;
                 case Layer.Type.OneHot:
                 {
+                    if (inputRanks[0] == null)
+                        return null;
+
                     Assert.AreEqual(inputRanks.Length, 1, "InferOutputRank.OneHot inputRanks.Length");
                     return inputRanks[0] + 1;
                 }
@@ -109,6 +135,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.LogicalAnd:
                 case Layer.Type.LogicalXor:
                 {
+                    if (inputRanks.Any(x => x == null))
+                        return null;
                     return inputRanks.Max();
                 }
                 case Layer.Type.Range:
@@ -128,6 +156,8 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 case Layer.Type.ArgMax:
                 case Layer.Type.ArgMin:
                 {
+                    if (inputRanks[0] == null)
+                        return null;
                     if (layer.alpha != 1.0f)
                         return inputRanks[0] - 1;
                     else
@@ -141,12 +171,20 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                         return inputRanks[0];
 
                     if (inputRanks.Length == 1)
-                        return null;
+                    {
+                        if (inputShapes[0] != null)
+                            return (inputShapes[0].Value)[TensorShape.DataBatch];
+                        else
+                            return null;
+                    }
                     else
                         return layer.pool.Length;
                 }
                 case Layer.Type.Reshape:
                 {
+                    if (inputShapes.Length == 2 && inputShapes[1] != null)
+                        return (inputShapes[1].Value)[TensorShape.DataBatch];
+
                     if (inputRanks.Length > 1)
                         // shape is in the tensor and calculated at runtime, so we can't know it
                         return null;
@@ -161,7 +199,10 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                     if (inputRanks.Length > 1)
                         return null;
 
-                    return  Mathf.Max(inputRanks[0], layer.pool.Length);
+                    if(inputRanks[0] == null)
+                        return null;
+
+                    return  Mathf.Max(inputRanks[0].Value, layer.pool.Length);
                 }
                 case Layer.Type.Transpose:
                     return inputRanks[0];
@@ -169,9 +210,16 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     if (inputRanks.Length != 2)
                         return null;
-                    // Gather can implicilty do a squeeze in inputs are single int
+
+                    if (inputRanks[0] == null)
+                        return null;
+
+                    if (inputRanks[1] == null)
+                        return null;
+
+                    // Gather can implicitly do a squeeze in inputs are single int
                     // we don't but instead append a squeeze op after Gather if that is the case
-                    return inputRanks[0] + Mathf.Max(inputRanks[1], 1) - 1;
+                    return inputRanks[0] + Mathf.Max(inputRanks[1].Value, 1) - 1;
                 }
                 case Layer.Type.ScatterND:
                     return inputRanks[0];
@@ -186,17 +234,36 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
                 {
                     if (inputRanks.Length > 1)
                         return null;
-                    return inputRanks[0] - layer.pool.Length;
+
+                    if(inputRanks[0] == null)
+                        return null;
+
+                    return inputRanks[0].Value - layer.pool.Length;
                 }
                 case Layer.Type.Unsqueeze:
                 {
                     if (inputRanks.Length > 1)
                         return null;
-                    return inputRanks[0] + layer.pool.Length;
+
+                    if(inputRanks[0] == null)
+                        return null;
+
+                    return inputRanks[0].Value + layer.pool.Length;
                 }
                 case Layer.Type.Concat:
                 {
-                    return inputRanks.Max();
+                    if (inputRanks.Any(x => x == null))
+                        return null;
+
+                    int rank = 0;
+
+                    for (int i = 0; i < inputRanks.Length; i++)
+                    {
+                        if (inputRanks[i] != null)
+                            rank = Math.Max(rank, inputRanks[i].Value);
+                    }
+
+                    return rank;
                 }
                 case Layer.Type.StridedSlice:
                     // TODO : figure out if slice can produce lower rank output
@@ -240,18 +307,15 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
         {
             foreach (var l in model.layers)
             {
-                List<int> inputRanks = new List<int>();
+                TensorShape?[] layerInputShapes = new TensorShape?[l.inputs.Length];
+                int?[] layerInputShapeRanks = new int?[l.inputs.Length];
                 for (int i = 0; i < l.inputs.Length; i++)
                 {
                     ranksByName.TryGetValue(l.inputs[i], out int? irank);
-
-                    if (irank == null)
-                        break;
-
-                    inputRanks.Add(irank.Value);
+                    layerInputShapeRanks[i] = irank;
                 }
 
-                int? outputRank = ((inputRanks.Count == 0) && (l.inputs.Length != 0)) ? null : InferOutputRank(l, inputRanks.ToArray());
+                int? outputRank = InferOutputRank(l, layerInputShapeRanks, layerInputShapes);
 
                 if (ranksByName.ContainsKey(l.name) && ranksByName[l.name] != null && outputRank != null)
                     ranksByName[l.name] = Mathf.Max(ranksByName[l.name].Value, outputRank.Value);
@@ -274,18 +338,17 @@ namespace Unity.Barracuda.Compiler.IRShapeInferenceHelper
 
             foreach (var l in model.layers)
             {
-                List<int> inputRanks = new List<int>();
+                TensorShape?[] layerInputShapes = new TensorShape?[l.inputs.Length];
+                int?[] layerInputShapeRanks = new int?[l.inputs.Length];
+
                 for (int i = 0; i < l.inputs.Length; i++)
                 {
                     ranksByName.TryGetValue(l.inputs[i], out int? irank);
 
-                    if (irank == null)
-                        break;
-
-                    inputRanks.Add(irank.Value);
+                    layerInputShapeRanks[i] = irank;
                 }
 
-                int? outputRank = ((inputRanks.Count == 0) && (l.inputs.Length != 0)) ? null : InferOutputRank(l, inputRanks.ToArray());
+                int? outputRank = InferOutputRank(l, layerInputShapeRanks, layerInputShapes);
 
                 ranks.Add(outputRank);
                 ranksByName.Add(l.name, outputRank);

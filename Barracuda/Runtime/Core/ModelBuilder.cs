@@ -148,10 +148,10 @@ namespace Unity.Barracuda
             layer.datasets = new Layer.DataSet[1];
             layer.datasets[0].name            = name;
             layer.datasets[0].shape           = tensor.shape;
-            layer.datasets[0].itemSizeInBytes = 4;
+            layer.datasets[0].itemSizeInBytes = 4;//TODO fp16
             layer.datasets[0].length          = tensor.shape.length;
             layer.datasets[0].offset          = 0;
-            layer.weights                     = new BarracudaArray(tensor.shape.length);
+            layer.weights                     = new BarracudaArray(tensor.shape.length, tensor.dataType);
             tensor.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
 
             if (insertionIndex < 0 || insertionIndex >= m_Model.layers.Count)
@@ -188,7 +188,8 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = scale.shape.length;
-            layer.weights                     = new BarracudaArray(scale.shape.length + bias.shape.length);
+            Assert.AreEqual(scale.dataType, bias.dataType);
+            layer.weights                     = new BarracudaArray(scale.shape.length + bias.shape.length, scale.dataType);
 
             scale.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
             bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
@@ -286,7 +287,8 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = scale.shape.length;
-            layer.weights                     = new BarracudaArray(scale.shape.length + bias.shape.length);
+            Assert.AreEqual(scale.dataType, bias.dataType);
+            layer.weights                     = new BarracudaArray(scale.shape.length + bias.shape.length, scale.dataType);
             layer.beta                        = epsilon;
 
             scale.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
@@ -324,7 +326,8 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = weight.shape.length;
-            layer.weights                     = new BarracudaArray(weight.shape.length + bias.shape.length);
+            Assert.AreEqual(weight.dataType, bias.dataType);
+            layer.weights                     = new BarracudaArray(weight.shape.length + bias.shape.length, weight.dataType);
 
             weight.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
             bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
@@ -356,7 +359,8 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length = bias.shape.length;
             layer.datasets[1].offset = weight.shape.length;
-            layer.weights = new BarracudaArray(weight.shape.length + bias.shape.length);
+            Assert.AreEqual(weight.dataType, bias.dataType);
+            layer.weights = new BarracudaArray(weight.shape.length + bias.shape.length, weight.dataType);
 
             weight.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
             bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);
@@ -402,7 +406,8 @@ namespace Unity.Barracuda
             layer.datasets[1].itemSizeInBytes = 4;
             layer.datasets[1].length          = bias.shape.length;
             layer.datasets[1].offset          = kernel.shape.length;
-            layer.weights                     = new BarracudaArray(kernel.shape.length + bias.shape.length);
+            Assert.AreEqual(kernel.dataType, bias.dataType);
+            layer.weights                     = new BarracudaArray(kernel.shape.length + bias.shape.length, kernel.dataType);
 
             kernel.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, 0);
             bias.ToReadOnlyArray().CopyToBarracudaArray(layer.weights, layer.datasets[1].offset);

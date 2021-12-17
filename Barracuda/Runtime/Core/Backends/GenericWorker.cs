@@ -24,6 +24,7 @@ public class GenericWorker : IWorker
     private string m_DefaultInputName;
     private string m_DefaultOutputName;
     private Dictionary<string, TensorShape> m_InputShapes = new Dictionary<string, TensorShape>();
+    private DataType m_ActivationsDataType = DataType.Float;
     private IOps m_Ops;
     private IVars m_Vars;
     private IModelCompiler m_ModelCompiler;
@@ -129,12 +130,13 @@ public class GenericWorker : IWorker
     }
 
     /// <inheritdoc/>
-    public virtual void PrepareForInput(IDictionary<string, TensorShape> inputShapes)
+    public virtual void PrepareForInput(IDictionary<string, TensorShape> inputShapes, DataType dataType)
     {
         m_InputShapes.Clear();
         foreach (var input in inputShapes)
             m_InputShapes.Add(input.Key, input.Value);
-        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes, m_TakeoverWeights);
+        m_ActivationsDataType = dataType;//TODO fp16. for now all activations are expected to share the same data type
+        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes, m_TakeoverWeights, m_ActivationsDataType);
     }
 
     /// <inheritdoc/>
@@ -148,7 +150,10 @@ public class GenericWorker : IWorker
 
         // if single input network, then we have enough information to prepare network for execution
         if (m_Model.inputs.Count <= 1 && name == m_DefaultInputName)
-            PrepareForInput(new Dictionary<string, TensorShape> { { name, x.shape } }); // @TODO: get rid of allocation
+        {
+            m_ActivationsDataType = x.dataType;
+            PrepareForInput(new Dictionary<string, TensorShape> { { name, x.shape } }, m_ActivationsDataType); // @TODO: get rid of allocation
+        }
 
         m_InputShapes[name] = x.shape;
     }
@@ -235,7 +240,7 @@ public class GenericWorker : IWorker
         m_Ops.GetModelExecutionsReporter()?.TakeMemorySnapshot(m_Ops, m_Vars, "Before model execution, step1: After Allocator reset");
 #endif //ENABLE_BARRACUDA_STATS
 
-        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes, m_TakeoverWeights);
+        m_Vars.PrepareStorage(m_Model, m_Ops, m_InputShapes, m_TakeoverWeights, m_ActivationsDataType);
 
         if (m_ModelCompiler != null)
             m_ModelCompiler.PrepareModel(m_Model, m_InputShapes, m_Vars);
@@ -353,8 +358,11 @@ public class GenericWorker : IWorker
                 if (inputs.Length > 1)
                 {
                     var sizeTensor = inputs[1];
-                    Assert.AreEqual(sizeTensor.length, 4);
-                    size = new int[] {(int)sizeTensor[2], (int)sizeTensor[1]};
+                    Assert.IsTrue(sizeTensor.length == 4 || sizeTensor.length == 8);
+                    if (sizeTensor.length == 4)
+                        size = new int[] {(int)sizeTensor[2], (int)sizeTensor[1]};
+                    else
+                        size = new int[] {(int)sizeTensor[6], (int)sizeTensor[5]};
                 }
                 X = m_Ops.Resample2D(X, size, bilinear);
             }
@@ -586,7 +594,9 @@ public class GenericWorker : IWorker
                 Assert.AreEqual(l.pool.Length, 1);
                 int depth = l.pool[0];
                 float on = l.alpha, off = l.beta;
-                X = m_Ops.OneHot(X, depth, on, off);
+                int inputRank = l.axis;
+                inputRank = inputRank < 0 ? X.dimensions : inputRank;
+                X = m_Ops.OneHot(X, depth, on, off, inputRank);
             }
             else if (l.type == Layer.Type.RoiAlign)
             {
@@ -839,7 +849,10 @@ public class GenericWorker : IWorker
                 for (int i = 0; i < 8; i++)
                     tiledShape[i] = Mathf.Max(shape[i], inputShape[i]);
 
-                X = m_Ops.Expand(X, new TensorShape(tiledShape));
+                if (Enumerable.SequenceEqual(tiledShape, X.shape.ToArray()))
+                    X = m_Ops.Copy(X);
+                else
+                    X = m_Ops.Expand(X, new TensorShape(tiledShape));
             }
             else if (l.type == Layer.Type.Shape)
             {
@@ -1061,7 +1074,7 @@ public class GenericWorker : IWorker
                 Profiler.BeginSample ("Barracuda.ConstantOfShape");
 
                 var size = inputs[0].shape;
-                if(l.axis != 1)
+                if (l.axis != 1)
                 {
                     // dynamic shape support: shape operations cannot be performed on padded shapes, need to expand it here
                     var inputShape = new float[inputs[0].length];
@@ -1069,7 +1082,7 @@ public class GenericWorker : IWorker
                     size = Compiler.IRShapeInferenceHelper.ShapeInference.OnnxLayoutToBarracudaTensorShape(Array.ConvertAll(inputShape, x => (int)x));
                 }
 
-                X = m_Ops.ConstantOfShape(size, l.alpha);
+                X = m_Ops.ConstantOfShape(size, X.dataType, l.alpha);
             }
             // Activations
             else if (l.type == Layer.Type.Activation)
@@ -1437,7 +1450,7 @@ internal class GenericVars : IVars, IVarsStatistics
         m_TensorsByName[name] = x;
     }
 
-    public virtual void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights)
+    public virtual void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights, DataType dataType)
     {
         ValidateGlobalInputs(model, inputShapes);
 
@@ -1464,7 +1477,7 @@ internal class GenericVars : IVars, IVarsStatistics
             if (!m_TensorsByName.ContainsKey(mem.input))
             {
                 // initialize memories that haven't been explicitly set
-                var tensor = m_Allocator.Alloc(mem.shape, AllocScope.LayerOutput);
+                var tensor = m_Allocator.Alloc(mem.shape, AllocScope.LayerOutput, dataType);
                 SetInput(mem.input, tensor);
                 m_ModelTensors.Add(tensor);
             }
@@ -1630,12 +1643,12 @@ internal class GenericVarsWithReuse : GenericVars
         m_Temporary = null;
     }
 
-    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights)
+    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights, DataType dataType)
     {
         if(m_CachedInputShapes != inputShapes)
         {
             m_CachedInputShapes = inputShapes;
-            base.PrepareStorage(model, ops, inputShapes, takeoverWeights);
+            base.PrepareStorage(model, ops, inputShapes, takeoverWeights, dataType);
         }
 
         ReleaseTemporary();
@@ -1723,9 +1736,9 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
         m_LayerScopedAllocator.PostLayerCleanup();
     }
 
-    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights)
+    public override void PrepareStorage(Model model, IOps ops, IDictionary<string, TensorShape> inputShapes, bool takeoverWeights, DataType dataType)
     {
-        base.PrepareStorage(model, ops, inputShapes, takeoverWeights);
+        base.PrepareStorage(model, ops, inputShapes, takeoverWeights, dataType);
 
         if (m_CachedModel != model)
         {
@@ -1733,8 +1746,8 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
             var allocator = m_InferenceScopedPingPongAllocator;
 
             var maxShape = ModelAnalyzer.FindLargestNecessaryTensorShape(model, inputShapes);
-            var alloc1 = allocator.Alloc(maxShape, AllocScope.LayerOutput);
-            var alloc2 = allocator.Alloc(maxShape, AllocScope.LayerOutput);
+            var alloc1 = allocator.Alloc(maxShape, AllocScope.LayerOutput, dataType);
+            var alloc2 = allocator.Alloc(maxShape, AllocScope.LayerOutput, dataType);
             alloc1 = ops.PrepareNoAlloc(alloc1);
             alloc2 = ops.PrepareNoAlloc(alloc2);
             allocator.Release(alloc1, false);
@@ -1784,25 +1797,25 @@ internal class GenericVarsWithPreallocation : GenericVarsWithReuse, ITensorAlloc
                allocator == m_LayerScopedAllocator;
     }
 
-    public virtual Tensor Alloc(TensorShape shape, AllocScope scope)
+    public virtual Tensor Alloc(TensorShape shape, AllocScope scope, DataType dataType)
     {
         if (scope == AllocScope.InternalToLayer)
-            return m_LayerScopedAllocator.Alloc(shape, scope);
+            return m_LayerScopedAllocator.Alloc(shape, scope, dataType);
 
         if (layerRequiresStorage)
-            return m_InferenceScopedStorageAllocator.Alloc(shape, scope);
+            return m_InferenceScopedStorageAllocator.Alloc(shape, scope, dataType);
         else
-            return m_InferenceScopedPingPongAllocator.Alloc(shape, scope);
+            return m_InferenceScopedPingPongAllocator.Alloc(shape, scope, dataType);
     }
-    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope)
+    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope, DataType dataType)
     {
         if (scope == AllocScope.InternalToLayer)
-            return m_LayerScopedAllocator.Alloc(shape, scope);
+            return m_LayerScopedAllocator.Alloc(shape, buffer, scope, dataType);
 
         if (layerRequiresStorage)
-            return m_InferenceScopedStorageAllocator.Alloc(shape, buffer, scope);
+            return m_InferenceScopedStorageAllocator.Alloc(shape, buffer, scope, dataType);
         else
-            return m_InferenceScopedPingPongAllocator.Alloc(shape, buffer, scope);
+            return m_InferenceScopedPingPongAllocator.Alloc(shape, buffer, scope, dataType);
     }
     public virtual void MoveToDevice(Tensor x, ITensorData newBuffer, ITensorData oldBuffer, bool disposeDetachedBufferHint)
     {

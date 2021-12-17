@@ -70,7 +70,7 @@ namespace Unity.Barracuda.Compiler.Passes
                 FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName, warnings);
                 // TODO optimization, pass in index, or add shape
                 IRShapeInferenceHelper.RankInference.UpdateKnownTensorRanks(model, ranksByName);
-                IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
+                IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ref ranksByName, ref shapesByName);
 
                 if (ModelOptimizer.IsLayerConstant(layer))
                     knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape, layer.weights);
@@ -199,8 +199,8 @@ namespace Unity.Barracuda.Compiler.Passes
                 // re-evaluate shapes
                 FuseInputsIntoLayer(ref layer, knownLayersValue, ranksByName, null);//TODO handle potential folding errors/warnings
                 // TODO optimization, pass in index, or add shape
+                IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ref ranksByName, ref shapesByName);
                 IRShapeInferenceHelper.RankInference.UpdateKnownTensorRanks(model, ranksByName);
-                IRShapeInferenceHelper.ShapeInference.UpdateKnownTensorShapesNCHW(model, ranksByName, ref shapesByName);
 
                 if (ModelOptimizer.IsLayerConstant(layer))
                     knownLayersValue[layer.name] = new Tensor(layer.datasets[0].shape, layer.weights);
@@ -528,7 +528,11 @@ namespace Unity.Barracuda.Compiler.Passes
 
                         layer.type = Layer.Type.Load;
 
-                        layer.axis = input.dimensions; // TODO real rank
+                        int rank = input.dimensions;
+                        if (ranksByName[layer.name] != null)
+                            rank = ranksByName[layer.name].Value;
+
+                        layer.axis = rank;
                         layer.datasets = new Layer.DataSet[1];
                         layer.datasets[0].name = layer.name;
                         layer.datasets[0].shape = tensorShape;

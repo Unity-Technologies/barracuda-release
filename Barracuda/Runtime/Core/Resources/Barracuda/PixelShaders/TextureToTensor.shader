@@ -25,8 +25,8 @@ Shader "Barracuda/TextureToTensor"
             bool _FlipY;
             int4 _ChannelReadMap;
             int4 _ChannelWriteMask;
-            uint4 _Pool;
-            uint4 _Pad;
+            int4 _ChannelWriteMap;
+            uint2 _Pool;
 
             Texture2D<float4> Xtex2D;
             SamplerState samplerXtex2D { Filter = MIN_MAG_LINEAR_MIP_POINT; AddressU = Clamp; AddressV = Clamp; };
@@ -46,38 +46,84 @@ Shader "Barracuda/TextureToTensor"
 
                 float4 v = Xtex2D.SampleLevel(samplerXtex2D, uv.xy, 0);
 
+                bool specialCaseWhenChannelMaskIsEmptyStoresAverage = true;
+
                 float4 value = 0;
-				
-                value.x = _Scale[_ChannelReadMap.x] * v[_ChannelReadMap.x] + _Bias[_ChannelReadMap.x];
-                value.x *= (_ChannelWriteMask.x == 1 ? 1.0f : 0.0f);
+                if (_ChannelWriteMask.x == 1)
+                {
+                    float v0 = 0.0f;
+                    if (_ChannelReadMap.x >= 0)
+                        v0 = _Scale[_ChannelReadMap.x] * v[_ChannelReadMap.x] + _Bias[_ChannelReadMap.x];
 
-                value.y = _Scale[_ChannelReadMap.y] * v[_ChannelReadMap.y] + _Bias[_ChannelReadMap.y];
-                value.y *= (_ChannelWriteMask.y == 1 ? 1.0f : 0.0f);
+                    if (_ChannelWriteMap.x == 0)
+                        value[0] = v0;
+                    else if (_ChannelWriteMap.x == 1)
+                        value[1] = v0;
+                    else if (_ChannelWriteMap.x == 2)
+                        value[2] = v0;
+                    else if (_ChannelWriteMap.x == 3)
+                        value[3] = v0;
 
-                value.z = _Scale[_ChannelReadMap.z] * v[_ChannelReadMap.z] + _Bias[_ChannelReadMap.z];
-                value.z *= (_ChannelWriteMask.z == 1 ? 1.0f : 0.0f);
+                    specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+                }
+                if (_ChannelWriteMask.y == 1)
+                {
+                    float v1 = 0.0f;
+                    if (_ChannelReadMap.y >= 0)
+                        v1 = _Scale[_ChannelReadMap.y] * v[_ChannelReadMap.y] + _Bias[_ChannelReadMap.y];
 
-                value.w = _Scale[_ChannelReadMap.w] * v[_ChannelReadMap.w] + _Bias[_ChannelReadMap.w];
-                value.w *= (_ChannelWriteMask.w == 1 ? 1.0f : 0.0f);
+                    if (_ChannelWriteMap.y == 0)
+                        value[0] = v1;
+                    else if (_ChannelWriteMap.y == 1)
+                        value[1] = v1;
+                    else if (_ChannelWriteMap.y == 2)
+                        value[2] = v1;
+                    else if (_ChannelWriteMap.y == 3)
+                        value[3] = v1;
 
+                    specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+                }
+                if (_ChannelWriteMask.z == 1)
+                {
+                    float v2 = 0.0f;
+                    if (_ChannelReadMap.z >= 0)
+                        v2 = _Scale[_ChannelReadMap.z] * v[_ChannelReadMap.z] + _Bias[_ChannelReadMap.z];
 
-                if (all(_ChannelReadMap != 1))
+                    if (_ChannelWriteMap.z == 0)
+                        value[0] = v2;
+                    else if (_ChannelWriteMap.z == 1)
+                        value[1] = v2;
+                    else if (_ChannelWriteMap.z == 2)
+                        value[2] = v2;
+                    else if (_ChannelWriteMap.z == 3)
+                        value[3] = v2;
+
+                    specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+                }
+                if (_ChannelWriteMask.w == 1)
+                {
+                    float v3 = 1.0f;
+                    if (_ChannelReadMap.w >= 0)
+                        v3 = _Scale[_ChannelReadMap.w] * v[_ChannelReadMap.w] + _Bias[_ChannelReadMap.w];
+
+                    if (_ChannelWriteMap.w == 0)
+                        value[0] = v3;
+                    else if (_ChannelWriteMap.w == 1)
+                        value[1] = v3;
+                    else if (_ChannelWriteMap.w == 2)
+                        value[2] = v3;
+                    else if (_ChannelWriteMap.w == 3)
+                        value[3] = v3;
+
+                    specialCaseWhenChannelMaskIsEmptyStoresAverage = false;
+                }
+
+                if (specialCaseWhenChannelMaskIsEmptyStoresAverage)
                 {
                     v = _Scale * v + _Bias;
                     float avg = (v.r + v.g + v.b) / 3.0f;
-                    value.r = avg;
-                    value.gba = 0;
+                    value = avg;
                 }
-
-
-                if (4 * c4 + 0 < _Pad.w)
-                value.x = 0;
-                if (4 * c4 + 1 < _Pad.w)
-                value.y = 0;
-                if (4 * c4 + 2 < _Pad.w)
-                value.z = 0;
-                if (4 * c4 + 3 < _Pad.w)
-                value.w = 0;
 
                 return value;
             }

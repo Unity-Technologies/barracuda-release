@@ -18,7 +18,6 @@ Shader "Barracuda/Pad2DReflect"
 
             #include "TensorTexture.cginc"
 
-
             TENSOR_DECL_O(O)
             TENSOR_DECL(X)
 

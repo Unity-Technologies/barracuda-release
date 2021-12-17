@@ -332,10 +332,10 @@ public class CompareOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue)
+    Tensor IOps.OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank)
     {
-        var Y = m_Ops1.OneHot(X, depth, onValue, offValue);
-        var Z = m_Ops2.OneHot(X, depth, onValue, offValue);
+        var Y = m_Ops1.OneHot(X, depth, onValue, offValue, inputRank);
+        var Z = m_Ops2.OneHot(X, depth, onValue, offValue, inputRank);
         CheckSame(Y, Z, Layer.Type.OneHot);
         return Y;
     }
@@ -1057,10 +1057,10 @@ public class CompareOps : IOps, IModelCompiler
     }
 
     /// <inheritdoc/>
-    Tensor IOps.ConstantOfShape(TensorShape X, float value)
+    Tensor IOps.ConstantOfShape(TensorShape X, DataType type, float value)
     {
-        var Y = m_Ops1.ConstantOfShape(X, value);
-        var Z = m_Ops2.ConstantOfShape(X, value);
+        var Y = m_Ops1.ConstantOfShape(X, type, value);
+        var Z = m_Ops2.ConstantOfShape(X, type, value);
         CheckSame(Y, Z, Layer.Type.ConstantOfShape);
         return Y;
     }

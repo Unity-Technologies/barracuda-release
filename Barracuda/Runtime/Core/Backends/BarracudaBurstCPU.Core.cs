@@ -23,11 +23,14 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     /// <inheritdoc/>
     public JobHandle reuse { get { return m_WriteFence; } set { m_WriteFence = BurstCPUOps.Dependencies(value, m_WriteFence); m_SafeToDispose = false; } }
 
+    /// <inheritdoc/>
+    public unsafe void* rawPtr => array.RawAddressAt(offset);
+
     /// <summary>
     /// Creates new array
     /// </summary>
     /// <param name="count">count</param>
-    public BurstTensorData(int count) : base(count)
+    public BurstTensorData(int count, DataType dataType) : base(count, dataType)
     {
     }
 
@@ -35,7 +38,7 @@ public class BurstTensorData : UnsafeArrayTensorData, IDependableTensorData
     /// Creates new array
     /// </summary>
     /// <param name="shape">shape</param>
-    public BurstTensorData(TensorShape shape) : base(shape)
+    public BurstTensorData(TensorShape shape, DataType dataType) : base(shape, dataType)
     {
     }
 
@@ -212,9 +215,9 @@ public partial class BurstCPUOps : UnsafeArrayCPUOps
             else
             {
                 if (uploadCache)
-                    X.UploadToDevice(new BurstTensorData(X.shape)); // device is not compatible, create new array and upload
+                    X.UploadToDevice(new BurstTensorData(X.shape, X.dataType)); // device is not compatible, create new array and upload
                 else
-                    X.AllocateOnDevice(new BurstTensorData(X.shape)); // device is not compatible, create new array but do not upload
+                    X.AllocateOnDevice(new BurstTensorData(X.shape, X.dataType)); // device is not compatible, create new array but do not upload
             }
         }
 

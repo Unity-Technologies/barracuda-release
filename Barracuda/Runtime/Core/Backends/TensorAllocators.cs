@@ -16,10 +16,18 @@ internal class TensorCachingByShapeAllocator : ITensorAllocator
     {
         public TensorShape shape;
         public ITensorData buffer;
+        public CacheKey ToKey() { return new CacheKey { shape = shape, dataType = buffer.dataType }; }
     }
-    // multi-value Dictionary<TensorShape, Entry*> implemented via
+
+    struct CacheKey
+    {
+        public TensorShape shape;
+        public DataType dataType;
+    }
+
+    // multi-value Dictionary<CacheKey, Entry*> implemented via
     // pair of m_FreeTensorByShape and m_FreeTensors
-    private Dictionary<TensorShape, LinkedListNode<Entry>> m_FreeBufferByShape = new Dictionary<TensorShape, LinkedListNode<Entry>>();
+    private Dictionary<CacheKey, LinkedListNode<Entry>> m_FreeBufferByShape = new Dictionary<CacheKey, LinkedListNode<Entry>>();
     private LinkedList<Entry> m_FreeBuffers = new LinkedList<Entry>();
     private Dictionary<Tensor, ITensorData> m_BusyTensors = new Dictionary<Tensor, ITensorData>();
     private Dictionary<ITensorData, int> m_SharedBuffers = new Dictionary<ITensorData, int>();
@@ -64,33 +72,34 @@ internal class TensorCachingByShapeAllocator : ITensorAllocator
         // code below automatically covers handles edge-case (2)
         // by adopting tensor's with the new ITensorData into m_FreeTensors/m_FreeTensorByShape
         var newEntry = new Entry { shape = shape, buffer = buffer };
+        var key = newEntry.ToKey();
         LinkedListNode<Entry> node;
-        if (m_FreeBufferByShape.TryGetValue(newEntry.shape, out node))
+        if (m_FreeBufferByShape.TryGetValue(key, out node))
         {
             m_FreeBuffers.AddAfter(node, newEntry);
         }
         else
         {
             var newNode = m_FreeBuffers.AddLast(newEntry);
-            m_FreeBufferByShape.Add(newEntry.shape, newNode);
+            m_FreeBufferByShape.Add(key, newNode);
         }
     }
 
-    public virtual Tensor Alloc(TensorShape shape, AllocScope scope)
+    public virtual Tensor Alloc(TensorShape shape, AllocScope scope, DataType dataType)
     {
         Profiler.BeginSample("Barracuda.ShapeAllocator.Alloc");
         var name = "untitled";
-
+        var key = new CacheKey { shape = shape, dataType = dataType };
         LinkedListNode<Entry> node;
-        if (m_FreeBufferByShape.TryGetValue(shape, out node))
+        if (m_FreeBufferByShape.TryGetValue(key, out node))
         {
             Assert.AreEqual(node.Value.shape, shape);
 
             // advance dictionary to the next Tensor with the same shape, if available
             if (node.Next != null && node.Next.Value.shape == shape)
-                m_FreeBufferByShape[shape] = node.Next;
+                m_FreeBufferByShape[key] = node.Next;
             else
-                m_FreeBufferByShape.Remove(shape);
+                m_FreeBufferByShape.Remove(key);
 
             var buffer = node.Value.buffer;
             buffer?.Reserve(shape.length);
@@ -116,7 +125,7 @@ internal class TensorCachingByShapeAllocator : ITensorAllocator
         return newTensor;
     }
 
-    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope)
+    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope, DataType dataType)
     {
         Profiler.BeginSample("Barracuda.ShapeAllocator.Alloc");
         var name = "untitled";
@@ -315,6 +324,7 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
 
         //ITensorDataStatistics
         public int maxCapacity => tensorData.maxCapacity;
+        public DataType dataType => tensorData.dataType;
 #if ENABLE_BARRACUDA_STATS
         public int uniqueId => tensorData.uniqueId;
         public bool inUse => !free;
@@ -351,7 +361,7 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
         Dispose();
     }
 
-    internal Tensor AllocTensorInternal(TensorShape shape, ITensorData buffer = null)
+    internal Tensor AllocTensorInternal(DataType dataType, TensorShape shape, ITensorData buffer)
     {
         Tensor res = null;
 
@@ -360,12 +370,12 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
             if (m_AllocatedTensors.Count > 0)
             {
                 res = m_AllocatedTensors.Last();
-                res.Init(shape, buffer, this);
+                res.Init(shape, buffer, this, dataType);
                 m_AllocatedTensors.RemoveAt(m_AllocatedTensors.Count - 1);
             }
             else
             {
-                res = new Tensor(shape, buffer, this);
+                res = new Tensor(shape, buffer, this, dataType);
             }
         }
 
@@ -436,7 +446,7 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
     }
 
     /// <inheritdoc/>
-    public virtual Tensor Alloc(TensorShape shape, AllocScope scope)
+    public virtual Tensor Alloc(TensorShape shape, AllocScope scope, DataType dataType)
     {
         Profiler.BeginSample("Barracuda.SizeAllocator.Alloc");
         var name = "untitled";
@@ -444,7 +454,7 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
         for (int i = 0; i < m_AllocatedBuffers.Count; ++i)
         {
             var entry = m_AllocatedBuffers[i];
-            if (entry.size >= shape.length && entry.free)
+            if (entry.size >= shape.length && entry.dataType == dataType && entry.free)
             {
                 entry.free = false;
                 m_AllocatedBuffers[i] = entry;
@@ -452,7 +462,7 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
                 ITensorData buffer = entry.tensorData;
                 buffer?.Reserve(shape.length);
 
-                var tensor = AllocTensorInternal(shape, buffer);
+                var tensor = AllocTensorInternal(dataType, shape, buffer);
                 tensor.name = name;
 
                 m_BusyTensors.Add(tensor, tensor.tensorOnDevice);
@@ -465,7 +475,7 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
 
         ++m_NumAllocatedBufferSinceCleanup;
 
-        var newTensor = AllocTensorInternal(shape);
+        var newTensor = AllocTensorInternal(dataType, shape, null);
         newTensor.name = name;
         m_BusyTensors.Add(newTensor, newTensor.tensorOnDevice);
         AddRef(newTensor.tensorOnDevice);
@@ -475,12 +485,12 @@ public class TensorCachingAllocator : UniqueResourceId, ITensorAllocator, IAlloc
     }
 
     /// <inheritdoc/>
-    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope)
+    public virtual Tensor Alloc(TensorShape shape, ITensorData buffer, AllocScope scope, DataType dataType)
     {
         Profiler.BeginSample("Barracuda.SizeAllocator.Alloc");
         var name = "untitled";
 
-        var tensor = AllocTensorInternal(shape, buffer);
+        var tensor = AllocTensorInternal(dataType, shape, buffer);
         tensor.name = name;
         m_BusyTensors.Add(tensor, tensor.tensorOnDevice);
         AddRef(tensor.tensorOnDevice);

@@ -10,6 +10,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Collections;
+using Object = UnityEngine.Object;
 
 [assembly: InternalsVisibleTo("Barracuda.EditorTests")]
 
@@ -27,6 +28,12 @@ public class TextureTensorData : UniqueResourceId, ITensorData
     public bool tensorChannelTilled { get { return m_tensorChannelTilled; } }
 
     public string name;
+
+    /// <inheritdoc/>
+    public virtual DataType dataType { get
+    {
+        return DataType.Float;//todo fp16
+    } }
 
     public static int MaxTextureSize = 16384;
 
@@ -97,6 +104,10 @@ public class TextureTensorData : UniqueResourceId, ITensorData
     {
         if (m_DisposeBufferAfterUse)
         {
+            // In emergency shutdown situations active RenderTexture might be the one we are trying to release
+            if (RenderTexture.active == m_BufferAsTexture)
+                RenderTexture.active = null;
+
             m_BufferAsTexture.Release();
             m_BufferAsTexture = null;
         }
@@ -140,6 +151,8 @@ public class TextureTensorData : UniqueResourceId, ITensorData
         material.SetVector("OdeclShape", new Vector4(shape.batch, shape.height, shape.width, shape.channels));
 
         Graphics.Blit(null, m_BufferAsTexture, material);
+
+        Object.DestroyImmediate(texture);
 
         m_AsyncDownloadSchedulingFrame = -1;
     }
@@ -205,7 +218,7 @@ public class TextureTensorData : UniqueResourceId, ITensorData
     public virtual BarracudaArray SharedAccess(out int offset)
     {
         offset = 0;
-        return new BarracudaArrayFromManagedArray(Download(new TensorShape(0, 0, 0, maxCapacity)));//fp16?
+        return new BarracudaArrayFromManagedArray(Download(new TensorShape(0, 0, 0, maxCapacity)));//TODO fp16
     }
 
     public virtual int maxCapacity { get
@@ -225,10 +238,16 @@ public class TextureTensorData : UniqueResourceId, ITensorData
 
     public override string ToString()
     {
-        string allocationSource = "";
+        try
+        {
+            // m_BufferAsTexture.ToString() might throw exception if called from non-main thread
+            return $"(GPU:{name}#{GetHashCode()} {m_Shape}) bufferAsTexture: {m_BufferAsTexture}";
+        }
+        catch (Exception)
+        {
+            return $"(GPU:{name}#{GetHashCode()} {m_Shape})";
+        }
 
-        return string.Format("(GPU:{0}#{1} {2} bufferAsTexture: {3} created at: {4})",
-            name, GetHashCode(), m_Shape, m_BufferAsTexture, allocationSource);
     }
 }
 
@@ -277,9 +296,9 @@ public class PixelShaderOps : ReferenceCPUOps
         material.SetTexture(m_StringCache.Lookup(name, "data"), XonDevice.bufferAsTexture);
     } 
 
-    internal Tensor Dispatch(Material material, TensorShape Oshape)
+    internal Tensor Dispatch(Material material, DataType dataType, TensorShape Oshape)
     {
-        var O = NewTensor(Oshape, AllocScope.LayerOutput, "O");
+        var O = NewTensor(dataType, Oshape, AllocScope.LayerOutput, "O");
 
         var pinO = Pin(O);
         material.SetVector("OdeclShape", new Vector4(Oshape.batch, O.height, O.width, O.channels));
@@ -326,7 +345,16 @@ public class PixelShaderOps : ReferenceCPUOps
 
             var channelWriteMask = TextureFormatUtils.FormatToChannelMask(tex, texData.interpretPixelAsChannels);
             var channelReadMap = TextureFormatUtils.FormatToChannelReadMap(tex, texData.interpretPixelAsChannels);
+            var channelWriteMap = Vector4.zero;
+            int c = 0;
+            for(int i = 0; i < 4; i++)
+            {
+                channelWriteMap[i] = c;
+                if (channelWriteMask[i] == 1)
+                    c++;
+            }
             material.SetVector("_ChannelWriteMask", new Vector4(channelWriteMask[0], channelWriteMask[1], channelWriteMask[2], channelWriteMask[3]));
+            material.SetVector("_ChannelWriteMap", new Vector4(channelWriteMap[0], channelWriteMap[1], channelWriteMap[2], channelWriteMap[3]));
             material.SetVector("_ChannelReadMap", new Vector4(channelReadMap[0], channelReadMap[1], channelReadMap[2], channelReadMap[3]));
 
             Graphics.Blit(null, tensorData.bufferAsTexture, material);
@@ -368,7 +396,8 @@ public class PixelShaderOps : ReferenceCPUOps
     /// <param name="scale">scale</param>
     /// <param name="bias">bias</param>
     /// <param name="lut">LUT table</param>
-    public void TensorToRenderTexture(Tensor X, RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut)
+    /// <param name="flipY">flips the texture along the Y dimension (optional, default: true)</param>
+    public void TensorToRenderTexture(Tensor X, RenderTexture target, int batch, int fromChannel, Vector4 scale, Vector4 bias, Texture3D lut, bool flipY = true)
     {
         if (!target.IsCreated())
         {
@@ -382,7 +411,7 @@ public class PixelShaderOps : ReferenceCPUOps
         material.SetVector("_Scale", scale);                           
         material.SetVector("_Bias", bias);
         material.SetVector("_Pad", new Vector4(batch, 0, 0, fromChannel));
-        material.SetInt("_FlipY", 1);
+        material.SetInt("_FlipY", flipY ? 1 : 0);
         material.SetInt("_OutputHeight", target.height);
         material.SetInt("_OutputWidth", target.width);
 
@@ -410,10 +439,10 @@ public class PixelShaderOps : ReferenceCPUOps
         material.SetVector("_Pad", new Vector4(pad[0], pad[1], pad[2], pad[3]));
         material.SetInt("_ActivationMode", (int)(fusedActivation));
 
-        var O = Dispatch(material, Oshape);
+        var O = Dispatch(material, X.dataType, Oshape);
 
         if (!IsFusedActivationSupported(fusedActivation))
-            O = Activation(m_StringCache.Lookup("Barracuda/", fusedActivation.ToString()), O);
+            O = Activation(fusedActivation.ToString(), O);
 
         return O;
     }
@@ -446,10 +475,10 @@ public class PixelShaderOps : ReferenceCPUOps
         material.SetVector("_Pad", new Vector4(pad[0], pad[1], 0, 0));
         material.SetInt("_ActivationMode", (int)(fusedActivation));
 
-        var O = Dispatch(material, Oshape);
+        var O = Dispatch(material, X.dataType, Oshape);
 
         if (!IsFusedActivationSupported(fusedActivation))
-            O = Activation(m_StringCache.Lookup("Barracuda/", fusedActivation.ToString()), O);
+            O = Activation(fusedActivation.ToString(), O);
 
         return O;
     }
@@ -479,12 +508,47 @@ public class PixelShaderOps : ReferenceCPUOps
         material.SetVector("_Pad", new Vector4(pad[0], pad[1], pad[2], pad[3]));
         material.SetInt("_ActivationMode", (int)(fusedActivation));
 
-        var O = Dispatch(material, Oshape);
+        var O = Dispatch(material, X.dataType, Oshape);
 
         if (!IsFusedActivationSupported(fusedActivation))
-            O = Activation(m_StringCache.Lookup("Barracuda/", fusedActivation.ToString()), O);
+            O = Activation(fusedActivation.ToString(), O);
 
         return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor MatMul(Tensor X, bool xTranspose, Tensor Y, bool yTranspose)
+    {
+        var O = new TensorShape(X.flatHeight, Y.flatWidth);
+        if (xTranspose)
+            O = new TensorShape(X.flatWidth, O.flatWidth);
+        if (yTranspose)
+            O = new TensorShape(O.flatHeight, Y.flatHeight);
+   
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/MatMul"));
+        if (xTranspose)
+            material.EnableKeyword("xTranspose_ON");
+        if (yTranspose)
+            material.EnableKeyword("yTranspose_ON");
+   
+        SetTensor(material, "X", X);
+        SetTensor(material, "Y", Y);
+   
+        return Dispatch(material, X.dataType, O);
+    }
+
+    /// <summary>
+    /// Check if `Flatten` is needed for `Dense` layer input
+    /// </summary>
+    /// <param name="X">input shape</param>
+    /// <returns>`true` if `Flatten` is needed</returns>
+    protected bool ShouldFlattenInputForDenseLayer(TensorShape X)
+    {
+        //In CHW flatten is return a tensor with items linearized in memory in regards to HWC layout.
+        int flattenDimensions = (X.height > 1 ? 1 : 0) +
+                                (X.width > 1 ? 1 : 0) +
+                                (X.channels > 1 ? 1 : 0);
+        return flattenDimensions > 1;
     }
 
     /// <inheritdoc/>
@@ -494,6 +558,9 @@ public class PixelShaderOps : ReferenceCPUOps
         Assert.AreEqual(B.flatWidth, B.length);
         Assert.AreEqual(X.flatWidth, W.flatHeight);
 
+        if (ShouldFlattenInputForDenseLayer(X.shape))
+            X = Flatten(X);
+   
         var Oshape = new TensorShape(X.flatHeight, W.flatWidth);
 
         Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Dense"));
@@ -503,12 +570,91 @@ public class PixelShaderOps : ReferenceCPUOps
         SetTensor(material, "B", B);
         material.SetInt("_ActivationMode", (int)fusedActivation);
 
-        var O = Dispatch(material, Oshape);
+        var O = Dispatch(material, X.dataType, Oshape);
 
         if (!IsFusedActivationSupported(fusedActivation))
-            O = Activation(m_StringCache.Lookup("Barracuda/", fusedActivation.ToString()), O);
+            O = Activation(fusedActivation.ToString(), O);
 
         return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Dense3(Tensor X, Tensor W, Tensor B)
+    {
+        var Oshape = new TensorShape(X.batch, 1, W.channels, X.channels);
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Dense3"));
+
+        SetTensor(material, "X", X);
+        SetTensor(material, "W", W);
+        SetTensor(material, "B", B);
+
+        return Dispatch(material, X.dataType, Oshape);
+    }
+
+    private Tensor ReduceHelper(string kernelName, Tensor X, int axis)
+    {
+        axis = X.shape.Axis(axis);
+    
+        var O = X.shape.Reduce(axis);
+    
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Reduce"));
+        material.EnableKeyword(kernelName);
+    
+        if(axis == TensorShape.DataBatch)
+            material.EnableKeyword("ReduceN");
+        if (axis == TensorShape.H)
+            material.EnableKeyword("ReduceH");
+        if (axis == TensorShape.W)
+            material.EnableKeyword("ReduceW");
+        if (axis == TensorShape.C)
+            material.EnableKeyword("ReduceC");
+    
+        SetTensor(material, "X", X);
+    
+        return Dispatch(material, X.dataType, O);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ArgMax(Tensor X, int axis)
+    {
+        return ReduceHelper("ArgMax", X, axis);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ArgMin(Tensor X, int axis)
+    {
+        return ReduceHelper("ArgMin", X, axis);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ReduceMin(Tensor X, int axis)
+    {
+        return ReduceHelper("ReduceMin", X, axis);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ReduceMax(Tensor X, int axis)
+    {
+        return ReduceHelper("ReduceMax", X, axis);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ReduceSum(Tensor X, int axis)
+    {
+        return ReduceHelper("ReduceSum", X, axis);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ReduceMean(Tensor X, int axis)
+    {
+        return ReduceHelper("ReduceMean", X, axis);
+    }
+    
+    /// <inheritdoc/>
+    public override Tensor ReduceProd(Tensor X, int axis)
+    {
+        return ReduceHelper("ReduceProd", X, axis);
     }
 
     /// <summary>
@@ -520,14 +666,15 @@ public class PixelShaderOps : ReferenceCPUOps
     /// <exception cref="NotImplementedException">thrown if input `Tensor` is not compatible with 4D shape</exception>
     protected virtual Tensor ElementwiseWithBroadcast(string kernelName, Tensor[] tensors)
     {
-        var Oshape = TensorExtensions.MaxShape(tensors);
-        var O = NewTensor(Oshape, AllocScope.LayerOutput, "O");
+        var O = TensorExtensions.MaxShape(tensors);
 
         Assert.IsTrue(tensors.Length > 0);
         var X = tensors[0];
 
-        Material material = new Material(PixelShaderSingleton.Instance.FindShader(kernelName));
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Broadcast"));
+        material.EnableKeyword(kernelName);
 
+        bool isFirstDispatch = true;
         for (int t = 1; t < tensors.Length; ++t)
         {
             var B = tensors[t];
@@ -536,12 +683,11 @@ public class PixelShaderOps : ReferenceCPUOps
             SetTensor(material, "X", X);
             SetTensor(material, "B", B);
 
-            var pinO = Pin(O);
-            material.SetVector("OdeclShape", new Vector4(O.batch, O.height, O.width, O.channels));
+            material.SetFloat("_Alpha", 1.0f/(float)tensors.Length);
+            material.SetInt("_IsFirstDispatch", isFirstDispatch ? 1 : 0);
 
-            Graphics.Blit(null, pinO.bufferAsTexture, material);
-
-            X = O;
+            X = Dispatch(material, X.dataType, O);
+            isFirstDispatch = false;
         }
 
         return X;
@@ -553,7 +699,7 @@ public class PixelShaderOps : ReferenceCPUOps
         if (tensors.Any(x => !x.shape.Is4D()))
             return base.Add(tensors);
 
-        return ElementwiseWithBroadcast("Barracuda/BroadcastAdd", tensors);
+        return ElementwiseWithBroadcast("Add", tensors);
     }
 
     /// <inheritdoc/>
@@ -563,7 +709,7 @@ public class PixelShaderOps : ReferenceCPUOps
         if (tensors.Any(x => !x.shape.Is4D()))
             return base.Add(tensors);
 
-        return ElementwiseWithBroadcast("Barracuda/BroadcastSub", tensors);
+        return ElementwiseWithBroadcast("Sub", tensors);
     }
 
     /// <inheritdoc/>
@@ -572,7 +718,25 @@ public class PixelShaderOps : ReferenceCPUOps
         if (tensors.Any(x => !x.shape.Is4D()))
             return base.Add(tensors);
 
-        return ElementwiseWithBroadcast("Barracuda/BroadcastMul", tensors);
+        return ElementwiseWithBroadcast("Mul", tensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Div(Tensor[] tensors)
+    {
+        if (tensors.Any(x => !x.shape.Is4D()))
+            return base.Div(tensors);
+
+        return ElementwiseWithBroadcast("Div", tensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Pow(Tensor[] tensors)
+    {
+        if (tensors.Any(x => !x.shape.Is4D()))
+            return base.Pow(tensors);
+
+        return ElementwiseWithBroadcast("Pow", tensors);
     }
 
     /// <inheritdoc/>
@@ -581,8 +745,119 @@ public class PixelShaderOps : ReferenceCPUOps
         if (tensors.Any(x => !x.shape.Is4D()))
             return base.Add(tensors);
 
-        return ElementwiseWithBroadcast("Barracuda/BroadcastMin", tensors);
+        return ElementwiseWithBroadcast("Min", tensors);
     }
+    
+    /// <inheritdoc/>
+    public override Tensor Max(Tensor[] tensors)
+    {
+        if (tensors.Any(x => !x.shape.Is4D()))
+            return base.Max(tensors);
+
+        return ElementwiseWithBroadcast("Max", tensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Mean(Tensor[] tensors)
+    {
+        if (tensors.Any(x => !x.shape.Is4D()))
+            return base.Mean(tensors);
+
+        return ElementwiseWithBroadcast("Mean", tensors);
+    }
+
+    internal static Tensor[] s_ElementwiseBroadcastTensors = new Tensor[2];
+
+    /// <inheritdoc/>
+    public override Tensor Greater(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("Greater", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor GreaterEqual(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("GreaterEqual", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Less(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("Less", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LessEqual(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("LessEqual", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Equal(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("Equal", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LogicalOr(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("LogicalOr", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LogicalAnd(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("LogicalAnd", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LogicalXor(Tensor A, Tensor B)
+    {
+        s_ElementwiseBroadcastTensors[0] = A;
+        s_ElementwiseBroadcastTensors[1] = B;
+        return ElementwiseWithBroadcast("LogicalXor", s_ElementwiseBroadcastTensors);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LogicalNot(Tensor X)
+    {
+        return Activation("LogicalNot", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sign(Tensor X)
+    {
+        return Activation("Sign", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Where(Tensor C, Tensor A, Tensor B)
+    {
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/BroadcastWhere"));
+
+        var O = TensorExtensions.MaxShape(new[] { C, A, B });
+
+        SetTensor(material, "X", C);
+        SetTensor(material, "W", A);
+        SetTensor(material, "K", B);
+
+        return Dispatch(material, C.dataType, O);
+    }
+
 
     /// <summary>
     /// Generic pooling 2D
@@ -599,13 +874,32 @@ public class PixelShaderOps : ReferenceCPUOps
 
         SetTensor(material, "X", X);
 
-        return Dispatch(material, Oshape);
+        return Dispatch(material, X.dataType, Oshape);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor GlobalMaxPool2D(Tensor X)
+    {
+        return GlobalPool2D("Barracuda/GlobalMaxPool2D", X);
     }
 
     /// <inheritdoc/>
     public override Tensor GlobalAvgPool2D(Tensor X)
     {
         return GlobalPool2D("Barracuda/GlobalAvgPool2D", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor GlobalAvgVariancePool2D(Tensor X)
+    {
+        Assert.IsTrue(X.shape.Is4D());
+        var O = new TensorShape(X.batch, 2, 1, X.channels);
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("GlobalAvgVariancePool2D"));
+
+        SetTensor(material, "X", X);
+
+        return Dispatch(material, X.dataType, O);
     }
 
     /// <inheritdoc/>
@@ -625,7 +919,7 @@ public class PixelShaderOps : ReferenceCPUOps
         material.SetVector("_Stride", new Vector4(stride[0], stride[1], 0, 0));
         material.SetVector("_Pad", new Vector4(pad[0], pad[1], pad[2], pad[3]));
 
-        return Dispatch(material, Oshape);
+        return Dispatch(material, X.dataType, Oshape);
     }
 
     /// <inheritdoc/>
@@ -664,12 +958,60 @@ public class PixelShaderOps : ReferenceCPUOps
         SetTensor(material, "W", S);
         SetTensor(material, "B", B);
 
-        var O = Dispatch(material, X.shape);
+        var O = Dispatch(material, X.dataType, X.shape);
 
         if (!IsFusedActivationSupported(fusedActivation))
-            O = Activation(m_StringCache.Lookup("Barracuda/", fusedActivation.ToString()), O);
+            O = Activation(fusedActivation.ToString(), O);
 
         return O;
+    }
+
+    /// <inheritdoc/>
+    public override Tensor OneHot(Tensor X, int depth, float onValue, float offValue, int inputRank=-1)
+    {
+        if (inputRank == -1)
+            inputRank = X.dimensions;
+
+        if (inputRank >= 4)
+            throw new NotImplementedException();
+
+        TensorShape O;
+        if (inputRank == 1)
+            O = new TensorShape(X.flatHeight, depth);
+        else if (inputRank == 2)
+            O = new TensorShape(X.flatHeight, 1, depth, X.channels);
+        else
+            O = new TensorShape(X.batch, X.width, depth, X.channels);
+        
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/OneHot"));
+        if (inputRank == 1)
+            material.EnableKeyword("Input1D");
+        else if (inputRank == 2)
+            material.EnableKeyword("Input2D");
+        else
+            material.EnableKeyword("Input3D");
+
+        SetTensor(material, "X", X);
+        material.SetFloat("_Alpha", onValue);
+        material.SetFloat("_Beta", offValue);
+
+        return Dispatch(material, X.dataType, O);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LRN(Tensor X, float alpha, float beta, float bias, int size)
+    {
+        var O = X.shape;
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/LRN"));
+
+        SetTensor(material, "X", X);
+        material.SetFloat("_Alpha", alpha);
+        material.SetFloat("_Beta",  beta);
+        material.SetFloat("_Epsilon",  bias);
+        material.SetInt("_Axis", size);
+
+        return Dispatch(material, X.dataType, O);
     }
 
     /// <summary>
@@ -712,31 +1054,42 @@ public class PixelShaderOps : ReferenceCPUOps
             material.SetFloat("_Beta", constant);
         }
 
-        return Dispatch(material, Oshape);
+        return Dispatch(material, X.dataType, Oshape);
     }
 
     /// <inheritdoc/>
     public override Tensor Border2D(Tensor X, int[] pad, float constant)
     {
+        if (pad[2] != 0 || pad[5] != 0)
+            return base.Border2D(X, pad, constant);
+
         return ApplyPadding(X, pad, "Barracuda/Border2D", constant);
     }
 
     /// <inheritdoc/>
-
     public override Tensor Pad2DReflect(Tensor X, int[] pad)
     {
+        if (pad[2] != 0 || pad[5] != 0)
+            return base.Pad2DReflect(X, pad);
+
         return ApplyPadding(X, pad, "Barracuda/Pad2DReflect");
     }
 
     /// <inheritdoc/>
     public override Tensor Pad2DSymmetric(Tensor X, int[] pad)
     {
+        if (pad[2] != 0 || pad[5] != 0)
+            return base.Pad2DSymmetric(X, pad);
+
         return ApplyPadding(X, pad, "Barracuda/Pad2DSymmetric");
     }
 
     /// <inheritdoc/>
     public override Tensor Pad2DEdge(Tensor X, int[] pad)
     {
+        if (pad[2] != 0 || pad[5] != 0)
+            return base.Pad2DEdge(X, pad);
+
         return ApplyPadding(X, pad, "Barracuda/Pad2DEdge");
     }
 
@@ -754,22 +1107,14 @@ public class PixelShaderOps : ReferenceCPUOps
 
         var Oshape = X.shape;
 
-        Material material = new Material(PixelShaderSingleton.Instance.FindShader(kernelName));
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Activation"));
+        material.EnableKeyword(kernelName);
 
         SetTensor(material, "X", X);
         material.SetFloat("_Alpha", alpha);
         material.SetFloat("_Beta",  beta);
 
-        return Dispatch(material, Oshape);
-    }
-
-    /// <inheritdoc/>
-    public override Tensor Clip(Tensor X, float alpha, float beta)
-    {
-        if (!X.shape.Is4D())
-            return base.Clip(X, alpha, beta);
-
-        return Activation("Barracuda/Clip", X, alpha, beta);
+        return Dispatch(material, X.dataType, Oshape);
     }
 
     /// <inheritdoc/>
@@ -778,55 +1123,331 @@ public class PixelShaderOps : ReferenceCPUOps
     {
         if (!X.shape.Is4D())
             return base.Relu(X);
-
-        return Activation("Barracuda/Relu", X);
+        return Activation("Relu", X);
     }
 
     /// <inheritdoc/>
-    public override Tensor Selu(Tensor X, float alpha, float beta)
+    public override Tensor PRelu(Tensor X, Tensor S)
     {
-        if (!X.shape.Is4D())
-            return base.Selu(X, alpha, beta);
+        if (!X.shape.Is4D() && !S.shape.Is4D())
+            return base.PRelu(X, S);
 
-        return Activation("Barracuda/Selu", X, alpha, beta);
+        Assert.IsTrue((X.flatWidth == S.flatWidth) || (S.flatWidth == 1));
+
+        var O = X.shape;
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/PRelu"));
+
+        SetTensor(material, "X", X);
+        SetTensor(material, "W", S);
+
+        return Dispatch(material, X.dataType, O);
+    }
+
+        /// <inheritdoc/>
+    public override Tensor Tanh(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Tanh(X);
+        return Activation("Tanh", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Softplus(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Softplus(X);
+        return Activation("Softplus", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sigmoid(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Sigmoid(X);
+        return Activation("Sigmoid", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor HardSigmoid(Tensor X, float alpha, float beta)
+    {
+        if(!X.shape.Is4D())
+            return base.HardSigmoid(X, alpha, beta);
+        return Activation("HardSigmoid", X, alpha, beta);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Relu6(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Relu6(X);
+        return Activation("Relu6", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Elu(Tensor X, float alpha)
+    {
+        if(!X.shape.Is4D())
+            return base.Elu(X, alpha);
+        return Activation("Elu", X, alpha);
     }
 
     /// <inheritdoc/>
     public override Tensor LeakyRelu(Tensor X, float alpha)
     {
-        if (!X.shape.Is4D())
+        if(!X.shape.Is4D())
             return base.LeakyRelu(X, alpha);
-
-        return Activation("Barracuda/LeakyRelu", X, alpha);
+        return Activation("LeakyRelu", X, alpha);
     }
 
     /// <inheritdoc/>
-    public override Tensor Tanh(Tensor X)
+    public override Tensor Selu(Tensor X, float alpha, float gamma)
     {
-        if (!X.shape.Is4D())
-            return base.Tanh(X);
-
-        return Activation("Barracuda/Tanh", X);
+        if(!X.shape.Is4D())
+            return base.Selu(X, alpha, gamma);
+        return Activation("Selu", X, alpha, gamma);
     }
 
     /// <inheritdoc/>
-    public override Tensor Sqrt(Tensor X)
+    public override Tensor Swish(Tensor X)
     {
-        if (!X.shape.Is4D())
-            return base.Sqrt(X);
+        if(!X.shape.Is4D())
+            return base.Swish(X);
+        return Activation("Swish", X);
+    }
 
-        return Activation("Barracuda/Sqrt", X);
+    /// <inheritdoc/>
+    public override Tensor Abs(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Abs(X);
+        return Activation("Abs", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Neg(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Neg(X);
+        return Activation("Neg", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Ceil(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Ceil(X);
+        return Activation("Ceil", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Clip(Tensor X, float min, float max)
+    {
+        if(!X.shape.Is4D())
+            return base.Clip(X, min, max);
+        return Activation("Clip", X, min, max);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Floor(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Floor(X);
+        return Activation("Floor", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Round(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Round(X);
+        return Activation("Round", X);
     }
 
     /// <inheritdoc/>
     public override Tensor Reciprocal(Tensor X)
     {
-        if (!X.shape.Is4D())
+        if(!X.shape.Is4D())
             return base.Reciprocal(X);
-
-        return Activation("Barracuda/Reciprocal", X);
+        return Activation("Reciprocal", X);
     }
 
+    /// <inheritdoc/>
+    public override Tensor Pow(Tensor X, float alpha)
+    {
+        if(!X.shape.Is4D())
+            return base.Pow(X, alpha);
+        return Activation("Pow", X, alpha);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Exp(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Exp(X);
+        return Activation("Exp", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Log(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Log(X);
+        return Activation("Log", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sqrt(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Sqrt(X);
+        return Activation("Sqrt", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Acos(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Acos(X);
+        return Activation("Acos", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Acosh(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Acosh(X);
+        return Activation("Acosh", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Asin(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Asin(X);
+        return Activation("Asin", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Asinh(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Asin(X);
+        return Activation("Asinh", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Atan(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Atan(X);
+        return Activation("Atan", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Atanh(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Atanh(X);
+        return Activation("Atanh", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Cos(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Cos(X);
+        return Activation("Cos", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Cosh(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Cosh(X);
+        return Activation("Cosh", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sin(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Sin(X);
+        return Activation("Sin", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Sinh(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Sinh(X);
+        return Activation("Sinh", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Tan(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Tan(X);
+        return Activation("Tan", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Erf(Tensor X)
+    {
+        if(!X.shape.Is4D())
+            return base.Erf(X);
+        return Activation("Erf", X);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Softmax(Tensor X, int axis)
+    {
+        if(!X.shape.Is4D())
+            return base.Softmax(X, axis);
+
+        axis = X.shape.Axis(axis);
+       
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Softmax"));
+    
+        if(axis == TensorShape.DataBatch)
+            material.EnableKeyword("ReduceN");
+        if (axis == TensorShape.H)
+            material.EnableKeyword("ReduceH");
+        if (axis == TensorShape.W)
+            material.EnableKeyword("ReduceW");
+        if (axis == TensorShape.C)
+            material.EnableKeyword("ReduceC");
+    
+        SetTensor(material, "X", X);
+    
+        return Dispatch(material, X.dataType, X.shape);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor LogSoftmax(Tensor X, int axis)
+    {
+        if(!X.shape.Is4D())
+            return base.LogSoftmax(X, axis);
+
+        axis = X.shape.Axis(axis);
+       
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/LogSoftmax"));
+    
+        if(axis == TensorShape.DataBatch)
+            material.EnableKeyword("ReduceN");
+        if (axis == TensorShape.H)
+            material.EnableKeyword("ReduceH");
+        if (axis == TensorShape.W)
+            material.EnableKeyword("ReduceW");
+        if (axis == TensorShape.C)
+            material.EnableKeyword("ReduceC");
+    
+        SetTensor(material, "X", X);
+    
+        return Dispatch(material, X.dataType, X.shape);
+    }
+    
     /// <inheritdoc/>
     public override Tensor Upsample2D(Tensor X, int[] scale, bool bilinear)
     {
@@ -841,7 +1462,7 @@ public class PixelShaderOps : ReferenceCPUOps
     
         material.SetVector("_Pool", new Vector4(scale[0], scale[1], 0,0));
 
-        return Dispatch(material, Oshape);
+        return Dispatch(material, X.dataType, Oshape);
     }
 
     /// <inheritdoc/>
@@ -857,7 +1478,43 @@ public class PixelShaderOps : ReferenceCPUOps
 
         SetTensor(material, "X", X);
 
-        return Dispatch(material, Oshape);
+        return Dispatch(material, X.dataType, Oshape);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor DepthToSpace(Tensor X, int[] blocksize, Layer.DepthToSpaceMode mode)
+    {
+        Assert.IsTrue(X.shape.Is4D());
+        Assert.AreEqual(blocksize.Length, 2);
+
+        var O = new TensorShape(X.batch, X.height * blocksize[1], X.width * blocksize[0], X.channels / (blocksize[0] * blocksize[1]));
+
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader(m_StringCache.Lookup("Barracuda/DepthToSpace_", mode.ToString())));
+
+        SetTensor(material, "X", X);
+
+        material.SetVector("_Pool", new Vector4(blocksize[0], blocksize[1], 0, 0));
+
+        return Dispatch(material, X.dataType, O);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor SpaceToDepth(Tensor X, int[] blocksize)
+    {
+        Assert.IsTrue(X.shape.Is4D());
+        Assert.AreEqual(blocksize.Length, 2);
+
+        var O = new TensorShape(X.batch, X.height / blocksize[1], X.width / blocksize[0], X.channels * (blocksize[0] * blocksize[1]));
+
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/SpaceToDepth"));
+
+        SetTensor(material, "X", X);
+
+        material.SetVector("_Pool", new Vector4(blocksize[0], blocksize[1], 0, 0));
+
+        return Dispatch(material, X.dataType, O);
     }
 
     /// <inheritdoc/>
@@ -871,10 +1528,11 @@ public class PixelShaderOps : ReferenceCPUOps
         var axisNCHW = TensorExtensions.Convert8DAxisTo4D(axis);
         Vector4 offsets = Vector4.zero;
 
-        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Copy"));
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Concat"));
 
-        var O = NewTensor(Oshape, AllocScope.LayerOutput, "O");
-        var Opred = NewTensor(Oshape, AllocScope.LayerOutput, "O");
+        var dataType = tensors.Length > 0 ? tensors[0].dataType : DataType.Float;
+        var O = NewTensor(dataType, Oshape, AllocScope.LayerOutput, "O");
+        var Opred = NewTensor(dataType, Oshape, AllocScope.LayerOutput, "O");
 
         bool pingPong = true;
         bool isFirstPass = true;
@@ -908,28 +1566,80 @@ public class PixelShaderOps : ReferenceCPUOps
     {
         if (X.shape.Is4D())
             return base.StridedSlice(X, starts, ends, strides);
-
+    
         var Oshape = X.shape.ApplyStridedSlice(starts, ends, strides);
-
+    
         Vector4 starts4d = new Vector4();
         starts4d[0] = Math.Min(TensorExtensions.WrapIndex(starts[TensorShape.DataBatch], X.batch), X.batch - 1);
         starts4d[1] = Math.Min(TensorExtensions.WrapIndex(starts[TensorShape.H], X.height), X.height - 1);
         starts4d[2] = Math.Min(TensorExtensions.WrapIndex(starts[TensorShape.W], X.width), X.width - 1);
         starts4d[3] = Math.Min(TensorExtensions.WrapIndex(starts[TensorShape.C], X.channels), X.channels - 1);
-
+    
         Vector4 strides4d = new Vector4();
         strides4d[0] = strides[TensorShape.DataBatch];
         strides4d[1] = strides[TensorShape.H];
         strides4d[2] = strides[TensorShape.W];
         strides4d[3] = strides[TensorShape.C];
-
+    
         Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/StridedSlice"));
         
         SetTensor(material, "X", X);
         material.SetVector("_Stride", new Vector4(strides4d[0], strides4d[1], strides4d[2], strides4d[3]));
         material.SetVector("_Starts", new Vector4(starts4d[0], starts4d[1], starts4d[2], starts4d[3]));
         
-        return Dispatch(material, Oshape);
+        return Dispatch(material, X.dataType, Oshape);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Tile(Tensor X, int[] repeats)
+    {
+        var O = X.shape.Scale(repeats);
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Tile"));
+
+        SetTensor(material, "X", X);
+
+        return Dispatch(material, X.dataType, O);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor Gather(Tensor[] tensors, int axis)
+    {
+        Tensor X = tensors[0];
+        Tensor indices = tensors[1];
+
+        var O = X.shape;
+        O[axis] = indices.length;
+
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Gather"));
+        SetTensor(material, "X", X);
+        SetTensor(material, "K", indices);
+        material.SetInt("_Axis", axis == TensorShape.DataBatch ? 0 : axis - 4);
+
+        return Dispatch(material, X.dataType, O);
+    }
+
+    /// <inheritdoc/>
+    public override Tensor ScatterND(Tensor X, Tensor indices, Tensor updates, Layer.ScatterNDReductionMode reduction)
+    {
+        // only support for scattering on C for now
+        Assert.IsTrue(indices.batch == X.batch);
+        Assert.IsTrue(updates.width == X.width && updates.height == X.height);
+        var O = X.shape;
+           
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/ScatterND"));
+        SetTensor(material, "X", X);
+        SetTensor(material, "K", indices);
+        SetTensor(material, "W", updates);
+
+        if (reduction == Layer.ScatterNDReductionMode.None)
+            material.EnableKeyword("ReduceNone");
+        else if (reduction == Layer.ScatterNDReductionMode.Add)
+            material.EnableKeyword("ReduceAdd");
+        else if (reduction == Layer.ScatterNDReductionMode.Mul)
+            material.EnableKeyword("ReduceMul");
+
+        return Dispatch(material, X.dataType, O);
     }
 
     /// <inheritdoc/>
@@ -945,7 +1655,7 @@ public class PixelShaderOps : ReferenceCPUOps
         SetTensor(material, "B", B);
 
 
-        return Dispatch(material, X.shape);
+        return Dispatch(material, X.dataType, X.shape);
     }
 
     /// <inheritdoc/>
@@ -954,32 +1664,43 @@ public class PixelShaderOps : ReferenceCPUOps
         if (X.shape.Is4D())
             return base.Transpose(X, permutations);
 
-        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Transpose"));
+        Material material = new Material(Shader.Find("Barracuda/Transpose"));
 
         SetTensor(material, "X", X);
-
-
+    
+    
         material.SetVector("_Pool", new Vector4(Array.IndexOf(permutations, 0), Array.IndexOf(permutations, 1), Array.IndexOf(permutations, 2), Array.IndexOf(permutations, 3)));
-
-        return Dispatch(material, X.shape.Permute(permutations));
+    
+        return Dispatch(material, X.dataType, X.shape.Permute(permutations));
     }
-
+    
     /// <inheritdoc/>
     public override Tensor Reshape(Tensor X, TensorShape newShape)
     {
         if (X.shape == newShape)
             return Copy(X);
+    
+        Material material = new Material(PixelShaderSingleton.Instance.FindShader("Barracuda/Copy"));
+    
+        SetTensor(material, "X", X);
+    
+        return Dispatch(material, X.dataType, newShape);
+    }
 
-        var O = NewTensor(newShape, AllocScope.LayerOutput, "O");
-        Graphics.Blit(Pin(X).bufferAsTexture, Pin(O).bufferAsTexture);
-        
-        return O;
+    /// <inheritdoc/>
+    public override Tensor Flatten(Tensor X)
+    {
+        var newShape = X.shape.Flatten();
+        if (X.shape == newShape)
+            return base.Flatten(X);
+
+        return Reshape(X, newShape);
     }
 
     /// <inheritdoc/>
     public override Tensor Copy(Tensor X)
     {
-        var O = NewTensor(X.shape, AllocScope.LayerOutput, "O");
+        var O = NewTensor(X.dataType, X.shape, AllocScope.LayerOutput, "O");
         Graphics.Blit(Pin(X).bufferAsTexture, Pin(O).bufferAsTexture);
 
         return O;

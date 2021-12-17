@@ -207,7 +207,7 @@ public partial class BurstCPUOps
         [ReadOnly] public TensorShape shapeO;
         [ReadOnly] public TensorShape shapeX;
         [ReadOnly] public int depth;
-        [ReadOnly] public bool isInput1D;
+        [ReadOnly] public int inputRank;
         [ReadOnly] public float onValue;
         [ReadOnly] public float offValue;
     }
@@ -720,30 +720,21 @@ public partial class BurstCPUOps
     }
 
     [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
-    unsafe struct MatrixMultiply3x2Job : IJobParallelFor
+    unsafe struct MatrixMultiply3x2Job : IJobParallelFor, IJobResourceDeclarationXBO
     {
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
+        public ReadOnlyMemResource X { get; set; } float* Aptr => X.ptrfloat;
+        public ReadOnlyMemResource B { get; set; } float* Bptr => B.ptrfloat;
+        public ReadWriteMemResource O { get; set; } float* Cptr => O.ptrfloat;
         public int AM, AN;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
         public int BM, BN;
-        [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* C;
         public int CM, CN;
 
         public int dispatchThreadX, dispatchThreadY, dispatchThreadZ;
         public const int blockSize = 16;
 
-
-        public JobHandle Schedule(JobHandle dependsOn)
-        {
-            return Schedule(blocksBatchCount:1, dependsOn);
-        }
-        public JobHandle Schedule(int blocksBatchCount, JobHandle dependsOn)
-        {
-            return IJobParallelForExtensions.Schedule(this, dispatchThreadX * dispatchThreadY * dispatchThreadZ, blocksBatchCount, dependsOn);
-        }
-
         public void Execute(int threadID)
         {
+
             int dispatchThreadXY = dispatchThreadX * dispatchThreadY;
 
             int batch = (threadID / dispatchThreadXY);
@@ -762,7 +753,7 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempC = null;
 
-                float* blockC = C + rowA + CM * colB + batchOffSetC;
+                float* blockC = Cptr + rowA + CM * colB + batchOffSetC;
                 int strideC = CM;
 
                 if (rowA + blockSize > CM || colB + blockSize > CN) // copy remainder of C into zero-padded block
@@ -777,8 +768,8 @@ public partial class BurstCPUOps
 
                 for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + rowA + AM * l + batchOffSetA;
-                    float* blockB = B + l * BN + colB;
+                    float* blockA = Aptr + rowA + AM * l + batchOffSetA;
+                    float* blockB = Bptr + l * BN + colB;
                     int strideA = AM;
                     int strideB = BN;
 
@@ -817,7 +808,7 @@ public partial class BurstCPUOps
                         for (int x = 0; x < blockSize; x++)
                         {
                             if (((rowA + x) < CM) && ((colB + y) < CN))
-                                C[(rowA + x) + CM * (colB + y) + batchOffSetC] = blockTempC[x + blockSize * y];
+                                Cptr[(rowA + x) + CM * (colB + y) + batchOffSetC] = blockTempC[x + blockSize * y];
                         }
                 }
 
@@ -910,27 +901,17 @@ public partial class BurstCPUOps
 
 
     [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
-    unsafe struct MatrixMultiply4x4Job : IJobParallelFor
+    unsafe struct MatrixMultiply4x4Job : IJobParallelFor, IJobResourceDeclarationXBO
     {
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* A;
+        public ReadOnlyMemResource X { get; set; } float* Aptr => X.ptrfloat;
+        public ReadOnlyMemResource B { get; set; } float* Bptr => B.ptrfloat;
+        public ReadWriteMemResource O { get; set; } float* Cptr => O.ptrfloat;
         public int AB0, AB1, AM, AN;
-        [NoAlias][NativeDisableUnsafePtrRestriction][ReadOnly] public unsafe float* B;
         public int BB0, BB1, BM, BN;
-        [NoAlias][NativeDisableUnsafePtrRestriction]           public unsafe float* C;
         public int CB1, CM, CN;
 
         public int dispatchThreadX, dispatchThreadY, dispatchThreadZ;
         public const int blockSize = 16;
-
-
-        public JobHandle Schedule(JobHandle dependsOn)
-        {
-            return Schedule(blocksBatchCount:1, dependsOn);
-        }
-        public JobHandle Schedule(int blocksBatchCount, JobHandle dependsOn)
-        {
-            return IJobParallelForExtensions.Schedule(this, dispatchThreadX * dispatchThreadY * dispatchThreadZ, blocksBatchCount, dependsOn);
-        }
 
         public void Execute(int threadID)
         {
@@ -954,7 +935,7 @@ public partial class BurstCPUOps
                 float* blockTempB = null;
                 float* blockTempC = null;
 
-                float* blockC = C + (rowA * CN + colB)*CB1 + batchOffSetC;
+                float* blockC = Cptr + (rowA * CN + colB)*CB1 + batchOffSetC;
                 int strideC = CN;
                 int strideBatchC = CB1;
 
@@ -971,8 +952,8 @@ public partial class BurstCPUOps
 
                 for (int l = 0; l < AN; l += blockSize) // inner-loop
                 {
-                    float* blockA = A + (rowA * AN + l)*AB1 + batchOffSetA;
-                    float* blockB = B + (l * BN + colB)*BB1 + batchOffSetB;
+                    float* blockA = Aptr + (rowA * AN + l)*AB1 + batchOffSetA;
+                    float* blockB = Bptr + (l * BN + colB)*BB1 + batchOffSetB;
                     int strideA = AN;
                     int strideBatchA = AB1;
                     int strideB = BN;
@@ -1015,7 +996,7 @@ public partial class BurstCPUOps
                     for (int x = 0; x < blockSize; x++)
                     {
                         if (((rowA + y) < CM) && (colB + x < CN))
-                            C[((rowA + y) * CN + (colB + x)) * CB1 + batchOffSetC] = blockTempC[x + blockSize * y];
+                            Cptr[((rowA + y) * CN + (colB + x)) * CB1 + batchOffSetC] = blockTempC[x + blockSize * y];
                     }
                 }
 
@@ -1102,6 +1083,30 @@ public partial class BurstCPUOps
                 *(Cp + (i * Cstride + 14)*CBatchStride) = sumE;
                 *(Cp + (i * Cstride + 15)*CBatchStride) = sumF;
             }
+        }
+    }
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
+    unsafe struct ConvertHalfToFloatJob : IJobParallelFor, IJobResourceDeclarationXO
+    {
+        public ReadOnlyMemResource X { get; set; } half* Xptr => X.ptrhalf;
+        public ReadWriteMemResource O { get; set; } float* Optr => O.ptrfloat;
+
+        public void Execute(int threadID)
+        {
+            Optr[threadID] = (float)(Xptr[threadID]);
+        }
+    }
+
+    [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
+    unsafe struct ConvertFloatToHalfJob : IJobParallelFor, IJobResourceDeclarationXO
+    {
+        public ReadOnlyMemResource X { get; set; } float* Xptr => X.ptrfloat;
+        public ReadWriteMemResource O { get; set; } half* Optr => O.ptrhalf;
+
+        public void Execute(int threadID)
+        {
+            Optr[threadID] = (half)(Xptr[threadID]);
         }
     }
 
@@ -1194,8 +1199,8 @@ public partial class BurstCPUOps
     [BurstCompile(OptimizeFor = OptimizeFor.Performance, FloatMode = FloatMode.Fast, FloatPrecision = FloatPrecision.Low)]
     unsafe struct MemFreeJob : IJob
     {
-        [NoAlias] [NativeDisableUnsafePtrRestriction]           public float* buffer0;
-        [NoAlias] [NativeDisableUnsafePtrRestriction]           public float* buffer1;
+        [NoAlias] [NativeDisableUnsafePtrRestriction]           public void* buffer0;
+        [NoAlias] [NativeDisableUnsafePtrRestriction]           public void* buffer1;
                                                      [ReadOnly] public Allocator allocator;
         public void Execute()
         {

@@ -43,8 +43,8 @@ Shader "Barracuda/Conv2DTrans"
                 uint strideH = 1;
                 uint strideW = 1;
 
-				        for (uint c4 = 0; c4 < X.channels4; c4++)
-				        {
+                for (uint c4 = 0; c4 < X.channels4; c4++)
+                {
                     for (uint dy = 0; dy < K.GetKernelHeight(); dy += strideH)
                     {
                         for (uint dx = 0; dx < K.GetKernelWidth(); dx += strideW)

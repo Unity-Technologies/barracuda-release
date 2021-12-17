@@ -447,9 +447,13 @@ public unsafe struct TensorShape
                     copy = new TensorShape(shape[0], shape[1], shape[2], shape[3], shape[4]);
                     break;
 
+#if UNITY_EDITOR
+                // Restricting this to editor-only since Burst cannot have exceptions, but this code should also not be
+                // run since there are no rank-6/7 named tensor constructors
                 case 6:
                 case 7:
                     throw new ArgumentException($"Must use unnamedDimensions = true for a rank {shape.Length} tensor");
+#endif
 
                 case 8:
                 default:
@@ -1006,7 +1010,12 @@ public unsafe struct TensorShape
         get
         {
             if (axis >= rank)
+#if UNITY_EDITOR
                 throw new IndexOutOfRangeException($"Attempting to access element {axis} from a rank {rank} shape");
+#else
+                // For Burst we cannot throw exceptions, so just return 0 for now, which will likely cause an error
+                return 0;
+#endif
 
             // switch case instead of ToArray() avoids GC allocation
             if (hasNamedDimensions)
@@ -1046,7 +1055,12 @@ public unsafe struct TensorShape
                 axis = Axis(axis);
 
             if (axis >= rank)
+#if UNITY_EDITOR
                 throw new IndexOutOfRangeException($"Attempting to access element {axis} from a rank {rank} shape");
+#else
+                // For Burst we cannot throw exceptions
+                return;
+#endif
 
             fixed (int* shape = &d0)
             {
@@ -1226,7 +1240,13 @@ public unsafe struct TensorShape
     public TensorShape AsNamed()
     {
         if (hasNamedDimensions)
+#if UNITY_EDITOR
             throw new InvalidOperationException("TensorShape is already in the layout of named dimensions");
+#else
+            // For Burst we cannot throw exceptions, but this code should not execute anyway
+            return this;
+#endif
+
 
         TensorShape shape;
         switch (rank)
@@ -1256,9 +1276,13 @@ public unsafe struct TensorShape
                 shape = new TensorShape(this[0], this[1], this[2], this[3], this[4]);
                 break;
 
+#if UNITY_EDITOR
+            // Restricting this to editor-only since Burst cannot have exceptions, but this code should also not be
+            // run since there are no rank-6/7 named tensor constructors
             case 6:
             case 7:
                 throw new ArgumentException($"Converting from rank {rank} not supported.");
+#endif
 
             case 8:
             default:
@@ -1272,7 +1296,12 @@ public unsafe struct TensorShape
     public TensorShape AsUnnamed()
     {
         if (!hasNamedDimensions)
+#if UNITY_EDITOR
             throw new InvalidOperationException("TensorShape is already in the layout of unnamed dimensions");
+#else
+            // For Burst we cannot throw exceptions, but this code should not execute anyway
+            return this;
+#endif
 
         int size = Burst.Intrinsics.X86.Popcnt.popcnt_u32((UInt32)m_UsesNamedDimensions);
         var shape = new int[size];
@@ -1499,6 +1528,7 @@ public struct TensorIterator
 /// </summary>
 public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
 {
+    private DataType m_preferredDataType;
     private ITensorData m_TensorOnDevice;
     private ITensorAllocator m_TensorAllocator;
     private float[] m_Cache;
@@ -1527,6 +1557,17 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
 
     /// <inheritdoc/>
     public TensorShape shape { get; private set; }
+
+    /// <inheritdoc/>
+    public DataType dataType
+    {
+        get {
+            if (m_TensorOnDevice == null)
+                return m_preferredDataType;
+            Assert.AreEqual(m_TensorOnDevice.dataType, m_preferredDataType);
+            return m_TensorOnDevice.dataType;
+        }
+    }
 
     /// <summary>
     /// Return the number of sequences.
@@ -1651,7 +1692,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     {
         this.name = name;
         this.shape = shape;
-        m_TensorOnDevice = new ArrayTensorData(shape);
+        tensorOnDevice = new ArrayTensorData(shape);
         Assert.IsTrue(srcData.Length >= length);
         m_TensorOnDevice.Upload(srcData, shape, 0);
         m_TensorAllocator = null;
@@ -1670,8 +1711,8 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     {
         this.name = name;
         this.shape = shape;
-        var tensorData = new ArrayTensorData(shape);//TODO fp16?
-        m_TensorOnDevice = tensorData;
+        var tensorData = new ArrayTensorData(shape, srcData.Type);
+        tensorOnDevice = tensorData;
         Assert.IsTrue(srcData.Length >= length);
         BarracudaArray.Copy(srcData, 0, tensorData.array, 0, shape.length);
         m_TensorAllocator = null;
@@ -1731,7 +1772,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
             var dstOffset = i * flatWidth;
             BarracudaArray.Copy(src, 0, arrayTensorData.array, dstOffset, Math.Min(flatWidth, src.Length));
         }
-        m_TensorOnDevice = arrayTensorData;
+        tensorOnDevice = arrayTensorData;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -1781,7 +1822,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
         var arrayTensorData = new ArrayTensorData(shape);
         BarracudaArray.Copy(tmpArray, arrayTensorData.array);
 
-        m_TensorOnDevice = arrayTensorData;
+        tensorOnDevice = arrayTensorData;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -1871,7 +1912,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
             throw new ArgumentException($"Compute buffer `{name}` capacity is {srcBuffer.count} less than {shape.length} required for shape {shape}");
         if (srcBuffer.stride != 4)
             throw new ArgumentException($"Currently only compute buffers with stride of 4 are supported. Compute buffer `{name}` stride is {srcBuffer.stride} instead");
-        m_TensorOnDevice = new ComputeTensorData(srcBuffer, shape, offset:0, name, ComputeInfo.channelsOrder);
+        tensorOnDevice = new ComputeTensorData(srcBuffer, shape, offset:0, name, ComputeInfo.channelsOrder);
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -1918,7 +1959,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
         //;;UnityEngine.Debug.Log("Tensor::Tensor " + n + " " + tensorData.shape + " [TEX] " + srcTextures);
         shape = tensorData.shape;
         Assert.IsTrue(tensorData.maxCapacity >= length);
-        m_TensorOnDevice = tensorData;
+        tensorOnDevice = tensorData;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -1952,7 +1993,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
         //;;UnityEngine.Debug.Log("Tensor::Tensor " + n + " " + tensorData.shape + " [TEX] " + srcTextures);
         shape = tensorData.shape;
         Assert.IsTrue(tensorData.maxCapacity >= length);
-        m_TensorOnDevice = tensorData;
+        tensorOnDevice = tensorData;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -2001,7 +2042,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     {
         this.name = name;
         this.shape = shape;
-        m_TensorOnDevice = data;
+        tensorOnDevice = data;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -2045,11 +2086,12 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// </summary>
     /// <param name="shape">shape</param>
     /// <param name="name">name</param>
-    public Tensor(TensorShape shape, string name = "")
+    public Tensor(TensorShape shape, string name = "", DataType dataType = DataType.Float)
     {
         this.name = name;
         this.shape = shape;
-        m_TensorOnDevice = null;
+        m_preferredDataType = dataType;
+        tensorOnDevice = null;
         m_TensorAllocator = null;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -2094,11 +2136,13 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <param name="shape">shape</param>
     /// <param name="data">data</param>
     /// <param name="allocator">allocator</param>
-    public Tensor(TensorShape shape, ITensorData data, ITensorAllocator allocator)
+    public Tensor(TensorShape shape, ITensorData data, ITensorAllocator allocator, DataType dataType = DataType.Float)
     {
+        Assert.IsTrue(data == null || data.dataType == dataType);
         this.name = "";
         this.shape = shape;
-        m_TensorOnDevice = data;
+        m_preferredDataType = dataType;
+        tensorOnDevice = data;
         m_TensorAllocator = allocator;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -2148,7 +2192,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     {
         this.name = "";
         this.shape = shape;
-        m_TensorOnDevice = null;
+        tensorOnDevice = null;
         m_TensorAllocator = allocator;
         m_Cache = null;
         m_CacheIsDirty = false;
@@ -2172,7 +2216,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
         else if (disposeUnpinned)
             m_TensorOnDevice?.Dispose();
 
-        m_TensorOnDevice = onDevice;
+        tensorOnDevice = onDevice;
     }
 
     /// <summary>
@@ -2316,9 +2360,9 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     {
         Tensor copy;
         if (m_TensorAllocator != null)
-            copy = m_TensorAllocator.Alloc(newShape, m_TensorOnDevice, AllocScope.LayerOutput);
+            copy = m_TensorAllocator.Alloc(newShape, m_TensorOnDevice, AllocScope.LayerOutput, dataType);
         else
-            copy = new Tensor(newShape, m_TensorOnDevice);
+            copy = new Tensor(newShape, m_TensorOnDevice, null, dataType);
 
         copy.name = newName;
         copy.m_Cache = m_Cache;
@@ -2402,15 +2446,17 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
         Assert.AreEqual(m_TensorOnDevice, null);
         m_Cache = null;
         m_CacheIsDirty = false;
-        m_TensorOnDevice = null;
+        tensorOnDevice = null;
         m_TensorAllocator = null;
         return unpinned;
     }
 
-    internal void Init(TensorShape shape, ITensorData buffer = null, ITensorAllocator allocator = null)
+    internal void Init(TensorShape shape, ITensorData buffer, ITensorAllocator allocator, DataType dataType)
     {
+        Assert.IsTrue(buffer == null || buffer.dataType == dataType);
         this.shape = shape;
-        m_TensorOnDevice = buffer;
+        m_preferredDataType = dataType;
+        tensorOnDevice = buffer;
         m_TensorAllocator = allocator;
         m_Disposed = false;
     }
@@ -2433,7 +2479,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
 
         m_Cache = null;
         m_CacheIsDirty = false;
-        m_TensorOnDevice = null;
+        tensorOnDevice = null;
         m_TensorAllocator = null;
         m_Disposing = false;
         m_Disposed = true;
@@ -2736,7 +2782,11 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
     /// <summary>
     /// Device specific internal representation of Tensor data
     /// </summary>
-    public ITensorData tensorOnDevice { get { return m_TensorOnDevice; } }
+    public ITensorData tensorOnDevice
+    {
+        get { return m_TensorOnDevice; }
+        private set { m_TensorOnDevice = value; if (value != null) m_preferredDataType = value.dataType; }
+    }
 
     /// <summary>
     /// Upload data to device and return its instance
@@ -2746,7 +2796,7 @@ public class Tensor : UniqueResourceId, IDisposable, ITensorStatistics
         get
         {
             if (m_TensorOnDevice == null)
-                UploadToDevice(new ArrayTensorData(shape));
+                UploadToDevice(new ArrayTensorData(shape, dataType));
             return m_TensorOnDevice;
         }
     }
