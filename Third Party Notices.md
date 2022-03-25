@@ -7,6 +7,8 @@ License Type: BSD 3-Clause License
 
 Copyright 2008 Google Inc.  All rights reserved.
 
+https://github.com/protocolbuffers/protobuf
+
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
