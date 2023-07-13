@@ -1,3 +1,4 @@
+
 Shader "Barracuda/ScatterND"
 {
     Properties
