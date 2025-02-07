@@ -1,3 +1,7 @@
+<div style="background: #ffe2d7; padding: 16px; border-radius: 4px; margin: 16px 0;">
+    The Barracuda package is deprecated. Use <a href="https://docs.unity3d.com/Packages/com.unity.sentis@2.1/manual/index.html">the Sentis package</a> instead.
+</div>
+
 # Model execution
 
 In order to execute a model in Barracuda you must first [load the model](Loading.md) and [create a `Worker`](Worker.md).

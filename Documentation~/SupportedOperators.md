@@ -1,3 +1,7 @@
+<div style="background: #ffe2d7; padding: 16px; border-radius: 4px; margin: 16px 0;">
+    The Barracuda package is deprecated. Use <a href="https://docs.unity3d.com/Packages/com.unity.sentis@2.1/manual/index.html">the Sentis package</a> instead.
+</div>
+
 # Supported ONNX operators
 
 Barracuda currently supports the following [ONNX operators](https://github.com/onnx/onnx/blob/master/docs/Operators.md) and parameters. If an operator is not  on the list and you need it, please create a ticket on the [Unity Barracuda GitHub](https://github.com/Unity-Technologies/barracuda-release/issues).

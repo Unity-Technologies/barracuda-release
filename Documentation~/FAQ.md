@@ -1,3 +1,7 @@
+<div style="background: #ffe2d7; padding: 16px; border-radius: 4px; margin: 16px 0;">
+    The Barracuda package is deprecated. Use <a href="https://docs.unity3d.com/Packages/com.unity.sentis@2.1/manual/index.html">the Sentis package</a> instead.
+</div>
+
 # Frequently Asked Questions (FAQ)
 
 **Q.** Does Barracuda work on iPhone / Android / Magic Leap / Switch / PS4 / Xbox?

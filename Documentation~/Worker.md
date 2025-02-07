@@ -1,3 +1,7 @@
+<div style="background: #ffe2d7; padding: 16px; border-radius: 4px; margin: 16px 0;">
+    The Barracuda package is deprecated. Use <a href="https://docs.unity3d.com/Packages/com.unity.sentis@2.1/manual/index.html">the Sentis package</a> instead.
+</div>
+
 # IWorker interface: core of the engine
 
 The core engine interface in Barracuda is called `IWorker`. `IWorker` breaks down the model into executable tasks and schedules them on GPU or CPU.
