@@ -1,3 +1,7 @@
+<div style="background: #ffe2d7; padding: 16px; border-radius: 4px; margin: 16px 0;">
+    The Barracuda package is deprecated. Use <a href="https://docs.unity3d.com/Packages/com.unity.sentis@latest/index.html">the Sentis package</a> instead.
+</div>
+
 # Working with outputs
 
 After [executing a model](ModelExecution.md) you can then retrieve outputs or intermediate information.

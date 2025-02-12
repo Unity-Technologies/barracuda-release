@@ -1,8 +1,12 @@
+<div style="background: #ffe2d7; padding: 16px; border-radius: 4px; margin: 16px 0;">
+    The Barracuda package is deprecated. Use <a href="https://docs.unity3d.com/Packages/com.unity.sentis@latest/index.html">the Sentis package</a> instead.
+</div>
+
 ![Barracuda landing image](images/BarracudaLanding.png)
 
 # Introduction to Barracuda
 
-**Note:** The Barracuda package has been replaced by the `Sentis` package, which is in a closed beta phase. Refer to the [Sentis documentation](https://docs.unity3d.com/Packages/com.unity.sentis@1.0) for more information.
+**Note:** The Barracuda package has been replaced by the `Sentis` package, which is in a closed beta phase. Refer to the [Sentis documentation](https://docs.unity3d.com/Packages/com.unity.sentis@latest/index.html) for more information.
 You can [sign up for the closed beta](https://create.unity.com/ai-beta).
 
 The Barracuda package is a lightweight cross-platform [neural network](https://en.wikipedia.org/wiki/Neural_network) inference library for Unity.  
