@@ -6,7 +6,7 @@
 
 # Introduction to Barracuda
 
-**Note:** The Barracuda package has been replaced by the `Sentis` package, which is in a closed beta phase. Refer to the [Sentis documentation](https://docs.unity3d.com/Packages/com.unity.sentis@2.1/manual/index.html) for more information.
+**Note:** The Barracuda package has been replaced by the `Sentis` package, which is in a closed beta phase. Refer to the [Sentis documentation](https://docs.unity3d.com/Packages/com.unity.sentis@latest/index.html) for more information.
 You can [sign up for the closed beta](https://create.unity.com/ai-beta).
 
 The Barracuda package is a lightweight cross-platform [neural network](https://en.wikipedia.org/wiki/Neural_network) inference library for Unity.  
